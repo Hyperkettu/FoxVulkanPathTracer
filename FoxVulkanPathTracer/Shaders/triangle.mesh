@@ -1,0 +1,23 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+// One workgroup with 1 thread
+layout(local_size_x = 1) in;
+
+// We will emit 3 vertices and 1 triangle
+layout(max_vertices = 3, max_primitives = 1) out;
+layout(triangles) out;
+
+void main()
+{
+    // Declare we are outputting 3 vertices and 1 triangle
+    SetMeshOutputsEXT(3, 1);
+
+    // Positions for a simple triangle
+    gl_MeshVerticesEXT[0].gl_Position = vec4(-1.0, -1.0, 0.0, 1.0);
+    gl_MeshVerticesEXT[1].gl_Position = vec4( 1.0, -1.0, 0.0, 1.0);
+    gl_MeshVerticesEXT[2].gl_Position = vec4( 0.0,  1.0, 0.0, 1.0);
+
+    // One triangle primitive made of vertices 0, 1, 2
+    gl_PrimitiveTriangleIndicesEXT[0] = uvec3(0, 1, 2);
+}

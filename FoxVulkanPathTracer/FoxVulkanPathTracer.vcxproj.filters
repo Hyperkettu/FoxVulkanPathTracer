@@ -1,0 +1,444 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Private">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Public">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Private\Platform">
+      <UniqueIdentifier>{b718560e-5f0a-4075-8330-76a66ec11379}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Platform\Vulkan">
+      <UniqueIdentifier>{499bdf2b-9066-456d-a972-b3677179b9aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Platform">
+      <UniqueIdentifier>{e32b9599-2ae8-46bf-8147-c0ab3998dad7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Platform\Vulkan">
+      <UniqueIdentifier>{4d9be133-364b-4468-86b7-ee4964525aba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics">
+      <UniqueIdentifier>{c725dbf2-7f4d-400b-b48b-ba233d290adf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Vulkan">
+      <UniqueIdentifier>{2d6087a7-63c7-4907-ba49-13e2a5fa6b7f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics">
+      <UniqueIdentifier>{f513b664-aa84-42a1-9295-51351c0430ff}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Vulkan">
+      <UniqueIdentifier>{a082aef5-9a65-490e-aef9-454f7bd84be2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Core">
+      <UniqueIdentifier>{f0238e96-2bb3-48a4-9bc7-5fb97e9845c5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Core">
+      <UniqueIdentifier>{9d925fcf-cdba-4c01-b27e-7efca2922a7b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{67ebe445-8e3b-40d1-b08b-640ecdfe8f64}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Managers">
+      <UniqueIdentifier>{2bd3d89a-8830-4eb2-a63c-96325b45f69c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Managers\Vulkan">
+      <UniqueIdentifier>{847b0c7c-acc6-45d6-8d82-fa94bf20fa51}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Input">
+      <UniqueIdentifier>{baa0d4c2-7a33-4b61-aed5-c0aba589f32c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Managers">
+      <UniqueIdentifier>{ca677afc-018c-4254-843f-691186455fac}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Managers\Vulkan">
+      <UniqueIdentifier>{e81d1e76-3b3c-414b-a9e6-60c13efe44b8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Input">
+      <UniqueIdentifier>{f2775360-5f70-4c77-90dc-e3bfdd7b915d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Geometry">
+      <UniqueIdentifier>{9b4beeff-5e76-449e-8381-e749fcb4d0f7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Geometry">
+      <UniqueIdentifier>{1dec36c9-37fa-4259-bcca-d03e5cfb9eae}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Geometry\Vulkan">
+      <UniqueIdentifier>{9900e0da-8b60-4854-b976-0bb697004758}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Scene">
+      <UniqueIdentifier>{81217e5e-b295-4bb1-93fd-561d9041c94e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Scene">
+      <UniqueIdentifier>{0803b84d-b1c4-4419-8ce0-bfe25fef2e1f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Public\Graphics\Vulkan\Raytracing">
+      <UniqueIdentifier>{79239a79-ea06-4f8c-8fe6-57ee1dc8f96b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Scene\Raytracing">
+      <UniqueIdentifier>{a94b785a-d590-40d7-9bc6-1687b30ea02e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Vulkan\Raytracing">
+      <UniqueIdentifier>{d48e7891-961b-4905-8d0f-cd2505c04c9e}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="FoxRenderer.cpp">
+      <Filter>Private</Filter>
+    </ClCompile>
+    <ClCompile Include="Platform\Vulkan\Application.cpp">
+      <Filter>Private\Platform\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Platform\IApplication.cpp">
+      <Filter>Private\Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\VulkanRHI.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\RHI.cpp">
+      <Filter>Private\Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\RendererConfig.cpp">
+      <Filter>Private\Graphics</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\FileSystem.cpp">
+      <Filter>Private\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Buffer.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\ConstantBuffers.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\FrameResource.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Fence.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Semaphore.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\DescriptorPool.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\DescriptorSetLayout.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\DescriptorSet.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\DescriptorSetBuilder.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Texture.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\SwapchainTexture.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Swapchain.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\RenderPassBuilder.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\RenderPass.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Framebuffer.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\DepthTexture.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Pipeline.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\PipelineBuilder.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\PipelineLayout.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\CommandPool.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\CommandList.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\ShaderResourceTexture.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Camera.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\RenderTargetTexture.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\IndexBuffer.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\VertexBuffer.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\RenderPassManager.cpp">
+      <Filter>Private\Graphics\Managers\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\PipelineManager.cpp">
+      <Filter>Private\Graphics\Managers\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Input\InputManager.cpp">
+      <Filter>Private\Input</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Signal.cpp">
+      <Filter>Private\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Singleton.cpp">
+      <Filter>Private\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Connection.cpp">
+      <Filter>Private\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\DescriptorManager.cpp">
+      <Filter>Private\Graphics\Managers\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\TextureManager.cpp">
+      <Filter>Private\Graphics\Managers\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Geometry\GeometryGenerator.cpp">
+      <Filter>Private\Graphics\Geometry</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\MeshManager.cpp">
+      <Filter>Private\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Scene\Scene.cpp">
+      <Filter>Private\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Managers\Vulkan\SceneManager.cpp">
+      <Filter>Private\Graphics\Managers\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Scene\MainScene.cpp">
+      <Filter>Private\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="Scene\Raytracing\RaytracingScene.cpp">
+      <Filter>Private\Scene\Raytracing</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.cpp">
+      <Filter>Private\Graphics\Vulkan\Raytracing</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="FoxRenderer.h">
+      <Filter>Public</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform\Vulkan\Application.h">
+      <Filter>Public\Platform\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform\IApplication.h">
+      <Filter>Public\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\VulkanRHI.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\RHI.h">
+      <Filter>Public\Graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\RendererConfig.h">
+      <Filter>Public\Graphics</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\FileSystem.h">
+      <Filter>Public\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Buffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\ConstantBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\ConstantBuffers.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\FrameResource.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Fence.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Semaphore.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DescriptorPool.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DescriptorSetLayout.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DescriptorSet.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DescriptorSetBuilder.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Texture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\SwapchainTexture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Swapchain.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\RenderPassBuilder.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\RenderPass.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Framebuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DepthTexture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Pipeline.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\PipelineBuilder.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\PipelineLayout.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\CommandPool.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\CommandList.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\ShaderResourceTexture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Camera.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\RenderTargetTexture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\IndexBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\VertexBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Input\InputManager.h">
+      <Filter>Public\Input</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Connection.h">
+      <Filter>Public\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Signal.h">
+      <Filter>Public\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Singleton.h">
+      <Filter>Public\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Vertex.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\ShaderStorageBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\PipelineManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DynamicConstantBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\RenderPassManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\DescriptorManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\DynamicBuffer.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\TextureManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Geometry\GeometryGenerator.h">
+      <Filter>Public\Graphics\Geometry</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Geometry\Submesh.h">
+      <Filter>Public\Graphics\Geometry</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Geometry\Vulkan\Mesh.h">
+      <Filter>Public\Graphics\Geometry\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\MeshManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene\Scene.h">
+      <Filter>Public\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Managers\Vulkan\SceneManager.h">
+      <Filter>Public\Graphics\Managers\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene\MainScene.h">
+      <Filter>Public\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Raytracing\AccelerationStructure.h">
+      <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene\Raytracing\RaytracingScene.h">
+      <Filter>Public\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.h">
+      <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Shaders\triangle.mesh">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\basic.frag">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\cube.mesh">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\basic_color.frag">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\textured.frag">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\texturedCube.mesh">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\generic_mesh.mesh" />
+    <None Include="Shaders\multi_generic_mesh.mesh" />
+    <None Include="Shaders\textured_icosahedron.frag" />
+    <None Include="Shaders\textured_multi_generic_mesh.frag" />
+    <None Include="Shaders\closest_hit.rchit">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\miss.rmiss">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\raygen.rgen">
+      <Filter>Shaders</Filter>
+    </None>
+  </ItemGroup>
+</Project>

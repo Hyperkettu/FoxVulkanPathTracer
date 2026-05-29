@@ -1,0 +1,97 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 1) in;
+
+layout(max_vertices = 36, max_primitives = 12) out;
+layout(triangles) out;
+
+// ------------------------------------------------------------
+// Vertex structure
+// ------------------------------------------------------------
+struct Vertex {
+    vec3 pos;
+    vec3 color;
+    vec2 uv;
+};
+
+// 24 unique vertices (4 per face)
+const Vertex cubeVertices[24] = Vertex[](
+    // Front (+Z)
+    Vertex(vec3(-1, -1,  1), vec3(1, 0, 0), vec2(0.0, 0.0)),
+    Vertex(vec3( 1, -1,  1), vec3(0, 1, 0), vec2(1.0, 0.0)),
+    Vertex(vec3( 1,  1,  1), vec3(0, 0, 1), vec2(1.0, 1.0)),
+    Vertex(vec3(-1,  1,  1), vec3(1, 1, 0), vec2(0.0, 1.0)),
+
+    // Back (-Z)
+    Vertex(vec3( 1, -1, -1), vec3(1, 0, 1), vec2(0.0, 0.0)),
+    Vertex(vec3(-1, -1, -1), vec3(0, 1, 1), vec2(1.0, 0.0)),
+    Vertex(vec3(-1,  1, -1), vec3(0, 0, 0), vec2(1.0, 1.0)),
+    Vertex(vec3( 1,  1, -1), vec3(1, 1, 1), vec2(0.0, 1.0)),
+
+    // Left (-X)
+    Vertex(vec3(-1, -1, -1), vec3(1, 0, 0), vec2(0.0, 0.0)),
+    Vertex(vec3(-1, -1,  1), vec3(0, 1, 0), vec2(1.0, 0.0)),
+    Vertex(vec3(-1,  1,  1), vec3(0, 0, 1), vec2(1.0, 1.0)),
+    Vertex(vec3(-1,  1, -1), vec3(1, 1, 0), vec2(0.0, 1.0)),
+
+    // Right (+X)
+    Vertex(vec3( 1, -1,  1), vec3(1, 0, 1), vec2(0.0, 0.0)),
+    Vertex(vec3( 1, -1, -1), vec3(0, 1, 1), vec2(1.0, 0.0)),
+    Vertex(vec3( 1,  1, -1), vec3(0, 0, 0), vec2(1.0, 1.0)),
+    Vertex(vec3( 1,  1,  1), vec3(1, 1, 1), vec2(0.0, 1.0)),
+
+    // Top (+Y)
+    Vertex(vec3(-1,  1,  1), vec3(1, 0, 0), vec2(0.0, 0.0)),
+    Vertex(vec3( 1,  1,  1), vec3(0, 1, 0), vec2(1.0, 0.0)),
+    Vertex(vec3( 1,  1, -1), vec3(0, 0, 1), vec2(1.0, 1.0)),
+    Vertex(vec3(-1,  1, -1), vec3(1, 1, 0), vec2(0.0, 1.0)),
+
+    // Bottom (-Y)
+    Vertex(vec3(-1, -1, -1), vec3(1, 0, 1), vec2(0.0, 0.0)),
+    Vertex(vec3( 1, -1, -1), vec3(0, 1, 1), vec2(1.0, 0.0)),
+    Vertex(vec3( 1, -1,  1), vec3(0, 0, 0), vec2(1.0, 1.0)),
+    Vertex(vec3(-1, -1,  1), vec3(1, 1, 1), vec2(0.0, 1.0))
+);
+
+// 12 triangles (two per face), all CCW and outward
+const uvec3 cubeIndices[12] = uvec3[](
+    // Front
+    uvec3(0, 1, 2), uvec3(2, 3, 0),
+    // Back
+    uvec3(4, 5, 6), uvec3(6, 7, 4),
+    // Left
+    uvec3(8, 9,10), uvec3(10,11,8),
+    // Right
+    uvec3(12,13,14), uvec3(14,15,12),
+    // Top
+    uvec3(16,17,18), uvec3(18,19,16),
+    // Bottom
+    uvec3(20,21,22), uvec3(22,23,20)
+);
+
+layout(binding = 0) uniform PerFrame {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+layout(location = 0) out vec3 vColors[];
+layout(location = 1) out vec2 vUVs[];
+
+void main() {
+    SetMeshOutputsEXT(36, 12);
+    mat4 MVP = ubo.proj * ubo.view * ubo.model;
+
+    for (uint i = 0; i < 36; ++i) {
+        uint vertexIndex = cubeIndices[i / 3][i % 3];
+        Vertex v = cubeVertices[vertexIndex];
+
+        gl_MeshVerticesEXT[i].gl_Position = MVP * vec4(v.pos, 1.0);
+        vColors[i] = v.color;
+        vUVs[i] = v.uv;
+
+        gl_PrimitiveTriangleIndicesEXT[i / 3] =
+            uvec3(i - i % 3, i - i % 3 + 1, i - i % 3 + 2);
+    }
+}

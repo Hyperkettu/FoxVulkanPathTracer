@@ -1,0 +1,117 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+// ------------------------------------------------------------
+// Define defaults if the compiler doesn’t provide them
+// ------------------------------------------------------------
+#ifndef gl_MaxMeshOutputVerticesEXT
+    #define gl_MaxMeshOutputVerticesEXT 256
+#endif
+#ifndef gl_MaxMeshOutputPrimitivesEXT
+    #define gl_MaxMeshOutputPrimitivesEXT 128
+#endif
+
+layout(local_size_x = 1) in;
+
+// Tunable constants (matches your meshlet size)
+layout(max_vertices = 256, max_primitives = 128) out;
+layout(triangles) out;
+
+// ------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------
+struct Vertex {
+    vec3 position;
+    vec3 normal;
+    vec2 uv;
+};
+
+struct MeshInfo {
+    uint vertexOffset;
+    uint indexOffset;
+    uint indexCount;
+    uint modelIndex;
+};
+
+// ------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------
+
+// Shared vertex/index data (interleaved meshes)
+layout(std430, binding = 0) readonly buffer VertexBuffer {
+    Vertex vertices[];
+};
+layout(std430, binding = 1) readonly buffer IndexBuffer {
+    uint indices[];
+};
+
+// Per-frame matrices
+layout(std140, binding = 2) uniform PerFrame {
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+// Per-mesh model matrices (array)
+layout(std140, binding = 3) uniform MeshTransforms {
+    mat4 models[1024]; // or smaller if you know the max
+};
+
+// Metadata for each mesh in this dispatch
+layout(std430, binding = 4) readonly buffer MeshInfos {
+    MeshInfo meshes[];
+};
+
+// ------------------------------------------------------------
+// Outputs to fragment shader
+// ------------------------------------------------------------
+layout(location = 0) out vec3 vNormal[];
+layout(location = 1) out vec2 vUV[];
+
+// ------------------------------------------------------------
+// Main mesh shader
+// ------------------------------------------------------------
+void main()
+{
+    // Each workgroup handles *one* mesh
+    uint meshIndex = gl_WorkGroupID.x;
+    MeshInfo mesh = meshes[meshIndex];
+
+    mat4 model = models[mesh.modelIndex];
+    mat4 MVP   = ubo.proj * ubo.view * model;
+    mat3 normalMat = mat3(model);
+
+    uint triCount = mesh.indexCount / 3;
+    uint vertCount = triCount * 3;
+
+    // Clamp to hardware-supported max
+    triCount  = min(triCount, gl_MaxMeshOutputPrimitivesEXT);
+    vertCount = min(vertCount, gl_MaxMeshOutputVerticesEXT);
+
+    SetMeshOutputsEXT(vertCount, triCount);
+
+    for (uint i = 0; i < triCount; ++i) {
+        uint idx0 = indices[mesh.indexOffset + i * 3 + 0] + mesh.vertexOffset;
+        uint idx1 = indices[mesh.indexOffset + i * 3 + 1] + mesh.vertexOffset;
+        uint idx2 = indices[mesh.indexOffset + i * 3 + 2] + mesh.vertexOffset;
+
+        Vertex v0 = vertices[idx0];
+        Vertex v1 = vertices[idx1];
+        Vertex v2 = vertices[idx2];
+
+        uint base = i * 3;
+
+        gl_MeshVerticesEXT[base + 0].gl_Position = MVP * vec4(v0.position, 1.0);
+        gl_MeshVerticesEXT[base + 1].gl_Position = MVP * vec4(v1.position, 1.0);
+        gl_MeshVerticesEXT[base + 2].gl_Position = MVP * vec4(v2.position, 1.0);
+
+        vNormal[base + 0] = normalize(normalMat * v0.normal);
+        vNormal[base + 1] = normalize(normalMat * v1.normal);
+        vNormal[base + 2] = normalize(normalMat * v2.normal);
+
+        vUV[base + 0] = v0.uv;
+        vUV[base + 1] = v1.uv;
+        vUV[base + 2] = v2.uv;
+
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(base + 0, base + 1, base + 2);
+    }
+}

@@ -1,0 +1,71 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 1) in;
+
+layout(max_vertices = 256, max_primitives = 128) out;
+layout(triangles) out;
+
+struct Vertex {
+	vec3 position;
+	vec3 normal;
+	vec2 uv;
+};
+
+layout(std430, binding = 0) readonly buffer VertexBuffer {
+    Vertex vertices[];
+};
+layout(std430, binding = 1) readonly buffer IndexBuffer {
+    uint indices[];
+};
+
+layout(std140, binding = 2) uniform PerFrame {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+layout(location = 0) out vec3 vNormal[];
+layout(location = 1) out vec2 vUV[];
+
+void main()
+{
+    const uint trisPerWorkgroup = 128;
+    uint groupOffset = gl_WorkGroupID.x * trisPerWorkgroup;
+    uint indexCount = uint(indices.length());
+    uint totalTris = indexCount / 3;
+
+    uint startTri = groupOffset;
+    uint endTri   = min(startTri + trisPerWorkgroup, totalTris);
+    uint localTris = endTri - startTri;
+
+    SetMeshOutputsEXT(localTris * 3, localTris);
+
+    mat4 MVP = ubo.proj * ubo.view * ubo.model;
+
+    for (uint i = 0; i < localTris; ++i) {
+        uint triIndex = startTri + i;
+        uint i0 = indices[triIndex * 3 + 0];
+        uint i1 = indices[triIndex * 3 + 1];
+        uint i2 = indices[triIndex * 3 + 2];
+
+        Vertex v0 = vertices[i0];
+        Vertex v1 = vertices[i1];
+        Vertex v2 = vertices[i2];
+
+        uint baseVertex = i * 3;
+        gl_MeshVerticesEXT[baseVertex + 0].gl_Position = MVP * vec4(v0.position, 1.0);
+        gl_MeshVerticesEXT[baseVertex + 1].gl_Position = MVP * vec4(v1.position, 1.0);
+        gl_MeshVerticesEXT[baseVertex + 2].gl_Position = MVP * vec4(v2.position, 1.0);
+
+        vNormal[baseVertex + 0] = normalize(mat3(ubo.model) * v0.normal);
+        vNormal[baseVertex + 1] = normalize(mat3(ubo.model) * v1.normal);
+        vNormal[baseVertex + 2] = normalize(mat3(ubo.model) * v2.normal);
+
+        vUV[baseVertex + 0] = v0.uv;
+        vUV[baseVertex + 1] = v1.uv;
+        vUV[baseVertex + 2] = v2.uv;
+
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(baseVertex + 0, baseVertex + 1, baseVertex + 2);
+    }
+}

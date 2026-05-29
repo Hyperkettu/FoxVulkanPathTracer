@@ -1,0 +1,60 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 1) in;
+
+layout(max_vertices = 36, max_primitives = 12) out;
+layout(triangles) out;
+
+struct Vertex {
+    vec3 pos;
+    vec3 color;
+};
+
+const Vertex cubeVertices[8] = Vertex[](
+    Vertex(vec3(-1, -1, -1), vec3(1, 0, 0)),
+    Vertex(vec3( 1, -1, -1), vec3(0, 1, 0)),
+    Vertex(vec3( 1,  1, -1), vec3(0, 0, 1)),
+    Vertex(vec3(-1,  1, -1), vec3(1, 1, 0)),
+    Vertex(vec3(-1, -1,  1), vec3(1, 0, 1)),
+    Vertex(vec3( 1, -1,  1), vec3(0, 1, 1)),
+    Vertex(vec3( 1,  1,  1), vec3(1, 1, 1)),
+    Vertex(vec3(-1,  1,  1), vec3(0, 0, 0))
+);
+
+// 12 triangles, 36 indices
+const uvec3 cubeIndices[12] = uvec3[](
+    // front
+    uvec3(0, 1, 2), uvec3(2, 3, 0),
+    // back
+    uvec3(4, 7, 6), uvec3(6, 5, 4),
+    // left
+    uvec3(0, 3, 7), uvec3(7, 4, 0),
+    // right
+    uvec3(1, 5, 6), uvec3(6, 2, 1),
+    // top
+    uvec3(3, 2, 6), uvec3(6, 7, 3),
+    // bottom
+    uvec3(0, 4, 5), uvec3(5, 1, 0)
+);
+
+layout(binding = 0) uniform PerFrame {
+    mat4 model;
+    mat4 view; 
+    mat4 proj;
+} ubo;
+
+layout(location = 0) out vec3 vColors[];  
+
+void main() {
+    SetMeshOutputsEXT(36, 12);
+
+    mat4 MVP = ubo.proj * ubo.view * ubo.model;
+
+    for (uint i = 0; i < 36; ++i) {
+        uint vertexIndex = cubeIndices[i / 3][i % 3];
+        gl_MeshVerticesEXT[i].gl_Position = MVP * vec4(cubeVertices[vertexIndex].pos, 1.0);
+        vColors[i] = cubeVertices[vertexIndex].color;
+        gl_PrimitiveTriangleIndicesEXT[i / 3] = uvec3(i - i % 3, i - i % 3 + 1, i - i % 3 + 2);
+    }
+}

@@ -1,0 +1,82 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 1, rgba8) uniform image2D image;
+
+layout(set = 0, binding = 2) uniform Camera {
+    vec3 camPos;
+    vec3 camForward;
+    vec3 camRight;
+    vec3 camUp;
+    vec2 resolution;
+} camera;
+
+layout(location = 0) rayPayloadEXT vec3 payload;
+
+/*void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size  = ivec2(gl_LaunchSizeEXT.xy);
+
+    // Normalized pixel coordinates (0..1)
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+
+    // Simple camera
+    vec3 origin = camPos;
+    vec3 dir = //normalize(vec3(uv * 2.0 - 1.0, 1.0));
+
+
+    payload = vec3(0.0);
+
+    traceRayEXT(
+        tlas,
+        gl_RayFlagsOpaqueEXT,
+        0xFF,
+        0,  // sbtRecordOffset
+        0,  // sbtRecordStride
+        0,  // missIndex
+        origin,
+        0.001,
+        dir,
+        10000.0,
+        0   // payload location
+    );
+
+    imageStore(image, pixel, vec4(payload.rgb, 1.0));
+} */
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size  = ivec2(gl_LaunchSizeEXT.xy);
+
+    // 1. Convert pixel to -1.0 to 1.0 range (Normalized Device Coordinates)
+    // We adjust for aspect ratio to prevent stretching
+    vec2 d = ((vec2(pixel) + 0.5) / camera.resolution) * 2.0 - 1.0;
+    float aspectRatio = camera.resolution.x / camera.resolution.y;
+
+    // 2. Compute the Ray Direction
+    // d.x scales the Right vector, d.y scales the Up vector
+    // We multiply d.x by aspectRatio so the field of view isn't squashed
+    vec3 origin = camera.camPos.bgr;
+    vec3 dir = normalize(camera.camForward + 
+                         d.x * camera.camRight * aspectRatio + 
+                         d.y * camera.camUp);
+
+    payload = vec3(0.0);
+
+    traceRayEXT(
+        tlas,
+        gl_RayFlagsOpaqueEXT,
+        0xFF,
+        0, 0, 0,     // sbtRecordOffset, sbtRecordStride, missIndex
+        origin,
+        0.001,       // tMin
+        dir,
+        10000.0,     // tMax
+        0            // payload location
+    );
+
+    imageStore(image, pixel, vec4(payload.rgb, 1.0));
+}
