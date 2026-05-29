@@ -63,6 +63,7 @@ namespace Fox {
                 TopLevelAccelerationStructure topLevelAccelerationStructure;
 
                 std::vector<VkAccelerationStructureInstanceKHR> instances;
+                std::vector<uint32_t> instanceBlasIndices;
                 std::unique_ptr<Fox::Graphics::Vulkan::Buffer> instanceBuffer;
 
                 VkBuffer scratchBuffer = VK_NULL_HANDLE;

@@ -246,7 +246,7 @@ namespace Fox {
 
 				raytracingScene = std::make_unique<Fox::Scene::Raytracing::RayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
 
-				mesh = Fox::Graphics::Geometry::GeometryGenerator::GeneratePlaneMesh(1, 1, 100.0f, 100.0f, 0.0f);
+				mesh = Fox::Graphics::Geometry::GeometryGenerator::GeneratePlaneMesh(1, 1, 1.0f, 1.0f, 0.0f);
 
 				vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
 				vertexBuffer->Create(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, mesh.GetVertices());
@@ -925,9 +925,9 @@ namespace Fox {
 
 					Fox::Graphics::Vulkan::CameraUBO cam;
 					cam.camPos = scene->GetMainCamera()->GetPosition(); //glm::vec3(0.0f);
-					cam.camForward = glm::vec3(0.0f, 0.0f, 1.0f);
-					cam.camRight = glm::vec3(1.0f, 0.0f, 0.0f);
-					cam.camUp = glm::vec3(0.0f, 1.0f, 0.0f);
+					cam.camForward = scene->GetMainCamera()->GetForward();
+					cam.camRight = scene->GetMainCamera()->GetRight();
+					cam.camUp = scene->GetMainCamera()->GetUp();
 					cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
 
 					frameResource->camUBO->Update(cam);
@@ -1011,9 +1011,9 @@ namespace Fox {
 
 				Fox::Graphics::Vulkan::CameraUBO cam;
 				cam.camPos = camera->GetPosition();
-				cam.camForward = glm::vec3(0.0f, 0.0f, 1.0f); //camera->GetForward(); // glm::vec3(0.0f, 0.0f, 1.0f);
-				cam.camRight = glm::vec3(1.0f, 0.0f, 0.0f); //camera->GetRight(); //glm::vec3(1.0f, 0.0f, 0.0f);
-				cam.camUp = glm::vec3(0.0f, 1.0f, 0.0f); //camera->GetUp(); //glm::vec3(0.0f, 1.0f, 0.0f);
+				cam.camForward = camera->GetForward();
+				cam.camRight = camera->GetRight();
+				cam.camUp = camera->GetUp();
 				cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
 
 				std::cout << camera->GetPosition().x << " " << camera->GetPosition().y << " " << camera->GetPosition().z << std::endl;

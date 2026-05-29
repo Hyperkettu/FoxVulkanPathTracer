@@ -14,9 +14,9 @@ namespace Fox {
         void MainScene::Update(float deltaTime) {}
 
         void MainScene::SetUpCamera(VkSurfaceCapabilitiesKHR capabilities) {
-			mainCamera = std::make_unique<Fox::Graphics::Vulkan::Camera>(45.0f, static_cast<float>(capabilities.currentExtent.width) / static_cast<float>(capabilities.currentExtent.height), 0.1f, 100.0f);
-			mainCamera->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f)); //5.0f));
-			mainCamera->SetCameraTarget(glm::vec3(0.0f, 0.0f, 1.0f));
+			mainCamera = std::make_unique<Fox::Graphics::Vulkan::Camera>(45.0f, static_cast<float>(capabilities.currentExtent.width) / static_cast<float>(capabilities.currentExtent.height), 0.1f, 1000.0f);
+			mainCamera->SetPosition(glm::vec3(0.0f, 0.0f, -5.0f));
+			mainCamera->SetCameraTarget(glm::vec3(0.0f, 0.0f, 0.0f));
 			mainCamera->SetWorldUp(glm::vec3(0.0f, 1.0f, 0.0f));
         }
 

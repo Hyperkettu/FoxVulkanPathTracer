@@ -167,9 +167,11 @@ namespace Fox {
                 instance.mask = mask;
                 instance.instanceShaderBindingTableRecordOffset = 0;
                 instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-                instance.accelerationStructureReference = bottomLevelAccelerationStructure[blasIndex].deviceAddress;
+                // Reference will be updated in BuildTLAS
+                instance.accelerationStructureReference = 0;
 
                 instances.push_back(instance);
+                instanceBlasIndices.push_back(blasIndex);
             }
 
             void RayTracingScene::BuildBLAS(VkCommandBuffer cmd)
@@ -203,6 +205,12 @@ namespace Fox {
                         blas.buffer,
                         blas.memory);
 
+                    // Destroy old scratch buffer if it exists
+                    if (scratchBuffer != VK_NULL_HANDLE) {
+                        vkDestroyBuffer(device, scratchBuffer, nullptr);
+                        vkFreeMemory(device, scratchMemory, nullptr);
+                    }
+
                     CreateScratchBuffer(
                         device,
                         physicalDevice,
@@ -231,6 +239,23 @@ namespace Fox {
 
             void RayTracingScene::BuildTLAS(VkCommandBuffer cmd)
             {
+                // Ensure BLAS builds are finished before building TLAS
+                VkMemoryBarrier barrier{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                    .dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                };
+
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                // Update instance references with actual BLAS addresses
+                for (size_t i = 0; i < instances.size(); ++i) {
+                    instances[i].accelerationStructureReference = bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
+                }
+
                 UploadInstanceBuffer();
 
                 VkDeviceAddress instanceAddress =

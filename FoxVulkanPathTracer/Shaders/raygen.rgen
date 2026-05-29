@@ -59,7 +59,7 @@ void main()
     // 2. Compute the Ray Direction
     // d.x scales the Right vector, d.y scales the Up vector
     // We multiply d.x by aspectRatio so the field of view isn't squashed
-    vec3 origin = camera.camPos.bgr;
+    vec3 origin = camera.camPos.rgb;
     vec3 dir = normalize(camera.camForward + 
                          d.x * camera.camRight * aspectRatio + 
                          d.y * camera.camUp);
