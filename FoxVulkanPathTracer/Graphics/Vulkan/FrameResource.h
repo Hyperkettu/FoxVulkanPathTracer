@@ -46,8 +46,7 @@ namespace Fox
                 std::unique_ptr<Fox::Graphics::Vulkan::DynamicConstantBuffer<glm::mat4>> meshTransformsUBO;
 				std::unique_ptr<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::MeshInfo>> meshInfosUBO;
 
-                // --- Dynamic or staging buffers ---
-                //Buffer stagingBuffer;               // optional: per-frame upload staging buffer
+                std::unique_ptr<Fox::Graphics::Vulkan::StorageTexture> storageTexture;
 
                 // --- Frame index tracking ---
                 uint32_t frameIndex;

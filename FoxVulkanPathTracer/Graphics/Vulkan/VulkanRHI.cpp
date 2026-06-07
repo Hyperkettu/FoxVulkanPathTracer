@@ -282,72 +282,13 @@ namespace Fox {
 					.End()
 					.SubmitAndWait(graphicsQueue);
 
+				for (auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
 
-				storageImages.resize(config.MAX_FRAMES_IN_FLIGHT + 1);
-				storageImageMemorys.resize(config.MAX_FRAMES_IN_FLIGHT  + 1);
-				storageImageViews.resize(config.MAX_FRAMES_IN_FLIGHT + 1);
+					auto frameResource = frameResources[i].get();
 
-
-				for (auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT + 1; i++) {
-
-					VkImageCreateInfo imageInfo{
-						.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-						.imageType = VK_IMAGE_TYPE_2D,
-						.format = VK_FORMAT_R8G8B8A8_UNORM, // good default
-						.extent = {
-							.width = capabilities.currentExtent.width,
-							.height = capabilities.currentExtent.height,
-							.depth = 1
-						},
-						.mipLevels = 1,
-						.arrayLayers = 1,
-						.samples = VK_SAMPLE_COUNT_1_BIT,
-						.tiling = VK_IMAGE_TILING_OPTIMAL,
-						.usage =
-							VK_IMAGE_USAGE_STORAGE_BIT |
-							VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-							VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-						.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
-					};
-
-					vkCreateImage(device, &imageInfo, nullptr, &storageImages[i]);
-
-					VkMemoryRequirements memReq;
-					vkGetImageMemoryRequirements(device, storageImages[i], &memReq);
-
-					uint32_t memoryTypeIndex = Buffer::FindMemoryType(
-						physicalDevice,
-						memReq.memoryTypeBits,
-						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-					);
-
-					VkMemoryAllocateInfo allocInfo{
-						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-						.allocationSize = memReq.size,
-						.memoryTypeIndex = memoryTypeIndex
-					};
-
-					vkAllocateMemory(device, &allocInfo, nullptr, &storageImageMemorys[i]);
-					vkBindImageMemory(device, storageImages[i], storageImageMemorys[i], 0);
-
-
-
-					VkImageViewCreateInfo viewInfo{
-						.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-						.image = storageImages[i],
-						.viewType = VK_IMAGE_VIEW_TYPE_2D,
-						.format = VK_FORMAT_R8G8B8A8_UNORM,
-						.subresourceRange = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-							.baseMipLevel = 0,
-							.levelCount = 1,
-							.baseArrayLayer = 0,
-							.layerCount = 1
-						}
-					};
-
-					vkCreateImageView(device, &viewInfo, nullptr, &storageImageViews[i]);
+					frameResource->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
+						VK_FORMAT_R8G8B8A8_UNORM,
+						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
 
 					VkImageMemoryBarrier barrier{
 						.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -355,7 +296,7 @@ namespace Fox {
 						.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 						.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 						.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-						.image = storageImages[i],
+						.image = frameResource->storageTexture->GetImage(),
 						.subresourceRange = {
 							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 							.baseMipLevel = 0,
@@ -379,7 +320,7 @@ namespace Fox {
 					std::unique_ptr<Fox::Graphics::Vulkan::CommandList> cmdList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, frameResources[0]->commandPool->Get());
 
 					cmdList->Begin()
-						.TransitionImageLayout(storageImages[i], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+						.TransitionImageLayout(frameResource->storageTexture->GetImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
 							subresourceRange, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
 						.End().SubmitAndWait(graphicsQueue);
 
@@ -733,15 +674,15 @@ namespace Fox {
 						raytracingPipeline->GetHitRegion(), 
 						raytracingPipeline->GetCallableRegion(), capabilities.currentExtent.width, capabilities.currentExtent.height)
 				//	.EndRenderPass()
-					.TransitionImageLayout(storageImages[currentFrame], VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
+					.TransitionImageLayout(frameResource->storageTexture->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresourceRange, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 					.TransitionImageLayout(swapchain->GetImage(imageIndex), VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 
-					.CopyImage(storageImages[currentFrame], swapchain->GetImage(imageIndex), capabilities.currentExtent.width, capabilities.currentExtent.height)
+					.CopyImage(frameResource->storageTexture->GetImage(), swapchain->GetImage(imageIndex), capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.TransitionImageLayout(swapchain->GetImage(imageIndex), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, subresourceRange, 
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-					.TransitionImageLayout(storageImages[currentFrame], VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, subresourceRange,
+					.TransitionImageLayout(frameResource->storageTexture->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, subresourceRange,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
 					.End()
 					.Submit(graphicsQueue, frameResource->imageAvailableSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
@@ -935,6 +876,8 @@ namespace Fox {
 
 				for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
 
+					auto& frameResource = frameResources[i];
+
 					/*	frameResources[i]->offscreenDescriptorSet->ClearWrites();
 						frameResources[i]->offscreenDescriptorSet->SetConstantBuffer(0, frameResources[i]->oldPerFrameUBO);
 						frameResources[i]->offscreenDescriptorSet->SetShaderResourceTexture(1, Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetShaderResourceTexture(Fox::Graphics::Managers::Vulkan::ShaderResourceTexture::BOX).get());
@@ -953,7 +896,7 @@ namespace Fox {
 					frameResources[i]->perFrameDescriptorSet->ClearWrites();
 					auto tlas = raytracingScene->GetTLAS(); 
 					frameResources[i]->perFrameDescriptorSet->SetAccelerationStructure(0, tlas);
-					frameResources[i]->perFrameDescriptorSet->SetStorageImage(1, storageImageViews[i]);
+					frameResources[i]->perFrameDescriptorSet->SetStorageImage(1, frameResource->storageTexture->GetView());
 					frameResources[i]->perFrameDescriptorSet->SetConstantBuffer(2, frameResources[i]->camUBO);
 					frameResources[i]->perFrameDescriptorSet->Update();
 
@@ -1015,8 +958,6 @@ namespace Fox {
 				cam.camRight = camera->GetRight();
 				cam.camUp = camera->GetUp();
 				cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
-
-				std::cout << camera->GetPosition().x << " " << camera->GetPosition().y << " " << camera->GetPosition().z << std::endl;
 
 				frameResources[currentFrame]->camUBO->Update(cam);
 

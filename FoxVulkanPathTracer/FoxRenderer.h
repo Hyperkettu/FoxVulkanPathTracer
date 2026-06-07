@@ -51,6 +51,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Fence.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Semaphore.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Texture.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/StorageTexture.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ShaderResourceTexture.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/RenderTargetTexture.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DepthTexture.h"

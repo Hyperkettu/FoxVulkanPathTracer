@@ -112,12 +112,6 @@ namespace Fox {
 				std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer> vertexBuffer;
 				std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer> indexBuffer;
 
-				std::vector<VkImage> storageImages;
-				std::vector<VkDeviceMemory> storageImageMemorys;
-				std::vector<VkImageView> storageImageViews;// = VK_NULL_HANDLE;
-
-
-
 				Fox::Graphics::Geometry::Vulkan::Mesh mesh;
 			};
 
