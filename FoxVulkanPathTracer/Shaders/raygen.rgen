@@ -14,38 +14,6 @@ layout(set = 0, binding = 2) uniform Camera {
 
 layout(location = 0) rayPayloadEXT vec3 payload;
 
-/*void main()
-{
-    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-    ivec2 size  = ivec2(gl_LaunchSizeEXT.xy);
-
-    // Normalized pixel coordinates (0..1)
-    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
-
-    // Simple camera
-    vec3 origin = camPos;
-    vec3 dir = //normalize(vec3(uv * 2.0 - 1.0, 1.0));
-
-
-    payload = vec3(0.0);
-
-    traceRayEXT(
-        tlas,
-        gl_RayFlagsOpaqueEXT,
-        0xFF,
-        0,  // sbtRecordOffset
-        0,  // sbtRecordStride
-        0,  // missIndex
-        origin,
-        0.001,
-        dir,
-        10000.0,
-        0   // payload location
-    );
-
-    imageStore(image, pixel, vec4(payload.rgb, 1.0));
-} */
-
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);

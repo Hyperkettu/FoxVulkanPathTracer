@@ -106,13 +106,13 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer;C:\VulkanSDK\1.4.328.1\Include;D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.328.1\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer;C:\VulkanSDK\1.4.328.1\Include;D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -134,7 +134,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.328.1\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -254,11 +254,14 @@
     <None Include="Shaders\basic.frag" />
     <None Include="Shaders\basic_color.frag" />
     <None Include="Shaders\closest_hit.rchit" />
+    <None Include="Shaders\closest_hit.slang" />
     <None Include="Shaders\cube.mesh" />
     <None Include="Shaders\generic_mesh.mesh" />
     <None Include="Shaders\miss.rmiss" />
+    <None Include="Shaders\miss.slang" />
     <None Include="Shaders\multi_generic_mesh.mesh" />
     <None Include="Shaders\raygen.rgen" />
+    <None Include="Shaders\raygen.slang" />
     <None Include="Shaders\textured.frag" />
     <None Include="Shaders\texturedCube.mesh" />
     <None Include="Shaders\textured_icosahedron.frag" />

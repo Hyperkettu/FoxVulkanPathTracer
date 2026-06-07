@@ -122,7 +122,7 @@ namespace Fox {
                     front = glm::normalize(front);
                     this->front = front;
                     // Recalculate right and up vectors
-                    right = glm::normalize(glm::cross(-front, worldUp));          
+                    right = glm::normalize(glm::cross(front, worldUp));          
                     up = glm::normalize(glm::cross(right, front));
                 }
 
@@ -134,8 +134,6 @@ namespace Fox {
                 void UpdateProjectionMatrix()
                 {
                     projection = glm::perspective(fov, aspect, near, far);
-                    // Vulkan: flip Y and adjust depth range
-                    projection[1][1] *= -1.0f;
                 }
 
             private:

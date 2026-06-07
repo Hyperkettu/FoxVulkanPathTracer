@@ -20,7 +20,7 @@ namespace Fox {
 				// Create Vulkan instance
 				VkApplicationInfo appInfo{};
 				appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-				appInfo.pApplicationName = "Fox Vulkan Renderer";
+				appInfo.pApplicationName = "Fox Vulkan Path Tracing Renderer";
 				appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
 				appInfo.pEngineName = "No Engine";
 				appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -584,8 +584,8 @@ namespace Fox {
 				std::vector<VkSurfaceFormatKHR> formats(formatCount);
 				vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats.data());
 
-				// just pick first
-				surfaceFormat = formats[0];
+				// pick 2  because it's usually VK_FORMAT_R8G8B8A8_UNORM
+				surfaceFormat = formats[2];
 
 				return 1;
 			}

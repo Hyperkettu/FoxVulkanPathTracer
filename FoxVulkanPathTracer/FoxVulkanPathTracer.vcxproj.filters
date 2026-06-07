@@ -440,5 +440,14 @@
     <None Include="Shaders\raygen.rgen">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\raygen.slang">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\closest_hit.slang">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\miss.slang">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>
