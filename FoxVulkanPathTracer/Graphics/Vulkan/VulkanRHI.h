@@ -41,7 +41,7 @@ namespace Fox {
 
 			private:
 
-				VkShaderModule CreateShaderModule(
+				/*VkShaderModule CreateShaderModule(
 					VkDevice device,
 					uint32_t* spirv,
 					size_t size
@@ -56,7 +56,7 @@ namespace Fox {
 					VkShaderModule module;
 					vkCreateShaderModule(device, &info, nullptr, &module);
 					return module;
-				}
+				}*/
 
 				VkDeviceAddress GetBufferDeviceAddress(VkBuffer buffer)
 				{
@@ -105,8 +105,8 @@ namespace Fox {
 				Fox::Core::Connection keyInputBind;
 
 				std::unique_ptr<Fox::Scene::Raytracing::RayTracingScene> raytracingScene;
-				std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> raytracingPipeline;
-				VkPipelineLayout raytracingPipelineLayout;
+			//	std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> raytracingPipeline;
+			//	VkPipelineLayout raytracingPipelineLayout;
 
 
 				std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer> vertexBuffer;

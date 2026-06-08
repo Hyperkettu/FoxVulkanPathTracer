@@ -17,7 +17,8 @@ namespace Fox {
                 VkPhysicalDevice physicalDevice,
                 VkDeviceSize size,
                 VkBuffer& buffer,
-                VkDeviceMemory& memory)
+                VkDeviceMemory& memory, 
+                const std::string& name = "")
             {
                 VkBufferCreateInfo bufferInfo{
                     .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -28,6 +29,13 @@ namespace Fox {
                 };
 
                 vkCreateBuffer(device, &bufferInfo, nullptr, &buffer);
+
+#ifdef _DEBUG
+                if (name.size() > 0) {
+                    Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
+                    Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, buffer, name);
+                }
+#endif
 
                 VkMemoryRequirements memReq;
                 vkGetBufferMemoryRequirements(device, buffer, &memReq);
@@ -211,12 +219,17 @@ namespace Fox {
                         vkFreeMemory(device, scratchMemory, nullptr);
                     }
 
+                    std::stringstream ss;
+                    ss << "Scratch Buffer ";
+                    ss << blas.primitiveCount;
+
                     CreateScratchBuffer(
                         device,
                         physicalDevice,
                         sizeInfo.buildScratchSize,
                         scratchBuffer,
-                        scratchMemory);
+                        scratchMemory, 
+                        "Scratch Buffer");
 
                     buildInfo.dstAccelerationStructure = blas.handle;
                     buildInfo.scratchData.deviceAddress = GetBufferAddress(scratchBuffer);
@@ -234,6 +247,11 @@ namespace Fox {
                     };
                     blas.deviceAddress =
                         vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
+
+                    if (scratchBuffer != VK_NULL_HANDLE) {
+                        vkDestroyBuffer(device, scratchBuffer, nullptr);
+                        vkFreeMemory(device, scratchMemory, nullptr);
+                    }
                 }
             }
 

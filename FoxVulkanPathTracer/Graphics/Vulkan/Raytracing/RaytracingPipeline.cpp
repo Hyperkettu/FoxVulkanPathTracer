@@ -23,10 +23,16 @@ namespace Fox {
 
                 RayTracingPipeline::RayTracingPipeline(
                     VkDevice device,
-                    VkPhysicalDevice physicalDevice)
+                    VkPhysicalDevice physicalDevice,
+                    VkPipelineLayout pipelineLayout,
+                    const std::vector<VkPipelineShaderStageCreateInfo>& stages,
+                    const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
+                    uint32_t maxRecursionDepth)
                     : device(device)
                     , physicalDevice(physicalDevice)
+                    , pipeline(pipeline)    
                 {
+					Create(pipelineLayout, stages, groups, maxRecursionDepth);
                 }
 
                 RayTracingPipeline::~RayTracingPipeline()
@@ -71,7 +77,7 @@ namespace Fox {
 
                     assert(res == VK_SUCCESS);
 
-                    CreateSBT(uint32_t(groups.size()));
+                    CreateSBT(uint32_t(groups.size()), "Raytracign SBT");
                 }
 
                 void RayTracingPipeline::Bind(VkCommandBuffer cmd) const
@@ -82,7 +88,7 @@ namespace Fox {
                         pipeline);
                 }
 
-                void RayTracingPipeline::CreateSBT(uint32_t groupCount)
+                void RayTracingPipeline::CreateSBT(uint32_t groupCount, const std::string& name)
                 {
                     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps{
                         .sType =
@@ -180,6 +186,13 @@ namespace Fox {
                     missRegion = { baseAddress + raygenSize, handleSize, missSize };
                     hitRegion = { baseAddress + raygenSize + missSize, handleSize, hitSize };
                     callableRegion = {};
+
+#ifdef _DEBUG
+                    if (name.size() > 0) {
+                        Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(sbtBuffer), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
+                        Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, sbtBuffer, name);
+                    }
+#endif
                 }
             }
         }

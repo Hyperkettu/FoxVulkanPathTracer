@@ -36,7 +36,8 @@ namespace Fox {
                     VkPhysicalDevice physicalDevice,
                     VkCommandPool commandPool,
                     VkQueue transferQueue,
-                    const std::vector<VertexType>& vertices)
+                    const std::vector<VertexType>& vertices,
+                    const std::string& name = "")
                 {
                     this->device = device;
                     vertexCount = static_cast<uint32_t>(vertices.size());
@@ -58,6 +59,13 @@ namespace Fox {
                             VkMemoryPropertyFlagBits::VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT); 
 
                     CopyBuffer(device, commandPool, transferQueue, stagingBuffer->Get(), buffer->Get(), bufferSize);
+
+#ifdef _DEBUG
+                    if (name.size() > 0) {
+                        Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer->Get()), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
+                        Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, buffer->Get(), name);
+                    }
+#endif
                 }
 
                /*

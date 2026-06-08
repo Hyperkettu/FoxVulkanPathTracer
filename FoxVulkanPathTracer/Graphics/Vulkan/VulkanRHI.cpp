@@ -119,9 +119,9 @@ namespace Fox {
 				Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline::RegisterExtensionFunctions(device);
 				Fox::Scene::Raytracing::RayTracingScene::RegisterExtensionFunctions(device);
 
-				raytracingPipeline = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(device, physicalDevice);
+				//raytracingPipeline = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(device, physicalDevice);
 
-				VkDescriptorSetLayoutBinding bindings[3]{};
+				/*VkDescriptorSetLayoutBinding bindings[3]{};
 
 				// TLAS
 				bindings[0] = {
@@ -165,44 +165,44 @@ namespace Fox {
 				};
 
 				vkCreatePipelineLayout(
-					device, &pipelineLayoutInfo, nullptr, &raytracingPipelineLayout);
+					device, &pipelineLayoutInfo, nullptr, &raytracingPipelineLayout); */
 
-				std::vector<VkPipelineShaderStageCreateInfo> stages;
+				//std::vector<VkPipelineShaderStageCreateInfo> stages;
 
-				std::vector<char> raygenCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/raygen.spv");
-				VkShaderModule raygenModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(raygenCode.data()), raygenCode.size());
+				//std::vector<char> raygenCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/raygen.spv");
+				//VkShaderModule raygenModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(raygenCode.data()), raygenCode.size());
 
-				std::vector<char> missCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/miss.spv");
-				VkShaderModule missModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(missCode.data()), missCode.size());
+				//std::vector<char> missCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/miss.spv");
+				//VkShaderModule missModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(missCode.data()), missCode.size());
 
-				std::vector<char> chitCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/closestHit.spv");
-				VkShaderModule chitModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(chitCode.data()), chitCode.size());
+				//std::vector<char> chitCode = Fox::Core::FileSystem::ReadBinaryFile("Shaders/closestHit.spv");
+				//VkShaderModule chitModule = CreateShaderModule(device, reinterpret_cast<uint32_t*>(chitCode.data()), chitCode.size());
 
-				// RayGen
-				stages.push_back({
-					.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-					.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
-					.module = raygenModule,
-					.pName = "main"
-					});
+				//// RayGen
+				//stages.push_back({
+				//	.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				//	.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+				//	.module = raygenModule,
+				//	.pName = "main"
+				//	});
 
-				// Miss
-				stages.push_back({
-					.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-					.stage = VK_SHADER_STAGE_MISS_BIT_KHR,
-					.module = missModule,
-					.pName = "main"
-					});
+				//// Miss
+				//stages.push_back({
+				//	.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				//	.stage = VK_SHADER_STAGE_MISS_BIT_KHR,
+				//	.module = missModule,
+				//	.pName = "main"
+				//	});
 
-				// Closest Hit
-				stages.push_back({
-					.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-					.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-					.module = chitModule,
-					.pName = "main"
-					});
+				//// Closest Hit
+				//stages.push_back({
+				//	.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				//	.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+				//	.module = chitModule,
+				//	.pName = "main"
+				//	});
 
-				VkRayTracingShaderGroupCreateInfoKHR raygenGroup{
+				/*VkRayTracingShaderGroupCreateInfoKHR raygenGroup{
 					.sType =
 						VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
 					.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
@@ -242,17 +242,17 @@ namespace Fox {
 				raytracingPipeline->Create(
 					raytracingPipelineLayout,
 					stages,
-					shaderGroups);
+					shaderGroups);*/
 
 				raytracingScene = std::make_unique<Fox::Scene::Raytracing::RayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
 
 				mesh = Fox::Graphics::Geometry::GeometryGenerator::GeneratePlaneMesh(1, 1, 1.0f, 1.0f, 0.0f);
 
 				vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
-				vertexBuffer->Create(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, mesh.GetVertices());
+				vertexBuffer->Create(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, mesh.GetVertices(), "Raytracing Plane Vertex Buffer");
 
 				indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
-				indexBuffer->Create(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, mesh.GetIndices());
+				indexBuffer->Create(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, mesh.GetIndices(), "Raytracing Plane Index Buffer");
 
 				VkDeviceAddress vertexAddress = GetBufferDeviceAddress(vertexBuffer->Get());
 				VkDeviceAddress indexAddress = GetBufferDeviceAddress(indexBuffer->Get());
@@ -373,6 +373,13 @@ namespace Fox {
 				offscreenTarget = nullptr;
 
 				swapchain = nullptr;
+
+				indexBuffer = nullptr;
+				vertexBuffer = nullptr;
+			//	vkDestroyPipelineLayout(device, raytracingPipelineLayout, nullptr);
+			//	raytracingPipeline = nullptr;
+				raytracingScene = nullptr;	
+				
 
 				Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().Destroy(); 
 				Fox::Graphics::Managers::Vulkan::PipelineManager::Get().Destroy();
@@ -653,17 +660,15 @@ namespace Fox {
 					.Submit(graphicsQueue, frameResource->offscreenFinishedSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
 				*/
 
-				std::array<VkClearValue, 2> clearValuesPost{}; 
-				clearValuesPost[0].color = { 1.0f, 0.0f, 1.0f, 1.0f };
-				clearValuesPost[1].depthStencil = { 1.0f, 0 };
 
 				VkImageSubresourceRange subresourceRange = {
 						VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
 				};
 
+				auto& raytracingPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipeline(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE);
+				auto raytracingPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipelineLayout(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
+
 				frameResource->commandList->Begin() 
-				//	.BeginRenderPass(Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT)->Get(), 
-				//		swapchain->GetFramebuffer(imageIndex), capabilities.currentExtent, &clearValuesPost[0], 2) 
 					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
 					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
@@ -673,7 +678,6 @@ namespace Fox {
 						raytracingPipeline->GetMissRegion(),
 						raytracingPipeline->GetHitRegion(), 
 						raytracingPipeline->GetCallableRegion(), capabilities.currentExtent.width, capabilities.currentExtent.height)
-				//	.EndRenderPass()
 					.TransitionImageLayout(frameResource->storageTexture->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresourceRange, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 					.TransitionImageLayout(swapchain->GetImage(imageIndex), VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -818,7 +822,7 @@ namespace Fox {
 			}
 
 			int32_t VulkanRHI::InitializePipelines() {
-				Fox::Graphics::Managers::Vulkan::PipelineManager::Get().Initialize(device, capabilities);
+				Fox::Graphics::Managers::Vulkan::PipelineManager::Get().Initialize(device, physicalDevice, capabilities);
 				std::cout << "Graphics pipeline successfully created" << std::endl;
 				return 1;
 			}
@@ -827,6 +831,9 @@ namespace Fox {
 				Fox::Graphics::Vulkan::CommandList::RegisterRenderMeshShaderFunction(
 					reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT")),
 					reinterpret_cast<PFN_vkCmdTraceRaysKHR>(vkGetDeviceProcAddr(device, "vkCmdTraceRaysKHR")));
+				Fox::Graphics::Vulkan::CommandList::RegisterObjectNameFunction(
+					reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT")));
+				Fox::Graphics::Vulkan::CommandList::RegisterGetObjectName(reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(vkGetDeviceProcAddr(device, "vkGetObjectNameEXT")));
 			}
 
 			int32_t VulkanRHI::CreateUniformBuffers() {
@@ -844,7 +851,7 @@ namespace Fox {
 
 				for(auto& frameResource : frameResources)
 				{
-					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::MAIN_MESH_SHADER)->AllocateSet());
+					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet());
 					frameResource->offscreenDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN)->AllocateSet());
 
 					frameResource->perFrameDescriptorSet->Reserve(2);

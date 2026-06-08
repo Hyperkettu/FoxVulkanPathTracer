@@ -26,6 +26,7 @@ namespace Fox {
 				perFrameUBO = nullptr;
 				meshTransformsUBO = nullptr;
 				meshInfosUBO = nullptr;
+                camUBO = nullptr;
                 commandList = nullptr;
                 offscreenCommandList = nullptr;
 				commandPool = nullptr;

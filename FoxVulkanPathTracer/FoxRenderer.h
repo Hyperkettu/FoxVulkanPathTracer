@@ -10,6 +10,9 @@
 #include <fstream>
 #include <sstream>
 #include <array>
+#include <iomanip>
+
+#define SAFE_DELETE(ptr) do { delete (ptr); (ptr) = nullptr; } while(0)
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -20,6 +23,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "STB_image/stb_image.h"
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Util.h"
 
 #include "FoxVulkanPathTracer/Core/Singleton.h"
 #include "FoxVulkanPathTracer/Core/Connection.h"
@@ -37,6 +42,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/CommandPool.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/CommandList.h"

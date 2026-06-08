@@ -14,7 +14,11 @@ namespace Fox {
                 public:
                     RayTracingPipeline(
                         VkDevice device,
-                        VkPhysicalDevice physicalDevice);
+                        VkPhysicalDevice physicalDevice,
+                        VkPipelineLayout pipelineLayout,
+                        const std::vector<VkPipelineShaderStageCreateInfo>& stages,
+                        const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
+                        uint32_t maxRecursionDepth = 1);
 
                     ~RayTracingPipeline();
 
@@ -42,7 +46,7 @@ namespace Fox {
                     }
 
                 private:
-                    void CreateSBT(uint32_t groupCount);
+                    void CreateSBT(uint32_t groupCount, const std::string& name = "");
 
                 private:
                     VkDevice device;

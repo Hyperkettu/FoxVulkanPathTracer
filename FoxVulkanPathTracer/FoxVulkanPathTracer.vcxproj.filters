@@ -240,6 +240,12 @@
     <ClCompile Include="Graphics\Vulkan\StorageTexture.cpp">
       <Filter>Private\Graphics\Vulkan</Filter>
     </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.cpp">
+      <Filter>Private\Graphics\Vulkan\Raytracing</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Vulkan\Util.cpp">
+      <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FoxRenderer.h">
@@ -411,6 +417,12 @@
       <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Vulkan\StorageTexture.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.h">
+      <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Util.h">
       <Filter>Public\Graphics\Vulkan</Filter>
     </ClInclude>
   </ItemGroup>

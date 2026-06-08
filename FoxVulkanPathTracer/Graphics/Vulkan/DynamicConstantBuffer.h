@@ -15,11 +15,17 @@ namespace Vulkan {
 
         DynamicConstantBuffer(VkDevice device,
                               VkPhysicalDevice physicalDevice,
-                              VkBufferUsageFlags usageFlags = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                              const std::string& name = "",
+                              VkBufferUsageFlags usageFlags = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                               VkMemoryPropertyFlags memoryProperties =
                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
             : device(device), physicalDevice(physicalDevice), usageFlags(usageFlags), memoryProperties(memoryProperties)
         {
+#ifdef _DEBUG
+            if (name.size() > 0) {
+                this->name = name;
+            }
+#endif
         }
 
         DynamicConstantBuffer(const DynamicConstantBuffer&) = delete;
@@ -73,6 +79,14 @@ namespace Vulkan {
                 usageFlags,
                 memoryProperties
             );
+
+#ifdef _DEBUG
+            if (name.size() > 0) {
+                Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer->Get()), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
+                Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, buffer->Get(), name);
+                this->name = name;
+            }
+#endif
         }
 
     private:
@@ -82,6 +96,8 @@ namespace Vulkan {
         VkMemoryPropertyFlags memoryProperties{};
         std::unique_ptr<Buffer> buffer;
         VkDeviceSize currentSize = 0;
+
+        std::string name = "";
     };
 
 } // namespace Vulkan

@@ -179,7 +179,35 @@ namespace Fox {
                         }
 
                         vkCmdTraceRaysKHR = raytracingFuncPointer;
+                    }
 
+                    static void RegisterGetObjectName(PFN_vkDebugMarkerSetObjectNameEXT getName) {
+                        vkGetObjectNameEXT = getName;
+                    }
+
+                    static void RegisterObjectNameFunction(PFN_vkSetDebugUtilsObjectNameEXT funcPtr)
+                    {
+                        vkSetDebugUtilsObjectNameEXT = funcPtr;
+                        if (!vkSetDebugUtilsObjectNameEXT) {
+                            std::cerr << "Could not load vkSetDebugUtilsObjectNameEXT" << std::endl;
+                            exit(1);
+                        }
+					}
+
+                    static void SetName(std::string name, uint64_t objectHandle, VkObjectType objectType, VkDevice device)
+                    {
+                        if (vkSetDebugUtilsObjectNameEXT) {
+                            VkDebugUtilsObjectNameInfoEXT nameInfo{};
+                            nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+                            nameInfo.objectType = objectType;
+                            nameInfo.objectHandle = objectHandle;
+                            nameInfo.pObjectName = name.c_str();
+                            vkSetDebugUtilsObjectNameEXT(device, &nameInfo);
+                        }
+					}
+
+                    static void PrintBufferNameAndAddress(VkDevice device, VkBuffer buffer, const std::string& name) {
+                        Fox::Graphics::Vulkan::PrintBufferDetails(device, buffer, name);
                     }
 
                     CommandList& SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height, float minDepth = 0.0f, float maxDepth = 1.0f)
@@ -458,7 +486,8 @@ namespace Fox {
 
                     static PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT;
                     static PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
-
+                    static PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT;
+                    static PFN_vkDebugMarkerSetObjectNameEXT vkGetObjectNameEXT;
                 };
 
         }

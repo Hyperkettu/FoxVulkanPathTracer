@@ -13,12 +13,12 @@ namespace Fox
                 void Destroy(VkDevice device);
 
                 int32_t CreateConstantBuffers(VkDevice device, VkPhysicalDevice physicalDevice) {
-                    oldPerFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::OldFrame>>(device, physicalDevice);
-                    perFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::PerFrame>>(device, physicalDevice);
-                    camUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::CameraUBO>>(device, physicalDevice);
+                    oldPerFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::OldFrame>>(device, physicalDevice, "Old Per Frame UBO");
+                    perFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::PerFrame>>(device, physicalDevice, "Per Frame UBO");
+                    camUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::CameraUBO>>(device, physicalDevice, "Camera UBO");
 
-                    meshTransformsUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicConstantBuffer<glm::mat4>>(device, physicalDevice);
-                    meshInfosUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::MeshInfo>>(device, physicalDevice);
+                    meshTransformsUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicConstantBuffer<glm::mat4>>(device, physicalDevice, "Mesh Transforms UBO");
+                    meshInfosUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::MeshInfo>>(device, physicalDevice, "Mesh Infos UBO");
 
                     return 1;
 				}

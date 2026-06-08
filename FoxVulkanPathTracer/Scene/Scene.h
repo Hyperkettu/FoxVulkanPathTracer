@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <memory>
+#include <cstring>
 
 namespace Fox {
 
@@ -48,10 +49,10 @@ namespace Fox {
 
             void BuildBuffers(VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue queue) {
                 vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
-                vertexBuffer->Create(device, physicalDevice, commandPool, queue, sceneVertices);
+                vertexBuffer->Create(device, physicalDevice, commandPool, queue, sceneVertices, "Scene Vertex Buffer");
 
                 indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
-                indexBuffer->Create(device, physicalDevice, commandPool, queue, sceneIndices);
+                indexBuffer->Create(device, physicalDevice, commandPool, queue, sceneIndices, "Scene Index Buffer");
             }
 
          //   std::vector<std::shared_ptr<Fox::Scene::Entity>> entities;

@@ -11,8 +11,8 @@ namespace Fox {
 			namespace Vulkan {
 
 				enum class Descriptor : int32_t {
-					MAIN_MESH_SHADER = 0,
-					OFFSCREEN = 1
+					OFFSCREEN = 0,
+					RAY_TRACING
 				};
 
 				class DescriptorManager : public Fox::Core::Singleton<DescriptorManager> {
