@@ -8,7 +8,7 @@
 
 namespace Fox {
     namespace Scene {
-        namespace Raytracing {
+        namespace RayTracing {
 
             class RayTracingScene {
             public:
@@ -19,6 +19,13 @@ namespace Fox {
                     uint32_t queueFamilyIndex);
 
                 ~RayTracingScene();
+
+                virtual void Initialize() = 0;
+                virtual void Update(float dt) = 0;
+
+                void Build();
+
+                void AddMesh(Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform);
 
                 uint32_t AddBLAS(
                     VkBuffer vertexBuffer,
@@ -66,6 +73,9 @@ namespace Fox {
                 std::vector<uint32_t> instanceBlasIndices;
                 std::unique_ptr<Fox::Graphics::Vulkan::Buffer> instanceBuffer;
 
+                std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool;
+
+
                 VkBuffer scratchBuffer = VK_NULL_HANDLE;
                 VkDeviceMemory scratchMemory = VK_NULL_HANDLE;
 
@@ -85,6 +95,9 @@ namespace Fox {
                 static PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
                 static PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
                 static PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
+
+                std::vector<std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer>> vertexBuffers;
+                std::vector<std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer>> indexBuffers;
             };
 
         } // Raytracing

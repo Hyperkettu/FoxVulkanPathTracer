@@ -35,6 +35,15 @@ namespace Fox {
                 // Reset cout stream formatting back to normal/dec
                 std::cout << std::dec << std::nouppercase;
             }
+
+            VkDeviceAddress GetBufferDeviceAddress(VkDevice device, VkBuffer buffer)
+            {
+                VkBufferDeviceAddressInfo info{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+                    .buffer = buffer
+                };
+                return vkGetBufferDeviceAddress(device, &info);
+            }
 		
 		}
 

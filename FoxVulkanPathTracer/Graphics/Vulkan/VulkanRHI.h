@@ -40,33 +40,6 @@ namespace Fox {
 				void Present(const std::unique_ptr<Fox::Graphics::Vulkan::Swapchain>& swapchain, uint32_t imageIndex, std::unique_ptr<Fox::Graphics::Vulkan::Semaphore>& semaphore);
 
 			private:
-
-				/*VkShaderModule CreateShaderModule(
-					VkDevice device,
-					uint32_t* spirv,
-					size_t size
-					)
-				{
-					VkShaderModuleCreateInfo info{
-						.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-						.codeSize = size,
-						.pCode = spirv
-					};
-
-					VkShaderModule module;
-					vkCreateShaderModule(device, &info, nullptr, &module);
-					return module;
-				}*/
-
-				VkDeviceAddress GetBufferDeviceAddress(VkBuffer buffer)
-				{
-					VkBufferDeviceAddressInfo info{
-						.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-						.buffer = buffer
-					};
-					return vkGetBufferDeviceAddress(device, &info);
-				}
-
 				VkInstance instance;
 				VkSurfaceKHR surface;
 				VkPhysicalDevice physicalDevice;			
@@ -104,15 +77,8 @@ namespace Fox {
 				Fox::Core::Connection mouseInputBind;
 				Fox::Core::Connection keyInputBind;
 
-				std::unique_ptr<Fox::Scene::Raytracing::RayTracingScene> raytracingScene;
-			//	std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> raytracingPipeline;
-			//	VkPipelineLayout raytracingPipelineLayout;
+				std::unique_ptr<Fox::Scene::RayTracing::MainRayTracingScene> raytracingScene;
 
-
-				std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer> vertexBuffer;
-				std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer> indexBuffer;
-
-				Fox::Graphics::Geometry::Vulkan::Mesh mesh;
 			};
 
 		}

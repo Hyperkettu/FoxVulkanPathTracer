@@ -7,7 +7,7 @@ namespace Fox {
 		namespace Vulkan {
 		
 			void PrintBufferDetails(VkDevice device, VkBuffer buffer, const std::string& fallbackName = "Unknown");
-		
+			VkDeviceAddress GetBufferDeviceAddress(VkDevice device, VkBuffer buffer);
 		}
 
 	}

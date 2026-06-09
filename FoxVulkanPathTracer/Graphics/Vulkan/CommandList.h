@@ -4,6 +4,14 @@
 #include <vector>
 
 namespace Fox {
+
+    namespace Scene {
+        
+        namespace RayTracing {
+         
+            class RayTracingScene;
+        }
+    }
     
 	namespace Graphics {
 
@@ -94,11 +102,7 @@ namespace Fox {
                         return *this;
                     }
 
-                    CommandList& BuildAccelerationStructures(Fox::Scene::Raytracing::RayTracingScene& raytracingScene) {
-                        raytracingScene.BuildBLAS(cmd);
-                        raytracingScene.BuildTLAS(cmd);
-                        return *this;
-                    }
+                    CommandList& BuildAccelerationStructures(Fox::Scene::RayTracing::RayTracingScene& raytracingScene);
 
                     CommandList& BindPipeline(VkPipeline pipeline, VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS)
                     {

@@ -88,6 +88,9 @@
     <Filter Include="Private\Graphics\Vulkan\Raytracing">
       <UniqueIdentifier>{d48e7891-961b-4905-8d0f-cd2505c04c9e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Public\Scene\RayTracing">
+      <UniqueIdentifier>{c3f932f0-8c35-47f5-93f6-7a4d9b73f6ac}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -245,6 +248,9 @@
     </ClCompile>
     <ClCompile Include="Graphics\Vulkan\Util.cpp">
       <Filter>Private\Graphics\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp">
+      <Filter>Private\Scene\Raytracing</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -410,9 +416,6 @@
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccelerationStructure.h">
       <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
     </ClInclude>
-    <ClInclude Include="Scene\Raytracing\RaytracingScene.h">
-      <Filter>Public\Scene</Filter>
-    </ClInclude>
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.h">
       <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
     </ClInclude>
@@ -424,6 +427,12 @@
     </ClInclude>
     <ClInclude Include="Graphics\Vulkan\Util.h">
       <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene\Raytracing\RaytracingScene.h">
+      <Filter>Public\Scene\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="Scene\Raytracing\MainRayTracingScene.h">
+      <Filter>Public\Scene\RayTracing</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

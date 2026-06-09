@@ -192,6 +192,7 @@
     <ClCompile Include="Platform\IApplication.cpp" />
     <ClCompile Include="Platform\Vulkan\Application.cpp" />
     <ClCompile Include="Scene\MainScene.cpp" />
+    <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp" />
     <ClCompile Include="Scene\Raytracing\RaytracingScene.cpp" />
     <ClCompile Include="Scene\Scene.cpp" />
   </ItemGroup>
@@ -253,6 +254,7 @@
     <ClInclude Include="Platform\IApplication.h" />
     <ClInclude Include="Platform\Vulkan\Application.h" />
     <ClInclude Include="Scene\MainScene.h" />
+    <ClInclude Include="Scene\Raytracing\MainRayTracingScene.h" />
     <ClInclude Include="Scene\Raytracing\RaytracingScene.h" />
     <ClInclude Include="Scene\Scene.h" />
   </ItemGroup>

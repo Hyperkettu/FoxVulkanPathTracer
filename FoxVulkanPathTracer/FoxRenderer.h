@@ -38,22 +38,28 @@
 #include "FoxVulkanPathTracer/Graphics/RHI.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Buffer.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/ConstantBuffers.h"
+
+
+#include "FoxVulkanPathTracer/Graphics/Geometry/Submesh.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/Vulkan/Mesh.h"
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/CommandPool.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/CommandList.h"
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/VertexBuffer.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/IndexBuffer.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"
 
-#include "FoxVulkanPathTracer/Graphics/Vulkan/CommandPool.h"
-#include "FoxVulkanPathTracer/Graphics/Vulkan/CommandList.h"
-#include "FoxVulkanPathTracer/Graphics/Vulkan/ConstantBuffers.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ShaderStorageBuffer.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ConstantBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DynamicBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DynamicConstantBuffer.h"
-#include "FoxVulkanPathTracer/Graphics/Vulkan/VertexBuffer.h"
-#include "FoxVulkanPathTracer/Graphics/Vulkan/IndexBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Fence.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Semaphore.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Texture.h"
@@ -74,8 +80,6 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Pipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/PipelineBuilder.h"
 
-#include "FoxVulkanPathTracer/Graphics/Geometry/Submesh.h"
-#include "FoxVulkanPathTracer/Graphics/Geometry/Vulkan/Mesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/GeometryGenerator.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/DescriptorManager.h"
@@ -86,6 +90,7 @@
 
 #include "FoxVulkanPathTracer/Scene/Scene.h"
 #include "FoxVulkanPathTracer/Scene/MainScene.h"
+#include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 

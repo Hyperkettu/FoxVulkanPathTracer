@@ -4,13 +4,13 @@ namespace Fox {
 
 	namespace Scene {
 
-		namespace Raytracing {
+		namespace RayTracing {
 
-            PFN_vkCreateAccelerationStructureKHR Fox::Scene::Raytracing::RayTracingScene::vkCreateAccelerationStructureKHR;
-            PFN_vkDestroyAccelerationStructureKHR Fox::Scene::Raytracing::RayTracingScene::vkDestroyAccelerationStructureKHR;
-            PFN_vkCmdBuildAccelerationStructuresKHR Fox::Scene::Raytracing::RayTracingScene::vkCmdBuildAccelerationStructuresKHR;
-            PFN_vkGetAccelerationStructureDeviceAddressKHR Fox::Scene::Raytracing::RayTracingScene::vkGetAccelerationStructureDeviceAddressKHR;
-            PFN_vkGetAccelerationStructureBuildSizesKHR Fox::Scene::Raytracing::RayTracingScene::vkGetAccelerationStructureBuildSizesKHR;
+            PFN_vkCreateAccelerationStructureKHR Fox::Scene::RayTracing::RayTracingScene::vkCreateAccelerationStructureKHR;
+            PFN_vkDestroyAccelerationStructureKHR Fox::Scene::RayTracing::RayTracingScene::vkDestroyAccelerationStructureKHR;
+            PFN_vkCmdBuildAccelerationStructuresKHR Fox::Scene::RayTracing::RayTracingScene::vkCmdBuildAccelerationStructuresKHR;
+            PFN_vkGetAccelerationStructureDeviceAddressKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureDeviceAddressKHR;
+            PFN_vkGetAccelerationStructureBuildSizesKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureBuildSizesKHR;
 
             void CreateScratchBuffer(
                 VkDevice device,
@@ -49,7 +49,7 @@ namespace Fox {
                     .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                     .pNext = &flags,
                     .allocationSize = memReq.size,
-                    .memoryTypeIndex = Fox::Scene::Raytracing::RayTracingScene::FindDeviceLocalMemoryType(
+                    .memoryTypeIndex = Fox::Scene::RayTracing::RayTracingScene::FindDeviceLocalMemoryType(
                         physicalDevice, memReq.memoryTypeBits)
                 };
 
@@ -67,6 +67,7 @@ namespace Fox {
                 , queue(queue)
                 , queueFamily(queueFamilyIndex)
             {
+                commandPool = std::make_unique<Fox::Graphics::Vulkan::CommandPool>(device, queueFamilyIndex);
             }
 
             RayTracingScene::~RayTracingScene()
@@ -113,6 +114,9 @@ namespace Fox {
                 }
 
                 // instanceBuffer is std::unique_ptr → auto-destroyed
+
+                vertexBuffers.clear();
+                indexBuffers.clear();
             }
 		
             uint32_t RayTracingScene::AddBLAS(
@@ -214,11 +218,11 @@ namespace Fox {
                         blas.memory);
 
                     // Destroy old scratch buffer if it exists
-                    if (scratchBuffer != VK_NULL_HANDLE) {
+               /*     if (scratchBuffer != VK_NULL_HANDLE) {
                         vkDestroyBuffer(device, scratchBuffer, nullptr);
                         vkFreeMemory(device, scratchMemory, nullptr);
                     }
-
+                    */ 
                     std::stringstream ss;
                     ss << "Scratch Buffer ";
                     ss << blas.primitiveCount;
@@ -248,10 +252,10 @@ namespace Fox {
                     blas.deviceAddress =
                         vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
 
-                    if (scratchBuffer != VK_NULL_HANDLE) {
+/**                    if (scratchBuffer != VK_NULL_HANDLE) {
                         vkDestroyBuffer(device, scratchBuffer, nullptr);
                         vkFreeMemory(device, scratchMemory, nullptr);
-                    }
+                    }*/
                 }
             }
 
@@ -423,7 +427,7 @@ namespace Fox {
                     .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                     .pNext = &flagsInfo,
                     .allocationSize = memReq.size,
-                    .memoryTypeIndex = Fox::Scene::Raytracing::RayTracingScene::FindDeviceLocalMemoryType(
+                    .memoryTypeIndex = Fox::Scene::RayTracing::RayTracingScene::FindDeviceLocalMemoryType(
                         physicalDevice, memReq.memoryTypeBits)
                 };
 
@@ -489,6 +493,45 @@ namespace Fox {
                 };
                 return vkGetBufferDeviceAddress(device, &info);
             }
+
+            void RayTracingScene::AddMesh(Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform) {
+                auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
+                vertexBuffer->Create(device, physicalDevice,commandPool->Get(), queue, mesh.GetVertices(), "Raytracing Vertex Buffer");
+                vertexBuffers.push_back(std::move(vertexBuffer));
+
+                auto indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
+                indexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, mesh.GetIndices(), "Raytracing Index Buffer");
+                indexBuffers.push_back(std::move(indexBuffer));
+
+                VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
+                VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
+
+                uint32_t vertexCount = mesh.GetVertices().size();
+                uint32_t indexCount = mesh.GetIndices().size();
+
+                uint32_t blasIndex = AddBLAS(
+                    vertexBuffers.back()->Get(),
+                    vertexAddress,
+                    vertexCount,
+                    indexBuffers.back()->Get(),
+                    indexAddress,
+                    indexCount);
+
+                AddInstance(
+                    blasIndex,
+                    transform,
+                    /*instanceCustomIndex=*/0,
+                    /*mask=*/0xFF);
+            }
+
+            void RayTracingScene::Build() {
+                Fox::Graphics::Vulkan::CommandList cmdList(device, commandPool->Get());
+                    cmdList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+                        .BuildAccelerationStructures(*this)
+                        .End()
+                        .SubmitAndWait(queue);
+            }
+
 		}
 	}
 }
