@@ -91,6 +91,12 @@
     <Filter Include="Public\Scene\RayTracing">
       <UniqueIdentifier>{c3f932f0-8c35-47f5-93f6-7a4d9b73f6ac}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Public\Core\TinyGLTF">
+      <UniqueIdentifier>{e9d0e724-9df7-4530-aeb5-607807747740}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Graphics\Geometry\Vulkan">
+      <UniqueIdentifier>{bfd1bbfe-dafa-492e-8c9f-1fc842b1af38}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -251,6 +257,9 @@
     </ClCompile>
     <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp">
       <Filter>Private\Scene\Raytracing</Filter>
+    </ClCompile>
+    <ClCompile Include="Graphics\Geometry\Vulkan\Mesh.cpp">
+      <Filter>Private\Graphics\Geometry\Vulkan</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -433,6 +442,18 @@
     </ClInclude>
     <ClInclude Include="Scene\Raytracing\MainRayTracingScene.h">
       <Filter>Public\Scene\RayTracing</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\TinyGLTF\stb_image.h">
+      <Filter>Public\Core\TinyGLTF</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\TinyGLTF\stb_image_write.h">
+      <Filter>Public\Core\TinyGLTF</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\TinyGLTF\tinygltf.h">
+      <Filter>Public\Core\TinyGLTF</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\TinyGLTF\json.hpp">
+      <Filter>Public\Core\TinyGLTF</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

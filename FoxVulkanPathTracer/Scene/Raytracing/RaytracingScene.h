@@ -41,6 +41,12 @@ namespace Fox {
                     uint32_t instanceCustomIndex,
                     uint32_t mask = 0xFF);
 
+                void AddInstance(
+                    uint32_t blasIndex,
+                    const VkTransformMatrixKHR& transform,
+                    uint32_t instanceCustomIndex,
+                    uint32_t mask = 0xFF);
+
                 void BuildBLAS(VkCommandBuffer cmd);
                 void BuildTLAS(VkCommandBuffer cmd);
                 void UpdateTLAS(VkCommandBuffer cmd);

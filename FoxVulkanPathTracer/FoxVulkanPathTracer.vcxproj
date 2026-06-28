@@ -148,6 +148,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Graphics\Geometry\GeometryGenerator.cpp" />
+    <ClCompile Include="Graphics\Geometry\Vulkan\Mesh.cpp" />
     <ClCompile Include="Graphics\Managers\Vulkan\DescriptorManager.cpp" />
     <ClCompile Include="Graphics\Managers\Vulkan\MeshManager.cpp" />
     <ClCompile Include="Graphics\Managers\Vulkan\PipelineManager.cpp" />
@@ -201,6 +202,10 @@
     <ClInclude Include="Core\FileSystem.h" />
     <ClInclude Include="Core\Signal.h" />
     <ClInclude Include="Core\Singleton.h" />
+    <ClInclude Include="Core\TinyGLTF\json.hpp" />
+    <ClInclude Include="Core\TinyGLTF\stb_image.h" />
+    <ClInclude Include="Core\TinyGLTF\stb_image_write.h" />
+    <ClInclude Include="Core\TinyGLTF\tinygltf.h" />
     <ClInclude Include="FoxRenderer.h" />
     <ClInclude Include="Graphics\Geometry\GeometryGenerator.h" />
     <ClInclude Include="Graphics\Geometry\Submesh.h" />

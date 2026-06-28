@@ -1,7 +1,7 @@
 #include "FoxRenderer.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "STB_image/stb_image.h"
+//#define STB_IMAGE_IMPLEMENTATION
+//#include "FoxVulkanPathTracer/Core/TinyGLTF/stb_image.h"
 
 namespace Fox {
 

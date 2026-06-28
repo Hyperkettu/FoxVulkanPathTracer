@@ -1,5 +1,7 @@
 ﻿#include "FoxRenderer.h"
 
+extern struct RayTracingInstance;
+
 namespace Fox {
 
 	namespace Scene {
@@ -133,7 +135,7 @@ namespace Fox {
                     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
                     .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
                     .vertexData = { vertexAddress },
-                    .vertexStride = sizeof(glm::vec3),
+                    .vertexStride = sizeof(Fox::Graphics::Vulkan::Vertex),
                     .maxVertex = vertexCount,
                     .indexType = VK_INDEX_TYPE_UINT32,
                     .indexData = { indexAddress }
@@ -257,6 +259,26 @@ namespace Fox {
                         vkFreeMemory(device, scratchMemory, nullptr);
                     }*/
                 }
+            }
+
+            void RayTracingScene::AddInstance(
+                uint32_t blasIndex,
+                const VkTransformMatrixKHR& transform,
+                uint32_t instanceCustomIndex,
+                uint32_t mask)
+            {
+                VkAccelerationStructureInstanceKHR instance{};
+                instance.transform = transform;
+
+                instance.instanceCustomIndex = instanceCustomIndex;
+                instance.mask = mask;
+                instance.instanceShaderBindingTableRecordOffset = 0;
+                instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+                // Reference will be updated in BuildTLAS
+                instance.accelerationStructureReference = 0;
+
+                instances.push_back(instance);
+                instanceBlasIndices.push_back(blasIndex);
             }
 
             void RayTracingScene::BuildTLAS(VkCommandBuffer cmd)
@@ -509,19 +531,28 @@ namespace Fox {
                 uint32_t vertexCount = mesh.GetVertices().size();
                 uint32_t indexCount = mesh.GetIndices().size();
 
-                uint32_t blasIndex = AddBLAS(
-                    vertexBuffers.back()->Get(),
-                    vertexAddress,
-                    vertexCount,
-                    indexBuffers.back()->Get(),
-                    indexAddress,
-                    indexCount);
+                auto instances = mesh.GetInstanceData();
 
-                AddInstance(
-                    blasIndex,
-                    transform,
-                    /*instanceCustomIndex=*/0,
-                    /*mask=*/0xFF);
+                auto index = 0;
+                for (auto& instance : instances) {
+
+                    uint32_t blasIndex = AddBLAS(
+                        vertexBuffers.back()->Get(),
+                        vertexAddress,
+                        vertexCount,
+                        indexBuffers.back()->Get(),
+                        indexAddress + (instance.firstIndex * sizeof(uint32_t)),
+                        instance.indexCount);
+
+                    AddInstance(
+                        blasIndex,
+                        instance.transform,
+                        /*instanceCustomIndex=*/index, //instance.materialIndex
+                        /*mask=*/0xFF);
+
+                    index++;
+                }
+
             }
 
             void RayTracingScene::Build() {

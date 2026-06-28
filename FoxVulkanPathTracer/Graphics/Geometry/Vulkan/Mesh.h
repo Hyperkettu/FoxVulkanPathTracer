@@ -1,5 +1,12 @@
 #pragma once
 
+struct RayTracingInstance {
+	uint32_t firstIndex;
+	uint32_t indexCount;
+	uint32_t materialIndex;
+	VkTransformMatrixKHR transform; // Transposed 3x4 matrix for Vulkan Acceleration Structures
+};
+
 namespace Fox {
 
 	namespace Graphics {
@@ -14,6 +21,8 @@ namespace Fox {
 					using IndexType = uint32_t;
 
 					Mesh() = default;
+
+					void Load(const std::string& filePath);
 
 					void AddTriangle(const Fox::Graphics::Vulkan::Vertex& v0, const Fox::Graphics::Vulkan::Vertex& v1, const Fox::Graphics::Vulkan::Vertex& v2)
 					{
@@ -100,10 +109,15 @@ namespace Fox {
 					const std::vector<IndexType>& GetIndices() const { return indices; }
 					const std::vector<Fox::Graphics::Geometry::Submesh>& GetSubmeshes() const { return submeshes; }
 
+					std::vector<RayTracingInstance> GetInstanceData() const {
+						return instances;
+					}
+
 				private:
 					std::vector<Fox::Graphics::Vulkan::Vertex> vertices;
 					std::vector<IndexType> indices;
 					std::vector<Fox::Graphics::Geometry::Submesh> submeshes;
+					std::vector<RayTracingInstance> instances;
 
 					std::unordered_map<size_t, uint32_t> vertexLookup;
 
