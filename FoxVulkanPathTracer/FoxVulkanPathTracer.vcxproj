@@ -237,6 +237,7 @@
     <ClInclude Include="Graphics\Vulkan\Framebuffer.h" />
     <ClInclude Include="Graphics\Vulkan\FrameResource.h" />
     <ClInclude Include="Graphics\Vulkan\IndexBuffer.h" />
+    <ClInclude Include="Graphics\Vulkan\Light.h" />
     <ClInclude Include="Graphics\Vulkan\Material.h" />
     <ClInclude Include="Graphics\Vulkan\Pipeline.h" />
     <ClInclude Include="Graphics\Vulkan\PipelineBuilder.h" />

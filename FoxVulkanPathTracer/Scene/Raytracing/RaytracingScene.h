@@ -80,6 +80,7 @@ namespace Fox {
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<uint32_t>> indexSSBO;
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>> submeshSSBO;
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>> materialsSSBO; 
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>> lightsSSBO;
 
                 static uint32_t FindDeviceLocalMemoryType(
                     VkPhysicalDevice physicalDevice,
@@ -111,6 +112,8 @@ namespace Fox {
                 std::vector<uint32_t> indices;  
                 std::vector<Fox::Graphics::Vulkan::Submesh> submeshes;
                 std::vector<Fox::Graphics::Vulkan::Material> materials;
+                std::vector<Fox::Graphics::Vulkan::Light> lights; 
+
 
             private:
                 void CreateAccelerationStructure(

@@ -527,6 +527,7 @@ namespace Fox {
                 auto meshIndices = mesh.GetIndices();
                 auto meshSubmeshes = mesh.GetSubmeshesForGPU();
                 auto meshMaterials = mesh.GetMaterials();
+                auto meshLights = mesh.GetLights();
 
                 for (auto i = 0; i < meshVertices.size(); i++) {
                     vertices.push_back(meshVertices[i]);
@@ -542,6 +543,10 @@ namespace Fox {
                  
                 for (auto i = 0; i < meshMaterials.size(); i++) { 
                     materials.push_back(meshMaterials[i]); 
+                }
+
+                for (auto i = 0; i < meshLights.size(); i++) {
+                    lights.push_back(meshLights[i]);
                 }
 
                 auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
@@ -565,6 +570,8 @@ namespace Fox {
                 materialsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>>(device, physicalDevice, "Scene Materials", materials);
                 materialsSSBO->Update(materials); 
 
+                lightsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>>(device, physicalDevice, "Scene Lights", lights);
+                lightsSSBO->Update(lights); 
 
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());

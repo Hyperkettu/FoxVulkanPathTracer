@@ -49,7 +49,36 @@ namespace Fox {
                     for (auto i = 0; i < materials.size(); i++) {
                         Fox::Graphics::Vulkan::Material mat;
                         mat.albedo = glm::vec4(materials[i].baseColorFactor[0], materials[i].baseColorFactor[1], materials[i].baseColorFactor[2], materials[i].baseColorFactor[3]);
+                        mat.roughnessMetallic = glm::vec2(materials[i].roughnessFactor, materials[i].metallicFactor);
+                        mat.roughnessMetallicTextureIndex = -1;
+
+                        if (mat.albedo.g > mat.albedo.r) {
+                            mat.roughnessMetallic = glm::vec2(0.0f, 1.0f);
+                        }
+
+                        mat.albedoTextureIndex = -1;
+                        mat.emissiveColor = glm::vec3(materials[i].emissiveFactor[0], materials[i].emissiveFactor[1], materials[i].emissiveFactor[2]);
+                        mat.emissiveTextureIndex = -1;
+                        mat.intensity = materials[i].emissiveStrength;
                         this->materials.push_back(mat);
+                    }
+
+                    for (auto i = 0; i < lights.size(); i++) {
+                        auto light = lights[i];
+
+                        Fox::Graphics::Vulkan::Light l;
+
+                        if (light.type == Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
+                            l.area = light.area;
+                            l.position = light.position;
+                            l.color = light.color * light.intensity;
+                            l.normal = light.normal;
+                            l.tangentX = light.tangentX;
+                            l.tangentY = light.tangentY;
+                            l.type = static_cast<int>(light.type);
+                        }
+
+                        this->lights.push_back(l);
                     }
                 }
 

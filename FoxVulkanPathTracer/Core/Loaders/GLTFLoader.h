@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glm/glm.hpp>
+
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingInstance.h"
 
 namespace tinygltf {
@@ -38,20 +40,30 @@ namespace Fox {
                 struct MaterialData {
                     float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
                     int baseColorTextureIndex = -1;
+                    float emissiveFactor[3] = { 0.0f, 0.0f, 0.0f };
+                    int emissiveTextureIndex = -1;
+                    float emissiveStrength = 1.0f; 
+                    float roughnessFactor = 1.0f;
+                    float metallicFactor = 1.0f;
+                    int metallicRoughnessTextureIndex = -1;
                 };
 
-                enum class LightType { Directional, Point, Spot };
+                enum class LightType { Directional, Point, Spot, QuadAreaLight };
 
                 struct LightData {
                     std::string name;
                     LightType type = LightType::Point;
-                    float color[3] = { 1.0f, 1.0f, 1.0f };
+                    glm::vec3 color = { 1.0f, 1.0f, 1.0f };
                     float intensity = 1.0f;
                     float range = 0.0f;
                     float innerConeAngle = 0.0f;
                     float outerConeAngle = 0.785398f;
-                    float position[3] = { 0.0f, 0.0f, 0.0f };
+                    glm::vec3 position = { 0.0f, 0.0f, 0.0f };
                     float direction[3] = { 0.0f, 0.0f, -1.0f };
+                    glm::vec3 normal;
+                    glm::vec3 tangentX;
+                    glm::vec3 tangentY;
+                    float area;
                 };
 
                 enum class CameraType { Perspective, Orthographic };
@@ -82,6 +94,11 @@ namespace Fox {
 
                 private:
                     static VkTransformMatrixKHR ConvertMatrixToVulkanRT(const double m[16]);
+                    static glm::mat4 ArrayToGlmMat4(const double m[16]);
+                    static Fox::Core::Loaders::GLTF::LightData CreateQuadAreaLightFromGLTF(const std::vector<VertexData>& primitiveVertices,
+                        const MaterialData& material,
+                        const double worldMatrixArray[16]);
+
                     static void MultiplyMatrixVector(const double m[16], const float in[4], float out[4]);
                     static void GetNodeMatrix(const tinygltf::Node& node, double matrix[16]);
                     static void MultiplyMatrices(const double a[16], const double b[16], double out[16]);

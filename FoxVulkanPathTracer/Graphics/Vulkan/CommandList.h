@@ -126,6 +126,8 @@ namespace Fox {
                         return *this;
                     }
 
+                    CommandList& SetRecursionStackSize(VkPipeline pipeline);
+
                     CommandList& BindDescriptorSets(VkPipelineLayout layout,
                                                     uint32_t firstSet,
                                                     const std::vector<VkDescriptorSet>& sets,
@@ -197,6 +199,11 @@ namespace Fox {
                             exit(1);
                         }
 					}
+
+                    static void RegisterRayTracingStackSizeFunctions(PFN_vkGetRayTracingShaderGroupStackSizeKHR getRayTracingShaderGroupStackSize, PFN_vkCmdSetRayTracingPipelineStackSizeKHR setRayTracingStackSize) {
+                        vkGetRayTracingShaderGroupStackSizeKHR = getRayTracingShaderGroupStackSize;
+                        vkCmdSetRayTracingPipelineStackSizeKHR = setRayTracingStackSize;
+                    }
 
                     static void SetName(std::string name, uint64_t objectHandle, VkObjectType objectType, VkDevice device)
                     {
@@ -490,6 +497,9 @@ namespace Fox {
 
                     static PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT;
                     static PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
+                    static PFN_vkGetRayTracingShaderGroupStackSizeKHR vkGetRayTracingShaderGroupStackSizeKHR;
+                    static PFN_vkCmdSetRayTracingPipelineStackSizeKHR vkCmdSetRayTracingPipelineStackSizeKHR;
+
                     static PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT;
                     static PFN_vkDebugMarkerSetObjectNameEXT vkGetObjectNameEXT;
                 };

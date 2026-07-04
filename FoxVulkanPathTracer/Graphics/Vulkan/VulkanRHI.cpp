@@ -514,7 +514,8 @@ namespace Fox {
 				auto& raytracingPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipeline(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE);
 				auto raytracingPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipelineLayout(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
 
-				frameResource->commandList->Begin() 
+				frameResource->commandList->Begin()
+					.SetRecursionStackSize(raytracingPipeline->GetPipeline())
 					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
 					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
@@ -680,6 +681,9 @@ namespace Fox {
 				Fox::Graphics::Vulkan::CommandList::RegisterObjectNameFunction(
 					reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT")));
 				Fox::Graphics::Vulkan::CommandList::RegisterGetObjectName(reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(vkGetDeviceProcAddr(device, "vkGetObjectNameEXT")));
+				Fox::Graphics::Vulkan::CommandList::RegisterRayTracingStackSizeFunctions(
+					reinterpret_cast<PFN_vkGetRayTracingShaderGroupStackSizeKHR>(vkGetDeviceProcAddr(device, "vkGetRayTracingShaderGroupStackSizeKHR")),
+						reinterpret_cast<PFN_vkCmdSetRayTracingPipelineStackSizeKHR>(vkGetDeviceProcAddr(device, "vkCmdSetRayTracingPipelineStackSizeKHR")));
 			}
 
 			int32_t VulkanRHI::CreateUniformBuffers() {
@@ -700,7 +704,7 @@ namespace Fox {
 					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet()); //({ 100 })); // 100 meshes in raytracing scene at max
 					frameResource->offscreenDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN)->AllocateSet());
 
-					frameResource->perFrameDescriptorSet->Reserve(6);
+					frameResource->perFrameDescriptorSet->Reserve(7);
 
 					frameResource->meshInfosUBO->Update(scene->GetSceneMeshInfos());
 
@@ -738,10 +742,8 @@ namespace Fox {
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->Update(); 
-
-
-				//	frameResources[i]->perFrameDescriptorSet->UpdateBindlessVertexAndIndexBuffers(3, 4, raytracingScene->GetAllMeshGeometries());
+					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique()); 
+					frameResources[i]->perFrameDescriptorSet->Update();  
 				}
 
 

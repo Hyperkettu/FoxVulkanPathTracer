@@ -473,6 +473,9 @@
     <ClInclude Include="Graphics\Vulkan\Material.h">
       <Filter>Public\Graphics\Vulkan</Filter>
     </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Light.h">
+      <Filter>Public\Graphics\Vulkan</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders\triangle.mesh">

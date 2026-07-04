@@ -1,7 +1,8 @@
-// Define the payload structure matching layout location 0
 struct RayPayload
 {
-    float3 color;
+    float3 hitColor;
+    int depth;
+    uint rngState;
 };
 
 // Bindings translated to Slang / Vulkan layout style
@@ -16,7 +17,13 @@ struct Camera
     float3 camUp;
     float2 resolution;
 };
+
 [[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
+
+float NextRandomFloat(inout uint state) {
+    state = state * 1664525u + 1013904223u;
+    return float(state & 0x00FFFFFFu) / float(0x01000000u);
+}
 
 [shader("raygeneration")]
 void main()
@@ -25,8 +32,12 @@ void main()
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 size  = DispatchRaysDimensions().xy;
 
+    uint seed =  pixel.x * 1973 + pixel.y * 9277;
+
+    float2 offset = float2(NextRandomFloat(seed), NextRandomFloat(seed)) - 0.5;
+
     // 1. Convert pixel to -1.0 to 1.0 range (Normalized Device Coordinates)
-    float2 d = (((float2)pixel + 0.5f) / camera.resolution) * 2.0f - 1.0f;
+    float2 d = (((float2)pixel + offset) / camera.resolution) * 2.0f - 1.0f;
     d.y = -d.y; // Flip Y coordinate for correct orientation    
 
     float aspectRatio = camera.resolution.x / camera.resolution.y;
@@ -36,10 +47,12 @@ void main()
     float3 dir = normalize(camera.camForward + 
                            d.x * camera.camRight * aspectRatio + 
                            d.y * camera.camUp);
-
+                            
     // Initialize the ray payload
     RayPayload payload;
-    payload.color = float3(0.0f);
+    payload.hitColor = float3(0.0f);
+    payload.depth = 0;
+    payload.rngState = seed;
 
     // Setup the Ray Descriptor struct expected by TraceRay
     RayDesc ray;
@@ -60,5 +73,5 @@ void main()
     );
 
     // Write back to the storage image
-    image[pixel] = float4(payload.color, 1.0f);
+    image[pixel] = float4(payload.hitColor, 1.0f);
 }

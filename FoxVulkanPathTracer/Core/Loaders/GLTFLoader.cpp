@@ -59,6 +59,63 @@ namespace Fox {
                 return true;
             }
 
+            glm::mat4 GLTFLoader::ArrayToGlmMat4(const double m[16]) {
+                return glm::mat4(
+                    static_cast<float>(m[0]), static_cast<float>(m[1]), static_cast<float>(m[2]), static_cast<float>(m[3]),
+                    static_cast<float>(m[4]), static_cast<float>(m[5]), static_cast<float>(m[6]), static_cast<float>(m[7]),
+                    static_cast<float>(m[8]), static_cast<float>(m[9]), static_cast<float>(m[10]), static_cast<float>(m[11]),
+                    static_cast<float>(m[12]), static_cast<float>(m[13]), static_cast<float>(m[14]), static_cast<float>(m[15])
+                );
+            }
+
+            Fox::Core::Loaders::GLTF::LightData GLTFLoader::CreateQuadAreaLightFromGLTF( 
+                const std::vector<VertexData>& primitiveVertices,
+                const MaterialData& material,
+                const double worldMatrixArray[16])
+            {
+                Fox::Core::Loaders::GLTF::LightData outLight{};
+
+                // 1. Transform quad corners into World Space
+                glm::mat4 worldMat = ArrayToGlmMat4(worldMatrixArray);
+
+                // Assuming a standard quad has 4 sequential vertices forming a loop (or extracted via indices)
+                glm::vec3 p0 = glm::vec3(worldMat * glm::vec4(primitiveVertices[0].position[0], primitiveVertices[0].position[1], primitiveVertices[0].position[2], 1.0f));
+                glm::vec3 p1 = glm::vec3(worldMat * glm::vec4(primitiveVertices[1].position[0], primitiveVertices[1].position[1], primitiveVertices[1].position[2], 1.0f));
+                glm::vec3 p2 = glm::vec3(worldMat * glm::vec4(primitiveVertices[2].position[0], primitiveVertices[2].position[1], primitiveVertices[2].position[2], 1.0f));
+                glm::vec3 p3 = glm::vec3(worldMat * glm::vec4(primitiveVertices[3].position[0], primitiveVertices[3].position[1], primitiveVertices[3].position[2], 1.0f));
+
+                // 2. Position (Geometric Center of the Quad)
+                glm::vec3 position = (p0 + p1 + p2 + p3) * 0.25f;
+                outLight.position = position;
+
+                // 3. Tangent Axes
+                // Calculate full vectors spanning across the quad surface edges
+                glm::vec3 edgeY = p1 - p0;
+                glm::vec3 edgeX = p3 - p0;
+
+                // Your struct states tangentX/Y spans *half* the width/height
+                outLight.tangentX = edgeX * 0.5f;
+                outLight.tangentY = edgeY * 0.5f;
+
+                // 4. Normal Vector
+                // Surface normal derived from cross-product of the edge vectors
+                outLight.normal = glm::normalize(glm::cross(edgeX, edgeY));
+
+                // 5. Area Calculation (Magnitude of cross product yields full area of the parallelogram)
+                outLight.area = glm::length(glm::cross(edgeX, edgeY));
+
+                // 6. Color Assignment (Emissive Factor scaled by Emissive Strength)
+                outLight.color.x = material.emissiveFactor[0];
+                outLight.color.y = material.emissiveFactor[1];
+                outLight.color.z = material.emissiveFactor[2];
+                outLight.intensity = material.emissiveStrength;
+
+                // 7. Light Type Identifier
+                outLight.type = LightType::QuadAreaLight; // Quad Area Light
+
+                return outLight;
+            }
+
             VkTransformMatrixKHR GLTFLoader::ConvertMatrixToVulkanRT(const double m[16]) {
                 VkTransformMatrixKHR outMatrix;
                 outMatrix.matrix[0][0] = static_cast<float>(m[0]);
@@ -234,11 +291,18 @@ namespace Fox {
                         if (primitive.material >= 0 && primitive.material < model.materials.size()) {
                             const auto& mat = model.materials[primitive.material];
                             const auto& pbr = mat.pbrMetallicRoughness;
+
+                            // 1. Base Color Factors
                             currentMaterial.baseColorFactor[0] = static_cast<float>(pbr.baseColorFactor[0]);
                             currentMaterial.baseColorFactor[1] = static_cast<float>(pbr.baseColorFactor[1]);
                             currentMaterial.baseColorFactor[2] = static_cast<float>(pbr.baseColorFactor[2]);
                             currentMaterial.baseColorFactor[3] = static_cast<float>(pbr.baseColorFactor[3]);
 
+                            // 2. Metallic and Roughness Factors
+                            currentMaterial.metallicFactor = static_cast<float>(pbr.metallicFactor);
+                            currentMaterial.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
+
+                            // 3. Base Color Texture Index
                             if (pbr.baseColorTexture.index >= 0) {
                                 int srcImg = model.textures[pbr.baseColorTexture.index].source;
                                 if (srcImg >= 0 && srcImg < model.images.size()) {
@@ -253,9 +317,66 @@ namespace Fox {
                                     }
                                 }
                             }
+
+                            // 4. Metallic/Roughness Texture Index (Packed texture: G = Roughness, B = Metallic)
+                            if (pbr.metallicRoughnessTexture.index >= 0) {
+                                int srcImg = model.textures[pbr.metallicRoughnessTexture.index].source;
+                                if (srcImg >= 0 && srcImg < model.images.size()) {
+                                    if (gltfImageMap[srcImg] != -1) {
+                                        currentMaterial.metallicRoughnessTextureIndex = gltfImageMap[srcImg];
+                                    } else {
+                                        const auto& img = model.images[srcImg];
+                                        TextureData tex{ img.image, img.width, img.height, img.component };
+                                        outTextures.push_back(tex);
+                                        gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
+                                        currentMaterial.metallicRoughnessTextureIndex = gltfImageMap[srcImg];
+                                    }
+                                }
+                            } else {
+                                currentMaterial.metallicRoughnessTextureIndex = -1;
+                            }
+
+                            // 5. Emissive Factors
+                            if (mat.emissiveFactor.size() >= 3) {
+                                currentMaterial.emissiveFactor[0] = static_cast<float>(mat.emissiveFactor[0]);
+                                currentMaterial.emissiveFactor[1] = static_cast<float>(mat.emissiveFactor[1]);
+                                currentMaterial.emissiveFactor[2] = static_cast<float>(mat.emissiveFactor[2]);
+                            } else {
+                                currentMaterial.emissiveFactor[0] = 0.0f;
+                                currentMaterial.emissiveFactor[1] = 0.0f;
+                                currentMaterial.emissiveFactor[2] = 0.0f;
+                            }
+
+                            // 6. KHR_materials_emissive_strength Extension Parsing
+                            currentMaterial.emissiveStrength = 1.0f;
+                            if (mat.extensions.find("KHR_materials_emissive_strength") != mat.extensions.end()) {
+                                const auto& ext = mat.extensions.at("KHR_materials_emissive_strength");
+                                if (ext.IsObject() && ext.Has("emissiveStrength")) {
+                                    currentMaterial.emissiveStrength = static_cast<float>(ext.Get("emissiveStrength").GetNumberAsDouble());
+                                }
+                            }
+
+                            // 7. Emissive Texture Index
+                            if (mat.emissiveTexture.index >= 0) {
+                                int srcImg = model.textures[mat.emissiveTexture.index].source;
+                                if (srcImg >= 0 && srcImg < model.images.size()) {
+                                    if (gltfImageMap[srcImg] != -1) {
+                                        currentMaterial.emissiveTextureIndex = gltfImageMap[srcImg];
+                                    } else {
+                                        const auto& img = model.images[srcImg];
+                                        TextureData tex{ img.image, img.width, img.height, img.component };
+                                        outTextures.push_back(tex);
+                                        gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
+                                        currentMaterial.emissiveTextureIndex = gltfImageMap[srcImg];
+                                    }
+                                }
+                            } else {
+                                currentMaterial.emissiveTextureIndex = -1;
+                            }
                         }
-                        outMaterials.push_back(currentMaterial);
-                        uint32_t materialIdx = static_cast<uint32_t>(outMaterials.size() - 1);
+
+                        outMaterials.push_back(currentMaterial); 
+                        uint32_t materialIdx = static_cast<uint32_t>(outMaterials.size() - 1); 
 
                         // --- Robust Byte-Stride Attribute Windows Extraction ---
                         const auto& posAccessor = model.accessors[primitive.attributes.at("POSITION")];
@@ -331,6 +452,20 @@ namespace Fox {
                             for (uint32_t i = 0; i < indexCountForPrimitive; ++i) {
                                 outIndices.push_back(i + vertexOffset);
                             }
+                        }
+
+                        bool isEmissive = (currentMaterial.emissiveFactor[0] > 0.0f ||
+                            currentMaterial.emissiveFactor[1] > 0.0f ||
+                            currentMaterial.emissiveFactor[2] > 0.0f);
+
+                        // Check if it's an emissive quad mesh (4 vertices parsed for this primitive, or index count is 6)
+                        if (isEmissive && posAccessor.count == 4)
+                        {
+                            // Wait until the vertex addresses parsing loop finishes loading local vertices, then:
+                            std::vector<VertexData> quadVertices(outVertices.end() - 4, outVertices.end());
+
+                            Fox::Core::Loaders::GLTF::LightData quadLight = CreateQuadAreaLightFromGLTF(quadVertices, currentMaterial, worldMatrix);
+                            outLights.push_back(quadLight);
                         }
 
                         // --- Record Ray Tracing Instance Info & Submesh Configuration ---

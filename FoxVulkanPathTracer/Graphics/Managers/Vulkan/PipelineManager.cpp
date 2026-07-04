@@ -25,7 +25,7 @@ namespace Fox {
 							.AddShader("Shaders/miss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.AddShader("Shaders/closesthit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
 							.SetLayout(rayTracingPipelineLayout->Get())
-							.SetMaxRecursionDepth(1);
+							.SetMaxRecursionDepth(4);
 
 						rayTracingPipelines[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(std::move(*builder->Build()));
 						rayTracingPipelineLayouts[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = std::move(rayTracingPipelineLayout);
