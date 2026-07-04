@@ -97,6 +97,12 @@
     <Filter Include="Private\Graphics\Geometry\Vulkan">
       <UniqueIdentifier>{bfd1bbfe-dafa-492e-8c9f-1fc842b1af38}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Public\Core\Loaders">
+      <UniqueIdentifier>{8dc16e62-a72b-49ce-8fc3-780d531c02d0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Private\Core\Loaders">
+      <UniqueIdentifier>{b4030416-b5ac-460f-bb76-d4014e65e426}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -260,6 +266,9 @@
     </ClCompile>
     <ClCompile Include="Graphics\Geometry\Vulkan\Mesh.cpp">
       <Filter>Private\Graphics\Geometry\Vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="Core\Loaders\GLTFLoader.cpp">
+      <Filter>Private\Core\Loaders</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -454,6 +463,12 @@
     </ClInclude>
     <ClInclude Include="Core\TinyGLTF\json.hpp">
       <Filter>Public\Core\TinyGLTF</Filter>
+    </ClInclude>
+    <ClInclude Include="Core\Loaders\GLTFLoader.h">
+      <Filter>Public\Core\Loaders</Filter>
+    </ClInclude>
+    <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingInstance.h">
+      <Filter>Public\Graphics\Vulkan\Raytracing</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

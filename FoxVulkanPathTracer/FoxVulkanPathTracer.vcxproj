@@ -134,13 +134,14 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.328.1\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Core\Connection.cpp" />
     <ClCompile Include="Core\FileSystem.cpp" />
+    <ClCompile Include="Core\Loaders\GLTFLoader.cpp" />
     <ClCompile Include="Core\Signal.cpp" />
     <ClCompile Include="Core\Singleton.cpp" />
     <ClCompile Include="FoxRenderer.cpp">
@@ -200,6 +201,7 @@
   <ItemGroup>
     <ClInclude Include="Core\Connection.h" />
     <ClInclude Include="Core\FileSystem.h" />
+    <ClInclude Include="Core\Loaders\GLTFLoader.h" />
     <ClInclude Include="Core\Signal.h" />
     <ClInclude Include="Core\Singleton.h" />
     <ClInclude Include="Core\TinyGLTF\json.hpp" />
@@ -239,6 +241,7 @@
     <ClInclude Include="Graphics\Vulkan\PipelineBuilder.h" />
     <ClInclude Include="Graphics\Vulkan\PipelineLayout.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccelerationStructure.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingInstance.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.h" />
     <ClInclude Include="Graphics\Vulkan\RenderPass.h" />

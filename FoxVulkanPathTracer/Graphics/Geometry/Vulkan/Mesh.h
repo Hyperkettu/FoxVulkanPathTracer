@@ -1,11 +1,6 @@
 #pragma once
 
-struct RayTracingInstance {
-	uint32_t firstIndex;
-	uint32_t indexCount;
-	uint32_t materialIndex;
-	VkTransformMatrixKHR transform; // Transposed 3x4 matrix for Vulkan Acceleration Structures
-};
+#include "FoxVulkanPathTracer/Core/Loaders/GLTFLoader.h"
 
 namespace Fox {
 
@@ -25,7 +20,7 @@ namespace Fox {
 						: vertices(vertices), indices(indices) {
 					}
 
-					void Load(const std::string& filePath);
+					void LoadFromGLTF(const std::string& filePath);
 
 
 					void AddTriangle(const Fox::Graphics::Vulkan::Vertex& v0, const Fox::Graphics::Vulkan::Vertex& v1, const Fox::Graphics::Vulkan::Vertex& v2)
@@ -53,7 +48,7 @@ namespace Fox {
 					void AddTriangle(IndexType i0, IndexType i1, IndexType i2, bool startNewSubmesh)
 					{
 						// Try to find current submesh
-						if (submeshes.empty()) // || submeshes.back().IsFull())
+						if (submeshes.empty() || submeshes.back().IsFull()) 
 						{
 							StartNewSubmesh();
 						}
@@ -64,7 +59,7 @@ namespace Fox {
 						indices.push_back(i1);
 						indices.push_back(i2);
 
-					//	submesh.AddTriangle(i0, i1, i2);
+						submesh.AddTriangle(i0, i1, i2);
 
 						if (startNewSubmesh) {
 							StartNewSubmesh();
@@ -73,7 +68,7 @@ namespace Fox {
 
 					uint32_t AddVertex(const Fox::Graphics::Vulkan::Vertex& v)
 					{
-						//if (submeshes.empty() || submeshes.back().IsFull())
+						if (submeshes.empty() || submeshes.back().IsFull())
 						{
 							StartNewSubmesh();
 						}
@@ -115,7 +110,7 @@ namespace Fox {
 					const std::vector<Fox::Graphics::Vulkan::Submesh>& GetSubmeshesForGPU() const { return gpuSubmeshes; }
 
 
-					std::vector<RayTracingInstance> GetInstanceData() {
+					std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> GetInstanceData() {
 						return instances;
 					}
 
@@ -123,7 +118,7 @@ namespace Fox {
 					std::vector<Fox::Graphics::Vulkan::Vertex> vertices;
 					std::vector<IndexType> indices;
 					std::vector<Fox::Graphics::Geometry::Submesh> submeshes;
-					std::vector<RayTracingInstance> instances;
+					std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> instances;
 					std::vector<Fox::Graphics::Vulkan::Submesh> gpuSubmeshes;
 
 					std::unordered_map<size_t, uint32_t> vertexLookup;

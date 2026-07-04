@@ -1,7 +1,8 @@
 #include "FoxRenderer.h"
 
-//#define STB_IMAGE_IMPLEMENTATION
-//#include "FoxVulkanPathTracer/Core/TinyGLTF/stb_image.h"
+typedef unsigned char stbi_uc;
+extern stbi_uc* stbi_load(char const* filename, int* x, int* y, int* comp, int req_comp);
+extern void stbi_image_free(void* retval_from_stbi_load);
 
 namespace Fox {
 
