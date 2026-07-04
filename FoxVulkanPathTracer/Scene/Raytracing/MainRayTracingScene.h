@@ -22,6 +22,8 @@ namespace Fox {
                     Initialize();
                 }
 
+               
+
                 virtual ~MainRayTracingScene() {}
 
 
@@ -31,7 +33,7 @@ namespace Fox {
             protected:
 
                 Fox::Graphics::Geometry::Vulkan::Mesh mesh;
-
+               
             };
         }
     }

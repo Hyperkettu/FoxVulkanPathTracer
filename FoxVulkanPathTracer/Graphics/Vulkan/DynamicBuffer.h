@@ -97,7 +97,7 @@ namespace Vulkan {
         VkBufferUsageFlags usageFlags{};
         VkMemoryPropertyFlags memoryProperties{};
 
-        std::unique_ptr<Buffer> buffer;
+        std::unique_ptr<Fox::Graphics::Vulkan::Buffer> buffer;
         VkDeviceSize currentSize = 0;
 
         std::string name;

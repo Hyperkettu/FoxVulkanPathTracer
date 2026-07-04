@@ -21,13 +21,17 @@ namespace Fox {
 					using IndexType = uint32_t;
 
 					Mesh() = default;
+					Mesh(std::vector<Fox::Graphics::Vulkan::Vertex>& vertices, std::vector<IndexType>& indices)
+						: vertices(vertices), indices(indices) {
+					}
 
 					void Load(const std::string& filePath);
+
 
 					void AddTriangle(const Fox::Graphics::Vulkan::Vertex& v0, const Fox::Graphics::Vulkan::Vertex& v1, const Fox::Graphics::Vulkan::Vertex& v2)
 					{
 						// Try to find current submesh
-						if (submeshes.empty() || submeshes.back().IsFull())
+						//if (submeshes.empty() || submeshes.back().IsFull())
 						{
 							StartNewSubmesh();
 						}
@@ -43,7 +47,7 @@ namespace Fox {
 						indices.push_back(i1);
 						indices.push_back(i2);
 
-						submesh.AddTriangle(i0, i1, i2);
+					//	submesh.AddTriangle(i0, i1, i2);
 					}
 
 					void AddTriangle(IndexType i0, IndexType i1, IndexType i2, bool startNewSubmesh)
@@ -60,7 +64,7 @@ namespace Fox {
 						indices.push_back(i1);
 						indices.push_back(i2);
 
-						submesh.AddTriangle(i0, i1, i2);
+					//	submesh.AddTriangle(i0, i1, i2);
 
 						if (startNewSubmesh) {
 							StartNewSubmesh();
@@ -69,7 +73,7 @@ namespace Fox {
 
 					uint32_t AddVertex(const Fox::Graphics::Vulkan::Vertex& v)
 					{
-						if (submeshes.empty() || submeshes.back().IsFull())
+						//if (submeshes.empty() || submeshes.back().IsFull())
 						{
 							StartNewSubmesh();
 						}
@@ -109,7 +113,7 @@ namespace Fox {
 					const std::vector<IndexType>& GetIndices() const { return indices; }
 					const std::vector<Fox::Graphics::Geometry::Submesh>& GetSubmeshes() const { return submeshes; }
 
-					std::vector<RayTracingInstance> GetInstanceData() const {
+					std::vector<RayTracingInstance> GetInstanceData() {
 						return instances;
 					}
 

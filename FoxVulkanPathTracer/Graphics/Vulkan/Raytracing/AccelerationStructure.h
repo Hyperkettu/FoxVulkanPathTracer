@@ -12,7 +12,7 @@ struct BottomLevelAccelerationStructure {
     std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
 
     // Cached counts
-    uint32_t primitiveCount = 0;
+    std::vector<uint32_t> primitiveCounts = {};
 
     // Size info
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo{};

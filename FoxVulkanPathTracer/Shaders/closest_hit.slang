@@ -1,45 +1,76 @@
-// Define the payload structure matching the payload type used in your RayGen shader
-/*struct RayPayload
+struct Vertex
 {
-    float3 color;
+    float4 position;
+    float4 normal;
+    float2 uv;
 };
 
-[shader("closesthit")]
-void main(inout RayPayload payload)
+struct Submesh
 {
-    // Assign magenta to the payload color
-    payload.color = float3(0.0f, 0.5f, 0.0f);
-} v*/
+    uint vertexOffset;   // Optional for global indices
+    uint indexOffset;
+    uint vertexCount;
+    uint indexCount;
+};
 
-// 3. Define the Ray Payload matching your Ray Generation stage
-struct RayPayload {
+[[vk::binding(3, 0)]]
+StructuredBuffer<Vertex> gAllVertices;
+
+[[vk::binding(4, 0)]]
+StructuredBuffer<uint> gAllIndices;
+
+[[vk::binding(5, 0)]]
+StructuredBuffer<Submesh> gAllSubmeshes;
+
+struct RayPayload
+{
     float3 hitColor;
 };
 
-// Closest Hit entry point
 [shader("closesthit")]
-void main(inout RayPayload payload, BuiltInTriangleIntersectionAttributes attribs) {
-    
-    // Retrieve the custom index you passed via C++ 'instanceCustomIndex' 
-    // when setting up the VkAccelerationStructureInstanceKHR
-    uint customInstanceID = InstanceID();
+void main(
+    inout RayPayload payload,
+    BuiltInTriangleIntersectionAttributes attribs)
+{
+    // Instance corresponds directly to one Submesh
+    uint submeshID = InstanceID();
+    uint primitiveID = PrimitiveIndex();
 
-    // Prevent buffer overflow by clamping to the max array size (0 to 5)
-    uint safeIndex = clamp(customInstanceID, 0, 5);
+    Submesh submesh = gAllSubmeshes[submeshID];
 
-    // FIXED: Slang/HLSL uses curly braces for array literal initialization
-    float4 colors[6] = {
-        float4(1.0, 0.0, 0.0, 1.0),
-        float4(1.0, 1.0, 0.0, 1.0),
-        float4(1.0, 0.5, 1.0, 1.0),
-        float4(0.0, 1.0, 1.0, 1.0),
-        float4(0.0, 1.0, 0.0, 1.0),
-        float4(0.0, 0.0, 1.0, 1.0)
-    };
+    // Triangle indices
+    uint baseIndex = submesh.indexOffset + primitiveID * 3;
 
-    // Pull the color out of the local palette array
-    float4 objectColor = colors[safeIndex];
+    uint i0 = gAllIndices[baseIndex + 0];
+    uint i1 = gAllIndices[baseIndex + 1];
+    uint i2 = gAllIndices[baseIndex + 2];
 
-    // Assign the RGB channels to your ray's payload
-    payload.hitColor = objectColor.xyz;
+    // Fetch vertices
+    Vertex v0 = gAllVertices[i0];
+    Vertex v1 = gAllVertices[i1];
+    Vertex v2 = gAllVertices[i2];
+
+    // Barycentrics
+    float3 barycentrics = float3(
+        1.0 - attribs.barycentrics.x - attribs.barycentrics.y,
+        attribs.barycentrics.x,
+        attribs.barycentrics.y);
+
+    // Interpolate normal
+    float3 localNormal =
+        normalize(
+            v0.normal.xyz * barycentrics.x +
+            v1.normal.xyz * barycentrics.y +
+            v2.normal.xyz * barycentrics.z);
+
+    float3x3 normalMatrix = ((float3x3)WorldToObject3x4());
+
+    float3 worldNormal =
+        normalize(mul(localNormal, normalMatrix));
+
+    // Visualize normal
+    payload.hitColor = worldNormal * 0.5 + 0.5;
+
+  
+
 }

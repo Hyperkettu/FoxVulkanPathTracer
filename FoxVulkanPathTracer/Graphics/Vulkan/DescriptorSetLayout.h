@@ -15,14 +15,23 @@ namespace Fox {
 
                 DescriptorSetLayout(VkDevice device,
                     const std::vector<VkDescriptorSetLayoutBinding>& bindings,
+                    std::vector<VkDescriptorBindingFlags> bindingFlags = {},
                     VkDescriptorSetLayoutCreateFlags flags = 0)
                     : device(device)
                 {
+                    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsCreateInfo{};
+                    if (bindingFlags.size() > 0) {
+                        bindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+                        bindingFlagsCreateInfo.bindingCount = bindingFlags.size();
+                        bindingFlagsCreateInfo.pBindingFlags = bindingFlags.data();
+                    }
+
                     VkDescriptorSetLayoutCreateInfo layoutInfo{};
                     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
                     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
                     layoutInfo.pBindings = bindings.data();
                     layoutInfo.flags = flags;
+					layoutInfo.pNext = bindingFlags.empty() ? nullptr : &bindingFlagsCreateInfo;
 
                     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
                         throw std::runtime_error("Failed to create Vulkan descriptor set layout!");

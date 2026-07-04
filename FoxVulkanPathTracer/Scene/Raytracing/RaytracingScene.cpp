@@ -19,7 +19,7 @@ namespace Fox {
                 VkPhysicalDevice physicalDevice,
                 VkDeviceSize size,
                 VkBuffer& buffer,
-                VkDeviceMemory& memory, 
+                VkDeviceMemory& memory,
                 const std::string& name = "")
             {
                 VkBufferCreateInfo bufferInfo{
@@ -31,13 +31,6 @@ namespace Fox {
                 };
 
                 vkCreateBuffer(device, &bufferInfo, nullptr, &buffer);
-
-#ifdef _DEBUG
-                if (name.size() > 0) {
-                    Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
-                    Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, buffer, name);
-                }
-#endif
 
                 VkMemoryRequirements memReq;
                 vkGetBufferMemoryRequirements(device, buffer, &memReq);
@@ -56,7 +49,17 @@ namespace Fox {
                 };
 
                 vkAllocateMemory(device, &alloc, nullptr, &memory);
+
+                // 1. First, legally bind the memory to the buffer
                 vkBindBufferMemory(device, buffer, memory, 0);
+
+                // 2. NOW it is safe to debug name it and inspect its Device Address!
+#ifdef _DEBUG
+                if (name.size() > 0) {
+                    Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
+                    Fox::Graphics::Vulkan::CommandList::PrintBufferNameAndAddress(device, buffer, name);
+                }
+#endif
             }
 
             RayTracingScene::RayTracingScene(
@@ -127,7 +130,9 @@ namespace Fox {
                 uint32_t vertexCount,
                 VkBuffer indexBuffer,
                 VkDeviceAddress indexAddress,
-                uint32_t indexCount)
+                uint32_t indexCount,
+                uint32_t indexOffset,
+                uint32_t vertexOffset)
             {
                 BottomLevelAccelerationStructure blas{};
 
@@ -136,7 +141,7 @@ namespace Fox {
                     .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
                     .vertexData = { vertexAddress },
                     .vertexStride = sizeof(Fox::Graphics::Vulkan::Vertex),
-                    .maxVertex = vertexCount,
+                    .maxVertex = vertexOffset + vertexCount - 1,
                     .indexType = VK_INDEX_TYPE_UINT32,
                     .indexData = { indexAddress }
                 };
@@ -150,14 +155,16 @@ namespace Fox {
 
                 VkAccelerationStructureBuildRangeInfoKHR range{
                     .primitiveCount = indexCount / 3,
-                    .primitiveOffset = 0,
+                    .primitiveOffset = (indexOffset) * sizeof(uint32_t),
                     .firstVertex = 0,
                     .transformOffset = 0
                 };
 
                 blas.geometries.push_back(geometry);
                 blas.ranges.push_back(range);
-                blas.primitiveCount = range.primitiveCount;
+
+                // FIXED/RECOMMENDED: Store primitive counts in a vector matching geometries layout
+                blas.primitiveCounts.push_back(range.primitiveCount);
 
                 bottomLevelAccelerationStructure.push_back(blas);
                 return uint32_t(bottomLevelAccelerationStructure.size() - 1);
@@ -190,6 +197,9 @@ namespace Fox {
 
             void RayTracingScene::BuildBLAS(VkCommandBuffer cmd)
             {
+                // 1. First Pass: Find the absolute maximum scratch size needed out of ALL BLAS
+                VkDeviceSize maxScratchSize = 0;
+
                 for (auto& blas : bottomLevelAccelerationStructure)
                 {
                     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
@@ -209,56 +219,71 @@ namespace Fox {
                         device,
                         VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
                         &buildInfo,
-                        &blas.primitiveCount,
+                        blas.primitiveCounts.data(), // Note: This parameter takes an array of primitive counts matching geometryCount!
                         &sizeInfo);
 
+                    // Track the maximum size needed
+                    if (sizeInfo.buildScratchSize > maxScratchSize) {
+                        maxScratchSize = sizeInfo.buildScratchSize;
+                    }
+
+                    // Go ahead and create the actual AS object backings here
                     CreateAccelerationStructure(
                         VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
                         sizeInfo.accelerationStructureSize,
                         blas.handle,
                         blas.buffer,
                         blas.memory);
+                }
 
-                    // Destroy old scratch buffer if it exists
-               /*     if (scratchBuffer != VK_NULL_HANDLE) {
-                        vkDestroyBuffer(device, scratchBuffer, nullptr);
-                        vkFreeMemory(device, scratchMemory, nullptr);
-                    }
-                    */ 
-                    std::stringstream ss;
-                    ss << "Scratch Buffer ";
-                    ss << blas.primitiveCount;
+                // 2. Allocate exactly ONE global scratch buffer big enough to handle any BLAS build
+                VkBuffer globalScratchBuffer;
+                VkDeviceMemory globalScratchMemory;
+                CreateScratchBuffer(device, physicalDevice, maxScratchSize, globalScratchBuffer, globalScratchMemory, "Global BLAS Scratch");
+                VkDeviceAddress scratchAddress = GetBufferAddress(globalScratchBuffer);
 
-                    CreateScratchBuffer(
-                        device,
-                        physicalDevice,
-                        sizeInfo.buildScratchSize,
-                        scratchBuffer,
-                        scratchMemory, 
-                        "Scratch Buffer");
-
-                    buildInfo.dstAccelerationStructure = blas.handle;
-                    buildInfo.scratchData.deviceAddress = GetBufferAddress(scratchBuffer);
-
-                    const VkAccelerationStructureBuildRangeInfoKHR* ranges[] =
-                    {
-                        blas.ranges.data()
+                // 3. Second Pass: Record the build commands onto the command line
+                for (auto& blas : bottomLevelAccelerationStructure)
+                {
+                    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                        .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+                        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                        .geometryCount = uint32_t(blas.geometries.size()),
+                        .pGeometries = blas.geometries.data(),
+                        .scratchData = {.deviceAddress = scratchAddress } // Uses the same safe global address!
                     };
 
+                    buildInfo.dstAccelerationStructure = blas.handle;
+
+
+                    const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { blas.ranges.data() };
+
+                    // Record the build command
                     vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
 
+                    // Crucial: Place an execution barrier so consecutive builds don't step on each other's scratch space!
+                    VkMemoryBarrier barrier{
+                        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                        .srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                        .dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                    };
+                    vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        0, 1, &barrier, 0, nullptr, 0, nullptr);
+
+                    // Cache the resulting address for the TLAS step
                     VkAccelerationStructureDeviceAddressInfoKHR addrInfo{
                         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
                         .accelerationStructure = blas.handle
                     };
-                    blas.deviceAddress =
-                        vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
-
-/**                    if (scratchBuffer != VK_NULL_HANDLE) {
-                        vkDestroyBuffer(device, scratchBuffer, nullptr);
-                        vkFreeMemory(device, scratchMemory, nullptr);
-                    }*/
+                    blas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
                 }
+
+                // NOTE: You must hold onto globalScratchBuffer and globalScratchMemory and destroy them 
+                // ONLY AFTER you have submitted this command buffer and its VkFence has signaled complete!
             }
 
             void RayTracingScene::AddInstance(
@@ -517,42 +542,65 @@ namespace Fox {
             }
 
             void RayTracingScene::AddMesh(Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform) {
+
+                auto meshVertices = mesh.GetVertices();
+                auto meshIndices = mesh.GetIndices();
+                auto meshSubmeshes = mesh.GetSubmeshes();
+
+                for (auto i = 0; i < meshVertices.size(); i++) {
+                    vertices.push_back(meshVertices[i]);
+                }
+
+                for (auto i = 0; i < meshIndices.size(); i++) {
+                    indices.push_back(meshIndices[i]);
+                }
+
+                for (auto i = 0; i < meshSubmeshes.size(); i++) {
+                    submeshes.push_back(meshSubmeshes[i]);
+                }
+
                 auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
-                vertexBuffer->Create(device, physicalDevice,commandPool->Get(), queue, mesh.GetVertices(), "Raytracing Vertex Buffer");
+                vertexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, vertices, "Raytracing Vertex Buffer");
                 vertexBuffers.push_back(std::move(vertexBuffer));
 
                 auto indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
-                indexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, mesh.GetIndices(), "Raytracing Index Buffer");
+                indexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, indices, "Raytracing Index Buffer");
                 indexBuffers.push_back(std::move(indexBuffer));
+
+
+                vertexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>>(device, physicalDevice, "Scene Vertex SSBO", vertices);//(device, physicalDevice, "Mesh Vertex SSBO ", VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+                vertexSSBO->Update(vertices);
+ 
+                indexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<uint32_t>>(device, physicalDevice, "Mesh Index SSBO ", indices); //, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+                indexSSBO->Update(indices);
+
+                submeshSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Geometry::Submesh>>(device, physicalDevice, "Mesh Submesh SSBO ", submeshes); // VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+                submeshSSBO->Update(submeshes);
+
 
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
 
-                uint32_t vertexCount = mesh.GetVertices().size();
-                uint32_t indexCount = mesh.GetIndices().size();
-
                 auto instances = mesh.GetInstanceData();
+                size_t elementCount = submeshes.size(); 
 
-                auto index = 0;
-                for (auto& instance : instances) {
+                for (size_t i = 0; i < elementCount; i++) {
+                    const auto& subMesh = submeshes[i];
+                    const auto& instance = instances[i];
 
-                    uint32_t blasIndex = AddBLAS(
+                    auto blasIndex = AddBLAS(
                         vertexBuffers.back()->Get(),
                         vertexAddress,
-                        vertexCount,
-                        indexBuffers.back()->Get(),
-                        indexAddress + (instance.firstIndex * sizeof(uint32_t)),
-                        instance.indexCount);
+                        subMesh.vertexCount,     
+                        indexBuffers.back()->Get() ,
+                        indexAddress,
+                        subMesh.indexCount,   
+                        subMesh.indexOffset,     
+                        subMesh.vertexOffset         
+                    );
 
-                    AddInstance(
-                        blasIndex,
-                        instance.transform,
-                        /*instanceCustomIndex=*/index, //instance.materialIndex
-                        /*mask=*/0xFF);
-
-                    index++;
+                    AddInstance(blasIndex, instance.transform, instance.materialIndex, 0xFF);
                 }
-
             }
 
             void RayTracingScene::Build() {
@@ -561,6 +609,27 @@ namespace Fox {
                         .BuildAccelerationStructures(*this)
                         .End()
                         .SubmitAndWait(queue);
+            }
+
+            void RayTracingScene::UploadSceneGeometry(VkDevice device, VkPhysicalDevice physDevice, const std::vector<std::vector<Fox::Graphics::Vulkan::Vertex>>& allMeshVertices, const std::vector<std::vector<uint32_t>>& allMeshIndices) {
+              /*  allMeshGeometries.resize(allMeshVertices.size());
+                sceneVertexBuffers.resize(allMeshVertices.size());
+                sceneIndexBuffers.resize(allMeshVertices.size());
+
+                for (size_t i = 0; i < allMeshVertices.size(); i++) {
+
+                    allMeshGeometries[i] = Fox::Graphics::Vulkan::MeshGPU{};
+
+                    sceneVertexBuffers[i] = std::make_unique<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::Vertex>>(device, physDevice, "Mesh Vertex SSBO " + i, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+                    sceneVertexBuffers[i]->Update(allMeshVertices[i]);
+
+                    sceneIndexBuffers[i] = std::make_unique<Fox::Graphics::Vulkan::DynamicBuffer<uint32_t>>(device, physDevice, "Mesh Index SSBO " + i, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+                    sceneIndexBuffers[i]->Update(allMeshIndices[i]);
+
+                    allMeshGeometries[i].vertexBuffer = sceneVertexBuffers[i]->Get();
+                    allMeshGeometries[i].indexBuffer = sceneIndexBuffers[i]->Get();
+                    allMeshGeometries[i].indexCount = allMeshIndices[i].size();
+                }*/
             }
 
 		}

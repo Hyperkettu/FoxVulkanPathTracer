@@ -13,10 +13,16 @@ namespace Fox {
                     : device(device)
                 {}
 
+                DescriptorSetBuilder& SetLayoutFlags(VkDescriptorSetLayoutCreateFlags flags) {
+                    this->flags = flags;
+                    return *this;
+				}
+
                 // Add a binding to the layout
                 DescriptorSetBuilder& AddBinding(uint32_t binding,
                                                  VkDescriptorType type,
                                                  VkShaderStageFlags stages,
+					                             VkDescriptorBindingFlags bindingFlagBits = 0,
                                                  uint32_t count = 1,
                                                  const VkSampler* immutableSamplers = nullptr)
                 {
@@ -26,6 +32,9 @@ namespace Fox {
                     layoutBinding.descriptorCount = count;
                     layoutBinding.stageFlags = stages;
                     layoutBinding.pImmutableSamplers = immutableSamplers;
+
+					bindingFlags.push_back(bindingFlagBits);
+              
                     bindings.push_back(layoutBinding);
                     return *this;
                 }
@@ -48,7 +57,12 @@ namespace Fox {
                         throw std::runtime_error("DescriptorSetBuilder: No bindings added before build()");
                     }
 
-                    layout = std::make_unique<DescriptorSetLayout>(device, bindings);
+					bool allBindingFlagsZero = std::all_of(bindingFlags.begin(), bindingFlags.end(), [](VkDescriptorBindingFlags f) { return f == 0; });
+                    if(allBindingFlagsZero) {
+                        bindingFlags.clear();
+					}
+
+                    layout = std::make_unique<DescriptorSetLayout>(device, bindings, bindingFlags, flags);
 
                     std::vector<VkDescriptorPoolSize> poolSizes;
                     poolSizes.reserve(bindings.size());
@@ -70,10 +84,10 @@ namespace Fox {
                 }
 
                 // Allocate a single descriptor set
-                DescriptorSet AllocateSet() const {
+                DescriptorSet AllocateSet(std::vector<uint32_t> variableCounts = std::vector<uint32_t>()) const {
                     if (!layout || !pool)
                         throw std::runtime_error("DescriptorSetBuilder: build() must be called before allocateSet()");
-                    return DescriptorSet(device, pool->Get(), layout->Get());
+                    return DescriptorSet(device, pool->Get(), layout->Get(), variableCounts);
                 }
 
                 // Allocate multiple descriptor sets
@@ -102,6 +116,8 @@ namespace Fox {
             private:
                 VkDevice device = VK_NULL_HANDLE;
                 std::vector<VkDescriptorSetLayoutBinding> bindings;
+                VkDescriptorSetLayoutCreateFlags flags = 0;
+                std::vector<VkDescriptorBindingFlags> bindingFlags;
 
                 uint32_t maxSets = 1;
                 VkDescriptorPoolCreateFlags poolFlags = 0;

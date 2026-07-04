@@ -50,15 +50,16 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/VertexBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/IndexBuffer.h"
 
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/DynamicBuffer.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/ShaderStorageBuffer.h"
+
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"
 
-#include "FoxVulkanPathTracer/Graphics/Vulkan/ShaderStorageBuffer.h"
-
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ConstantBuffer.h"
-#include "FoxVulkanPathTracer/Graphics/Vulkan/DynamicBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DynamicConstantBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Fence.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Semaphore.h"

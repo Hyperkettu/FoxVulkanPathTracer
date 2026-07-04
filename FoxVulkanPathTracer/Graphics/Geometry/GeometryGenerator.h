@@ -10,8 +10,9 @@ namespace Fox {
 
 			class GeometryGenerator {
 			public:
+				/*
 				static void GenerateIcosahedron(std::vector<Fox::Graphics::Vulkan::Vertex>& outVertices, std::vector<uint32_t>& outIndices, Fox::Graphics::Vulkan::MeshInfo& outMeshInfo);
-				static void GenerateCube(std::vector<Fox::Graphics::Vulkan::Vertex>& outVertices, std::vector<uint32_t>& outIndices, Fox::Graphics::Vulkan::MeshInfo& outMeshInfo);
+				static Fox::Graphics::Geometry::Vulkan::Mesh GenerateCube();
 				static void GenerateSphere(
 					std::vector<Fox::Graphics::Vulkan::Vertex>& outVertices,
 					std::vector<uint32_t>& outIndices,
@@ -28,7 +29,7 @@ namespace Fox {
 					uint32_t stackCount = 6,
 					float radius = 1.0f);
 
-				static Fox::Graphics::Geometry::Vulkan::Mesh GeneratePlaneMesh(uint32_t xSegments, uint32_t ySegments, float dimension, float tileScale, float tileOffset);
+				static Fox::Graphics::Geometry::Vulkan::Mesh GeneratePlaneMesh(uint32_t xSegments, uint32_t ySegments, float dimension, float tileScale, float tileOffset);*/
 			};
 		} 
 	} 

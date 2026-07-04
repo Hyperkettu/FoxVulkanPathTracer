@@ -294,13 +294,25 @@ namespace Fox {
 					// Dependencies
 					VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+
 					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
 				};
 
+				VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
+				descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+
+				// Enable non-uniform indexing
+				descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+				descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
+				descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = VK_TRUE;
+				descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+
 				VkPhysicalDeviceMaintenance4Features maintenance4Features = {
 					.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
-					.maintenance4 = VK_TRUE
+					.maintenance4 = VK_TRUE,
 				};
+				maintenance4Features.pNext = &descriptorIndexingFeatures;
 
 				VkPhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures = {};
 				meshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
@@ -685,10 +697,10 @@ namespace Fox {
 
 				for(auto& frameResource : frameResources)
 				{
-					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet());
+					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet()); //({ 100 })); // 100 meshes in raytracing scene at max
 					frameResource->offscreenDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN)->AllocateSet());
 
-					frameResource->perFrameDescriptorSet->Reserve(2);
+					frameResource->perFrameDescriptorSet->Reserve(5);
 
 					frameResource->meshInfosUBO->Update(scene->GetSceneMeshInfos());
 
@@ -717,31 +729,21 @@ namespace Fox {
 
 				for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
 
-					auto& frameResource = frameResources[i];
-
-					/*	frameResources[i]->offscreenDescriptorSet->ClearWrites();
-						frameResources[i]->offscreenDescriptorSet->SetConstantBuffer(0, frameResources[i]->oldPerFrameUBO);
-						frameResources[i]->offscreenDescriptorSet->SetShaderResourceTexture(1, Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetShaderResourceTexture(Fox::Graphics::Managers::Vulkan::ShaderResourceTexture::BOX).get());
-						frameResources[i]->offscreenDescriptorSet->Update();
-
-						frameResources[i]->perFrameDescriptorSet->ClearWrites();
-						frameResources[i]->perFrameDescriptorSet->SetVertexBuffer<Vertex>(0, Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene()->GetVertexBuffer());
-						frameResources[i]->perFrameDescriptorSet->SetIndexBuffer<uint32_t>(1, Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene()->GetIndexBuffer());
-						frameResources[i]->perFrameDescriptorSet->SetConstantBuffer(2, frameResources[i]->perFrameUBO);
-						frameResources[i]->perFrameDescriptorSet->SetDynamicConstantBuffer(3, frameResources[i]->meshTransformsUBO);
-						frameResources[i]->perFrameDescriptorSet->SetDynamicStorageBuffer(4, frameResources[i]->meshInfosUBO);
-						frameResources[i]->perFrameDescriptorSet->SetShaderResourceTexture(5, Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_RENDER_TARGET).get());
-						frameResources[i]->perFrameDescriptorSet->Update();
-						*/
-
 					frameResources[i]->perFrameDescriptorSet->ClearWrites();
-					auto tlas = raytracingScene->GetTLAS(); 
+					auto tlas = raytracingScene->GetTLAS();
 					frameResources[i]->perFrameDescriptorSet->SetAccelerationStructure(0, tlas);
-					frameResources[i]->perFrameDescriptorSet->SetStorageImage(1, frameResource->storageTexture->GetView());
+					frameResources[i]->perFrameDescriptorSet->SetStorageImage(1, frameResources[i]->storageTexture->GetView());
 					frameResources[i]->perFrameDescriptorSet->SetConstantBuffer(2, frameResources[i]->camUBO);
+					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
+					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
+					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
 					frameResources[i]->perFrameDescriptorSet->Update();
 
+
+				//	frameResources[i]->perFrameDescriptorSet->UpdateBindlessVertexAndIndexBuffers(3, 4, raytracingScene->GetAllMeshGeometries());
 				}
+
+
 
 				return 1;
 			}
