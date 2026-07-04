@@ -455,12 +455,12 @@ namespace Fox {
                     this->submeshes.clear();
                     this->submeshes.reserve(submeshes.size());
                     for (size_t i = 0; i < submeshes.size(); i++) {
-                        Fox::Graphics::Geometry::Submesh submesh{};
+                        Fox::Graphics::Vulkan::Submesh submesh{};
                         submesh.indexOffset = submeshes[i].indexOffset;
                         submesh.indexCount = submeshes[i].indexCount;
                         submesh.vertexOffset = submeshes[i].vertexOffset;
                         submesh.vertexCount = submeshes[i].vertexCount;
-                        this->submeshes.push_back(submesh);
+                        this->gpuSubmeshes.push_back(submesh);
                     }
                 }
 

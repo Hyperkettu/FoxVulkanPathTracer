@@ -279,44 +279,6 @@ namespace Fox {
                         0, nullptr);
                 }
 
-                void UpdateBindlessVertexAndIndexBuffers(uint32_t vertexSlot, uint32_t indexSlot, std::vector<Fox::Graphics::Vulkan::MeshGPU>& meshGeometries) {
-                    uint32_t meshCount = static_cast<uint32_t>(meshGeometries.size());
-
-                    std::vector<VkDescriptorBufferInfo> vertexBufferInfos(meshCount);
-                    std::vector<VkDescriptorBufferInfo> indexBufferInfos(meshCount);
-
-                    for (uint32_t i = 0; i < meshCount; i++) {
-                        vertexBufferInfos[i].buffer = meshGeometries[i].vertexBuffer;
-                        vertexBufferInfos[i].offset = 0;
-                        vertexBufferInfos[i].range = VK_WHOLE_SIZE;
-
-                        indexBufferInfos[i].buffer = meshGeometries[i].indexBuffer;
-                        indexBufferInfos[i].offset = 0;
-                        indexBufferInfos[i].range = VK_WHOLE_SIZE;
-                    }
-
-                    VkWriteDescriptorSet descriptorWrites[2]{};
-
-                    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    descriptorWrites[0].dstSet = set;
-                    descriptorWrites[0].dstBinding = vertexSlot; 
-                    descriptorWrites[0].dstArrayElement = 0;
-                    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                    descriptorWrites[0].descriptorCount = meshCount;
-                    descriptorWrites[0].pBufferInfo = vertexBufferInfos.data();
-
-                    // Update Bindless Index Buffers (gAllIndices[] at binding 1)
-                    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    descriptorWrites[1].dstSet = set;
-                    descriptorWrites[1].dstBinding = indexSlot;
-                    descriptorWrites[1].dstArrayElement = 0;
-                    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                    descriptorWrites[1].descriptorCount = meshCount;
-                    descriptorWrites[1].pBufferInfo = indexBufferInfos.data();
-
-                    vkUpdateDescriptorSets(device, 2, descriptorWrites, 0, nullptr);
-                }
-
             private:
                 VkDevice device = VK_NULL_HANDLE;
                 VkDescriptorSetLayout layout = VK_NULL_HANDLE;

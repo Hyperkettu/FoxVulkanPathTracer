@@ -35,23 +35,9 @@ namespace Fox {
                     return indices;
                 }
 
-                inline std::vector<Fox::Graphics::Geometry::Submesh>& GetSubmeshes() {
+                inline std::vector<Fox::Graphics::Vulkan::Submesh>& GetSubmeshes() {
                     return submeshes;
                 }
-
-          /*      inline std::vector<std::vector<Fox::Graphics::Vulkan::Vertex>> GetSubmeshVertices() {
-                    return allMeshVertices;
-                }
-
-                inline std::vector<std::vector<uint32_t>> GetSubmeshIndices() {
-                    return allMeshIndices;
-                }
-
-                inline std::vector<Fox::Graphics::Vulkan::MeshGPU>& GetAllMeshGeometries() {
-                    return allMeshGeometries;
-                }
-                */
-                void UploadSceneGeometry(VkDevice device, VkPhysicalDevice physDevice, const std::vector<std::vector<Fox::Graphics::Vulkan::Vertex>>& allMeshVertices, const std::vector<std::vector<uint32_t>>& allMeshIndices);
 
                 uint32_t AddBLAS(
                     VkBuffer vertexBuffer,
@@ -92,7 +78,7 @@ namespace Fox {
 
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>> vertexSSBO;
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<uint32_t>> indexSSBO;
-                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Geometry::Submesh>> submeshSSBO;
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>> submeshSSBO;
 
                 static uint32_t FindDeviceLocalMemoryType(
                     VkPhysicalDevice physicalDevice,
@@ -120,19 +106,9 @@ namespace Fox {
                 std::vector<VkBuffer> scratchBuffers;
                 std::vector<VkDeviceMemory> scratchBufferMemories;
 
-            //    std::vector<std::vector<Fox::Graphics::Vulkan::Vertex>> allMeshVertices;
-            //    std::vector<std::vector<uint32_t>> allMeshIndices;
-
                 std::vector<Fox::Graphics::Vulkan::Vertex> vertices;
                 std::vector<uint32_t> indices;  
-                std::vector<Fox::Graphics::Geometry::Submesh> submeshes;
-
-                
-
-
-             //   std::vector<std::unique_ptr<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::Vertex>>> sceneVertexBuffers;
-             //   std::vector<std::unique_ptr<Fox::Graphics::Vulkan::DynamicBuffer<uint32_t>>> sceneIndexBuffers;
-             //   std::vector<Fox::Graphics::Vulkan::MeshGPU> allMeshGeometries;
+                std::vector<Fox::Graphics::Vulkan::Submesh> submeshes;
 
             private:
                 void CreateAccelerationStructure(

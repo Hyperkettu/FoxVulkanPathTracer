@@ -31,7 +31,7 @@ namespace Fox {
 					void AddTriangle(const Fox::Graphics::Vulkan::Vertex& v0, const Fox::Graphics::Vulkan::Vertex& v1, const Fox::Graphics::Vulkan::Vertex& v2)
 					{
 						// Try to find current submesh
-						//if (submeshes.empty() || submeshes.back().IsFull())
+						if (submeshes.empty() || submeshes.back().IsFull())
 						{
 							StartNewSubmesh();
 						}
@@ -47,7 +47,7 @@ namespace Fox {
 						indices.push_back(i1);
 						indices.push_back(i2);
 
-					//	submesh.AddTriangle(i0, i1, i2);
+						submesh.AddTriangle(i0, i1, i2);
 					}
 
 					void AddTriangle(IndexType i0, IndexType i1, IndexType i2, bool startNewSubmesh)
@@ -112,6 +112,8 @@ namespace Fox {
 					const std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() const { return vertices; }
 					const std::vector<IndexType>& GetIndices() const { return indices; }
 					const std::vector<Fox::Graphics::Geometry::Submesh>& GetSubmeshes() const { return submeshes; }
+					const std::vector<Fox::Graphics::Vulkan::Submesh>& GetSubmeshesForGPU() const { return gpuSubmeshes; }
+
 
 					std::vector<RayTracingInstance> GetInstanceData() {
 						return instances;
@@ -122,6 +124,7 @@ namespace Fox {
 					std::vector<IndexType> indices;
 					std::vector<Fox::Graphics::Geometry::Submesh> submeshes;
 					std::vector<RayTracingInstance> instances;
+					std::vector<Fox::Graphics::Vulkan::Submesh> gpuSubmeshes;
 
 					std::unordered_map<size_t, uint32_t> vertexLookup;
 

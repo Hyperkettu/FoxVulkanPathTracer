@@ -12,7 +12,7 @@ namespace Fox {
 				uint32_t indexOffset = 0;
 				uint32_t vertexCount = 0;
 				uint32_t indexCount = 0;
-				/*
+				
 				// Limit constants
 				static constexpr uint32_t MaxVertices = 256;
 				static constexpr uint32_t MaxTriangles = 84;
@@ -26,7 +26,7 @@ namespace Fox {
 				void AddTriangle(uint32_t i0, uint32_t i1, uint32_t i2)
 				{
 					indexCount += 3;
-				} */
+				} 
 			};
 	
 		}	
