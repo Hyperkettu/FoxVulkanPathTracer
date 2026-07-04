@@ -108,6 +108,7 @@ namespace Fox {
 					const std::vector<IndexType>& GetIndices() const { return indices; }
 					const std::vector<Fox::Graphics::Geometry::Submesh>& GetSubmeshes() const { return submeshes; }
 					const std::vector<Fox::Graphics::Vulkan::Submesh>& GetSubmeshesForGPU() const { return gpuSubmeshes; }
+					const std::vector<Fox::Graphics::Vulkan::Material>& GetMaterials() const { return materials;  }
 
 
 					std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> GetInstanceData() {
@@ -120,6 +121,7 @@ namespace Fox {
 					std::vector<Fox::Graphics::Geometry::Submesh> submeshes;
 					std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> instances;
 					std::vector<Fox::Graphics::Vulkan::Submesh> gpuSubmeshes;
+					std::vector<Fox::Graphics::Vulkan::Material> materials;
 
 					std::unordered_map<size_t, uint32_t> vertexLookup;
 

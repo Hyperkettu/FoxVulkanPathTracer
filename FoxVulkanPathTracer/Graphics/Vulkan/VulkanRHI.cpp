@@ -700,7 +700,7 @@ namespace Fox {
 					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet()); //({ 100 })); // 100 meshes in raytracing scene at max
 					frameResource->offscreenDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN)->AllocateSet());
 
-					frameResource->perFrameDescriptorSet->Reserve(5);
+					frameResource->perFrameDescriptorSet->Reserve(6);
 
 					frameResource->meshInfosUBO->Update(scene->GetSceneMeshInfos());
 
@@ -737,7 +737,8 @@ namespace Fox {
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->Update();
+					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
+					frameResources[i]->perFrameDescriptorSet->Update(); 
 
 
 				//	frameResources[i]->perFrameDescriptorSet->UpdateBindlessVertexAndIndexBuffers(3, 4, raytracingScene->GetAllMeshGeometries());

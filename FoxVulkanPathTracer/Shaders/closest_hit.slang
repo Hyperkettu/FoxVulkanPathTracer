@@ -13,6 +13,13 @@ struct Submesh
     uint indexCount;
 };
 
+struct Material {
+    float4 albedo;
+    float2 roughnessMetallic;
+	uint albedoTextureIndex;
+	uint roughnessMetallicTextureIndex;
+};
+
 [[vk::binding(3, 0)]]
 StructuredBuffer<Vertex> gAllVertices;
 
@@ -21,6 +28,10 @@ StructuredBuffer<uint> gAllIndices;
 
 [[vk::binding(5, 0)]]
 StructuredBuffer<Submesh> gAllSubmeshes;
+
+[[vk::binding(6, 0)]]
+StructuredBuffer<Material> gAllMaterials;
+
 
 struct RayPayload
 {
@@ -37,6 +48,7 @@ void main(
     uint primitiveID = PrimitiveIndex();
 
     Submesh submesh = gAllSubmeshes[submeshID];
+    Material material = gAllMaterials[submeshID];
 
     // Triangle indices
     uint baseIndex = submesh.indexOffset + primitiveID * 3;
@@ -69,7 +81,7 @@ void main(
         normalize(mul(localNormal, normalMatrix));
 
     // Visualize normal
-    payload.hitColor = worldNormal * 0.5 + 0.5;
+    payload.hitColor = material.albedo.xyz;
 
   
 

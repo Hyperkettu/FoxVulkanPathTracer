@@ -31,6 +31,7 @@
 #include "FoxVulkanPathTracer/Core/Signal.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Vertex.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Material.h"
 #include "FoxVulkanPathTracer/Input/InputManager.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Camera.h"
 #include "FoxVulkanPathTracer/Core/FileSystem.h"

@@ -45,6 +45,12 @@ namespace Fox {
                         submesh.vertexCount = submeshes[i].vertexCount;
                         this->gpuSubmeshes.push_back(submesh);
                     }
+
+                    for (auto i = 0; i < materials.size(); i++) {
+                        Fox::Graphics::Vulkan::Material mat;
+                        mat.albedo = glm::vec4(materials[i].baseColorFactor[0], materials[i].baseColorFactor[1], materials[i].baseColorFactor[2], materials[i].baseColorFactor[3]);
+                        this->materials.push_back(mat);
+                    }
                 }
 
             }
