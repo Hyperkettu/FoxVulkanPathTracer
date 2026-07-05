@@ -10,5 +10,5 @@ struct RayPayload
 void main(inout RayPayload payload)
 {
     // Assign magenta to the payload color
-    payload.hitColor = float3(0.0f, 0.0f, 0.5f);
+    payload.hitColor = float3(0.7f, 0.7f, 0.7f);
 }

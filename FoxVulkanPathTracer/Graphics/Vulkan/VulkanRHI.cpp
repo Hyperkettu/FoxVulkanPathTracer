@@ -541,7 +541,7 @@ namespace Fox {
 				Present(swapchain, imageIndex, frameResource->renderFinishedSemaphore);
 
 				currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
-
+				currentFrameIndex++;
 			}
 
 			const char* GetDebugSeverity(VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
@@ -727,6 +727,7 @@ namespace Fox {
 					cam.camRight = scene->GetMainCamera()->GetRight();
 					cam.camUp = scene->GetMainCamera()->GetUp();
 					cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
+					cam.frameIndex = currentFrameIndex;
 
 					frameResource->camUBO->Update(cam);
 				}
@@ -768,48 +769,15 @@ namespace Fox {
 				auto& scene = Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene();
 				auto& camera = scene->GetMainCamera();
 
-				rotationAngle += 0.005f;
-
-				Fox::Graphics::Vulkan::OldFrame oldPerFrame{};
-				oldPerFrame.model = glm::rotate(glm::mat4(1.0f),
-						(float)rotationAngle * glm::radians(90.0f),
-						glm::vec3(0.0f, 0.0f, 1.0f));
-				oldPerFrame.view = camera->GetViewMatrix();
-				oldPerFrame.proj = camera->GetProjectionMatrix();
-
-				frameResources[currentFrame]->oldPerFrameUBO->Update(oldPerFrame);
-
-				Fox::Graphics::Vulkan::PerFrame perFrame{};
-				perFrame.view = camera->GetViewMatrix();
-				perFrame.proj = camera->GetProjectionMatrix();
-
-				frameResources[currentFrame]->perFrameUBO->Update(perFrame);
-
-				Fox::Graphics::Vulkan::MeshTransforms meshTransforms{};
-				meshTransforms.models.push_back(glm::rotate(glm::mat4(1.0f),
-					(float)rotationAngle * glm::radians(90.0f),
-					glm::vec3(0.0f, 0.0f, 1.0f)));
-
-				//meshTransforms.models.push_back(glm::rotate(glm::mat4(1.0f),
-				//	(float)rotationAngle * glm::radians(45.0f),
-				//	glm::vec3(0.0f, 0.0f, 1.0f)) * glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 0.0f,0.0f)));
-
-				//meshTransforms.models.push_back(glm::rotate(glm::mat4(1.0f),
-				//	(float)rotationAngle * glm::radians(60.0f),
-				//	glm::vec3(0.0f, 0.0f, 1.0f)) * glm::translate(glm::mat4(1.0f), glm::vec3(8.0f, 0.0f, 0.0f)));
-
 				Fox::Graphics::Vulkan::CameraUBO cam;
 				cam.camPos = camera->GetPosition();
 				cam.camForward = camera->GetForward();
 				cam.camRight = camera->GetRight();
 				cam.camUp = camera->GetUp();
 				cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
+				cam.frameIndex = currentFrameIndex;
 
 				frameResources[currentFrame]->camUBO->Update(cam);
-
-
-				frameResources[currentFrame]->meshInfosUBO->Update(scene->GetSceneMeshInfos()); 
-				frameResources[currentFrame]->meshTransformsUBO->Update(meshTransforms.models);
 			}
 
 			void VulkanRHI::RegisterInput(Fox::Input::InputManager& input) {

@@ -51,6 +51,7 @@ namespace Fox {
 				VkQueue presentQueue;
 
 				int32_t currentFrame = 0;
+				uint32_t currentFrameIndex = 0u;
 
 				VkSurfaceFormatKHR surfaceFormat;
 				VkSurfaceCapabilitiesKHR capabilities;

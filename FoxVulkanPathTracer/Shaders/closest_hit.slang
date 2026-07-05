@@ -1,4 +1,3 @@
-
 static const float PI = 3.14159265359;
 
 enum class LightType
@@ -8,7 +7,6 @@ enum class LightType
     Spot, 
     QuadAreaLight
 };
-
 
 struct Vertex
 {
@@ -62,21 +60,11 @@ struct Light {
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
 
-[[vk::binding(3, 0)]]
-StructuredBuffer<Vertex> gAllVertices;
-
-[[vk::binding(4, 0)]]
-StructuredBuffer<uint> gAllIndices;
-
-[[vk::binding(5, 0)]]
-StructuredBuffer<Submesh> gAllSubmeshes;
-
-[[vk::binding(6, 0)]]
-StructuredBuffer<Material> gAllMaterials;
-
-[[vk::binding(7, 0)]]
-StructuredBuffer<Light> gAllLights;
-
+[[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
+[[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
+[[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
+[[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
+[[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
 
 struct RayPayload
 {
@@ -85,9 +73,21 @@ struct RayPayload
     uint rngState;
 };
 
+// 1. Core PCG hash function (transforms a 32-bit state)
+uint PCG_Hash(uint state) {
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// 2. Advances the LCG step and returns a pseudo-random uint
+uint NextRandomUInt(inout uint state) {
+    state = state * 747796405u + 289133645u;
+    return PCG_Hash(state);
+}
+
+// 3. Returns a high-quality uniform float between [0.0, 1.0)
 float NextRandomFloat(inout uint state) {
-    state = state * 1664525u + 1013904223u;
-    return float(state & 0x00FFFFFFu) / float(0x01000000u);
+    return float(NextRandomUInt(state)) / 4294967296.0;
 }
 
 float DistributionGGX(float3 N, float3 H, float roughness) {
@@ -96,13 +96,16 @@ float DistributionGGX(float3 N, float3 H, float roughness) {
     float NdotH = max(dot(N, H), 0.0);
     return a2 / (PI * pow(NdotH * NdotH * (a2 - 1.0) + 1.0, 2.0) + 0.000001);
 }
+
 float GeometrySchlickGGX(float NdotV, float roughness) {
     float k = pow(roughness + 1.0, 2.0) / 8.0;
     return NdotV / (NdotV * (1.0 - k) + k + 0.000001);
 }
+
 float GeometrySmith(float3 N, float3 V, float3 L, float roughness) {
     return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
 }
+
 float3 FresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
@@ -114,9 +117,9 @@ float3 SafeOffsetRayOrigin(float3 p, float3 n) {
 
     float3 of_i = float3(int_scale * n.x, int_scale * n.y, int_scale * n.z);
     float3 p_i = float3(
-        asfloat(asint(p.x) + (p.x < 0 ? float(-of_i.x) : float(of_i.x))),
-        asfloat(asint(p.y) + (p.y < 0 ? float(-of_i.y) : float(of_i.y))),
-        asfloat(asint(p.z) + (p.z < 0 ? float(-of_i.z) : float(of_i.z)))
+        asfloat(asint(p.x) + (p.x < 0 ? -of_i.x : of_i.x)),
+        asfloat(asint(p.y) + (p.y < 0 ? -of_i.y : of_i.y)),
+        asfloat(asint(p.z) + (p.z < 0 ? -of_i.z : of_i.z))
     );
 
     return float3(abs(p.x) < origin ? p.x + float_scale * n.x : p_i.x,
@@ -167,80 +170,119 @@ void main(
 
     float3x3 normalMatrix = ((float3x3)WorldToObject3x4());
 
-    float3 N =
-        normalize(mul(localNormal, normalMatrix));
-
+    float3 N = normalize(mul(localNormal, normalMatrix));
     float3 worldPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     float3 V = normalize(-WorldRayDirection());
 
     float3 albedo = material.albedo.xyz;
-    float roughness = material.roughnessMetallic.x;
+    
+    // Fix 1: Clamp roughness to prevent GGX NDF math from collapsing to zero
+    float roughness = max(material.roughnessMetallic.x, 0.0f);
     float metallic = material.roughnessMetallic.y;
-    float3 F0 = lerp(float3(0.04), albedo, metallic);
+    
+    float3 F0 = lerp(float3(0.04f), albedo, metallic);
+    float3 emission = material.emissiveColor.xyz; 
 
-    float3 emission = material.emissiveColor.xyz; // * material.intensity;
+    float3 directColor = float3(0.0f, 0.0f, 0.0f);
 
-    float3 directColor = float3(0,0,0);
+    // Seed initialization for this light check
+    uint seed = payload.rngState;
 
     for(uint i = 0; i < 1; i++) {
         Light light = gAllLights[i];
 
-        if(light.type == LightType::QuadAreaLight) {
+        if(light.type == (int)LightType::QuadAreaLight) {
 
             for(uint j = 0; j < 4; j++) {
-                uint offsetSeed = payload.rngState + 100 * j;
-                float u1 = NextRandomFloat(offsetSeed) * 2.0 - 1.0;
-                float u2 = NextRandomFloat(offsetSeed) * 2.0 - 1.0;
+                // Fix 3: Keep updating the seed state sequentially so sample positions are random
+                float u1 = NextRandomFloat(seed) * 2.0f - 1.0f;
+                float u2 = NextRandomFloat(seed) * 2.0f - 1.0f;
                 float3 samplePos = light.position + (light.tangentX * u1) + (light.tangentY * u2);
 
                 float3 L = samplePos - worldPos;
                 float dist = length(L);
                 L = normalize(L);
 
-                float NdotL = max(dot(N, L), 0.0);
-                float lightNdotL = max(dot(light.normal, -L), 0.0);
+                float NdotL = max(dot(N, L), 0.0f);
+                float lightNdotL = max(dot(light.normal, -L), 0.0f);
 
-                // If the surface faces the light and the light faces the surface
-                if (NdotL > 0.0 && lightNdotL > 0.0) {
-                
-                    if (true) { //!shadowPayload.isShadowed) {
-                        // Evaluate BRDF
-                        float3 H = normalize(V + L);
-                        float  D = DistributionGGX(N, H, roughness);
-                        float  G = GeometrySmith(N, V, L, roughness);
-                        float3 F = FresnelSchlick(max(dot(H, V), 0.0), F0);
+                if (NdotL > 0.0f && lightNdotL > 0.0f) {
+                    // Evaluate BRDF
+                    float3 H = normalize(V + L);
+                    float  D = DistributionGGX(N, H, roughness);
+                    float  G = GeometrySmith(N, V, L, roughness);
+                    float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
 
-                        float3 numerator = D * G * F;
-                        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL;
-                        float3 specular = numerator / max(denominator, 0.000001);
+                    float3 numerator = D * G * F;
+                    float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
+                    float3 specular = numerator / max(denominator, 0.000001f);
 
-                        float3 kS = F;
-                        float3 kD = (float3(1.0) - kS) * (1.0 - metallic);
+                    float3 kS = F;
+                    float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
 
-                        // Area light geometric attenuation (solid angle formulation)
-                        float geometryFactor = (NdotL * lightNdotL) / (dist * dist + 0.0001);
-                        float3 radiance = light.color * light.area * geometryFactor;
+                    // Area light geometric attenuation
+                    float geometryFactor = (NdotL * lightNdotL) / (dist * dist + 0.0001f);
+                    float3 radiance = light.color * light.area * geometryFactor;
 
-                        directColor += (kD * albedo / PI + specular) * radiance;
-                    }
+                    directColor += (kD * albedo / PI + specular) * radiance;
                 }
             }
-
-            directColor /= 4.0;
+            directColor /= 4.0f;
         }
     }
+    
+    // Pass updated seed back to payload
+    payload.rngState = seed;
 
-    float3 indirectColor = float3(0.0);
+ float3 indirectColor = float3(0.0f, 0.0f, 0.0f);
     const int MAX_BOUNCES = 4;
 
     if (payload.depth <= MAX_BOUNCES) {
-        float3 L_ind = reflect(-V, N);
-        float3 H_ind = normalize(V + L_ind);
-        float NdotL_ind = max(dot(N, L_ind), 0.0);
+        uint seed = payload.rngState;
+        float r1 = NextRandomFloat(seed);
+        float r2 = NextRandomFloat(seed);
+        payload.rngState = seed; 
 
-        if (NdotL_ind > 0.0) {
+        float3 F_ind = FresnelSchlick(max(dot(N, V), 0.0f), F0);
+        float specularChance = max(max(F_ind.x, F_ind.y), F_ind.z);
+        
+        float3 L_ind;
+        bool isSpecularBounce = false;
+
+        if (NextRandomFloat(seed) < specularChance) {
+            // 1. SPECULAR BOUNCE (Mirror Direction)
+            L_ind = reflect(-V, N);
+            isSpecularBounce = true;
+        } else {
+            // 2. DIFFUSE BOUNCE (Proper Cosine-Weighted Hemisphere Sampling)
+            float phi = 2.0f * PI * r1;
+            float cosTheta = sqrt(r2);
+            float sinTheta = sqrt(1.0f - r2);
+
+            // Construct local space coordinates
+            float3 localDir = float3(
+                cos(phi) * sinTheta,
+                sin(phi) * sinTheta,
+                cosTheta
+            );
+
+            // Build a stable coordinate system around the Normal vector
+            float3 up = abs(N.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
+            float3 tangent = normalize(cross(up, N));
+            float3 bitangent = cross(N, tangent);
+
+            // Transform local hemisphere sample back to world space
+            L_ind = tangent * localDir.x + bitangent * localDir.y + N * localDir.z;
+            L_ind = normalize(L_ind);
+        }
+        
+        payload.rngState = seed;
+
+        float NdotL_ind = max(dot(N, L_ind), 0.0f);
+
+        if (NdotL_ind > 0.0f) {
             RayPayload secondaryPayload;
-            secondaryPayload.hitColor = float3(0.0);
+            secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
             secondaryPayload.depth = payload.depth + 1;
             secondaryPayload.rngState = payload.rngState; 
 
@@ -253,24 +295,20 @@ void main(
             ray.TMax      = 10000.0f;
 
             TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
+            
+            payload.rngState = secondaryPayload.rngState;
 
-            float  D_ind = DistributionGGX(N, H_ind, roughness);
-            float  G_ind = GeometrySmith(N, V, L_ind, roughness);
-            float3 F_ind = FresnelSchlick(max(dot(H_ind, V), 0.0), F0);
-
-            float3 numerator_ind = D_ind * G_ind * F_ind;
-            float denominator_ind = 4.0 * max(dot(N, V), 0.0) * NdotL_ind;
-            float3 specular_ind = numerator_ind / max(denominator_ind, 0.000001);
-
-            float3 kS_ind = F_ind;
-            float3 kD_ind = (float3(1.0) - kS_ind) * (1.0 - metallic);
-
-            indirectColor = (kD_ind * albedo / PI + specular_ind) * secondaryPayload.hitColor * NdotL_ind;
+            if (isSpecularBounce) {
+                // PDF for picking specular is specularChance
+                indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
+            } else {
+                // PDF for picking diffuse is (1.0 - specularChance)
+                float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
+                // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
+                indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
+            }
         }
     }
 
     payload.hitColor = emission + directColor + indirectColor;
-
-
-
 }

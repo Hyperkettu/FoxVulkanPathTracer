@@ -6,11 +6,12 @@ namespace Fox {
 	    namespace Vulkan {
 
 			struct CameraUBO {
-				alignas(16) glm::vec3 camPos;
-				alignas(16) glm::vec3 camForward;
-				alignas(16) glm::vec3 camRight;
-				alignas(16) glm::vec3 camUp;
-				alignas(16) glm::vec2 resolution;
+				alignas(16) glm::vec3 camPos;       // Offset 0 (12 bytes + 4 bytes auto-padding)
+				alignas(16) glm::vec3 camForward;   // Offset 16 (12 bytes + 4 bytes auto-padding)
+				alignas(16) glm::vec3 camRight;     // Offset 32 (12 bytes + 4 bytes auto-padding)
+				alignas(16) glm::vec3 camUp;        // Offset 48 (12 bytes + 4 bytes auto-padding)
+				alignas(16) glm::vec2 resolution;   // Offset 64 (8 bytes)
+				alignas(8)  uint32_t frameIndex;    // Offset 72 (4 bytes) - packs right after resolution!
 			};
 
 			struct OldFrame {
