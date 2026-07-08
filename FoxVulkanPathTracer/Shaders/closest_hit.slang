@@ -221,31 +221,44 @@ void main(
                     0xFF, 0, 0, 1, // Points to Shadow Miss Shader (Index 1)
                     rayShadow, shadowPayload);
 
-                if(!shadowPayload.isShadowed) {
-                    float NdotL = max(dot(N, L), 0.0f);
-                    float lightNdotL = max(dot(light.normal, -L), 0.0f);
+                float lightNdotL = max(dot(light.normal, -L), 0.0f);
+                float NdotL = max(dot(N, L), 0.0f);
 
-                    if (NdotL > 0.0f && lightNdotL > 0.0f) {
-                        // Evaluate BRDF
+                if (NdotL > 0.0f && lightNdotL > 0.0f) {
+                    // ... Traced Shadow Ray successfully ...
+                    if(!shadowPayload.isShadowed) {
+        
+                        // 1. Evaluate standard BRDF terms f(l, v)
                         float3 H = normalize(V + L);
                         float  D = DistributionGGX(N, H, roughness);
                         float  G = GeometrySmith(N, V, L, roughness);
                         float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
 
                         float3 numerator = D * G * F;
+                        // Standard BRDF denominator includes NdotV and NdotL
                         float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
                         float3 specular = numerator / max(denominator, 0.000001f);
 
                         float3 kS = F;
                         float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
+        
+                        float3 BRDF = (kD * albedo / PI) + specular;
 
-                        // Area light geometric attenuation
-                        float geometryFactor = (NdotL * lightNdotL) / (dist * dist + 0.0001f);
-                        float3 radiance = light.color * light.area * geometryFactor;
+                        // 2. Correct Monte Carlo Weighting for Area Sampling
+                        // Solid Angle conversion factor: (lightNdotL) / (dist * dist)
+                        float solidAngleConversion = lightNdotL / (dist * dist + 0.0001f);
+        
+                        // Target Radiance from the emitter
+                        float3 emmitedRadiance = light.color; 
 
-                        directColor += (kD * albedo / PI + specular) * radiance;
+                        // 3. Final Integration: BRDF * Radiance * NdotL / PDF
+                        // Because PDF = 1.0 / light.area, dividing by PDF means multiplying by light.area
+                        directColor += BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area;
                     }
                 }
+              
+
+                
             }
             directColor /= 4.0f;
         }
@@ -299,52 +312,36 @@ void main(
         payload.rngState = seed;
 
         float NdotL_ind = max(dot(N, L_ind), 0.0f);
-
-        ShadowPayload shadowPayload_ind;
-                shadowPayload_ind.isShadowed = true;
-
-        RayDesc rayShadow_ind;
-        rayShadow_ind.Origin    = worldPos + 0.001 * N; //SafeOffsetRayOrigin(worldPos, N);
-        rayShadow_ind.Direction = L_ind;
-        rayShadow_ind.TMin      = 0.001f;
-        rayShadow_ind.TMax      = 10000.0f;
-
-        TraceRay(tlas, 
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 
-            0xFF, 0, 0, 1, // Points to Shadow Miss Shader (Index 1)
-            rayShadow_ind, shadowPayload_ind);
-
-        if(!shadowPayload_ind.isShadowed) {
          
-             if (NdotL_ind > 0.0f) {
-                RayPayload secondaryPayload;
-                secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
-                secondaryPayload.depth = payload.depth + 1;
-                secondaryPayload.rngState = payload.rngState; 
+        if (NdotL_ind > 0.0f) {
+            RayPayload secondaryPayload;
+            secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
+            secondaryPayload.depth = payload.depth + 1;
+            secondaryPayload.rngState = payload.rngState; 
 
-                float3 rayOrigin = SafeOffsetRayOrigin(worldPos, N);
+            float3 rayOrigin = SafeOffsetRayOrigin(worldPos, N);
 
-                RayDesc ray;
-                ray.Origin    = rayOrigin;
-                ray.Direction = L_ind;
-                ray.TMin      = 0.001f;
-                ray.TMax      = 10000.0f;
+            RayDesc ray;
+            ray.Origin    = rayOrigin;
+            ray.Direction = L_ind;
+            ray.TMin      = 0.001f;
+            ray.TMax      = 10000.0f;
 
-                TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
+            TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
             
-                payload.rngState = secondaryPayload.rngState;
+            payload.rngState = secondaryPayload.rngState;
 
-                if (isSpecularBounce) {
-                    // PDF for picking specular is specularChance
-                    indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
-                } else {
-                    // PDF for picking diffuse is (1.0 - specularChance)
-                    float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
-                    // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
-                    indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
-                }
+            if (isSpecularBounce) {
+                // PDF for picking specular is specularChance
+                indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
+            } else {
+                // PDF for picking diffuse is (1.0 - specularChance)
+                float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
+                // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
+                indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
             }
-        }       
+        }
+               
     }
 
     payload.hitColor = emission + directColor + indirectColor;
