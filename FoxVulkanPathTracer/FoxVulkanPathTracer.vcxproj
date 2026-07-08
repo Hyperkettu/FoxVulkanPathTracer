@@ -280,6 +280,7 @@
     <None Include="Shaders\multi_generic_mesh.mesh" />
     <None Include="Shaders\raygen.rgen" />
     <None Include="Shaders\raygen.slang" />
+    <None Include="Shaders\shadowmiss.slang" />
     <None Include="Shaders\textured.frag" />
     <None Include="Shaders\texturedCube.mesh" />
     <None Include="Shaders\textured_icosahedron.frag" />

@@ -73,6 +73,10 @@ struct RayPayload
     uint rngState;
 };
 
+struct ShadowPayload {
+    bool isShadowed;
+}
+
 // 1. Core PCG hash function (transforms a 32-bit state)
 uint PCG_Hash(uint state) {
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
@@ -203,28 +207,44 @@ void main(
                 float dist = length(L);
                 L = normalize(L);
 
-                float NdotL = max(dot(N, L), 0.0f);
-                float lightNdotL = max(dot(light.normal, -L), 0.0f);
+                ShadowPayload shadowPayload;
+                shadowPayload.isShadowed = true;
 
-                if (NdotL > 0.0f && lightNdotL > 0.0f) {
-                    // Evaluate BRDF
-                    float3 H = normalize(V + L);
-                    float  D = DistributionGGX(N, H, roughness);
-                    float  G = GeometrySmith(N, V, L, roughness);
-                    float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
+                RayDesc rayShadow;
+                rayShadow.Origin    = worldPos + 0.001 * N; //SafeOffsetRayOrigin(worldPos, N);
+                rayShadow.Direction = L;
+                rayShadow.TMin      = 0.001f;
+                rayShadow.TMax      = dist - 0.002;
 
-                    float3 numerator = D * G * F;
-                    float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
-                    float3 specular = numerator / max(denominator, 0.000001f);
+                TraceRay(tlas, 
+                    RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 
+                    0xFF, 0, 0, 1, // Points to Shadow Miss Shader (Index 1)
+                    rayShadow, shadowPayload);
 
-                    float3 kS = F;
-                    float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
+                if(!shadowPayload.isShadowed) {
+                    float NdotL = max(dot(N, L), 0.0f);
+                    float lightNdotL = max(dot(light.normal, -L), 0.0f);
 
-                    // Area light geometric attenuation
-                    float geometryFactor = (NdotL * lightNdotL) / (dist * dist + 0.0001f);
-                    float3 radiance = light.color * light.area * geometryFactor;
+                    if (NdotL > 0.0f && lightNdotL > 0.0f) {
+                        // Evaluate BRDF
+                        float3 H = normalize(V + L);
+                        float  D = DistributionGGX(N, H, roughness);
+                        float  G = GeometrySmith(N, V, L, roughness);
+                        float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
 
-                    directColor += (kD * albedo / PI + specular) * radiance;
+                        float3 numerator = D * G * F;
+                        float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
+                        float3 specular = numerator / max(denominator, 0.000001f);
+
+                        float3 kS = F;
+                        float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
+
+                        // Area light geometric attenuation
+                        float geometryFactor = (NdotL * lightNdotL) / (dist * dist + 0.0001f);
+                        float3 radiance = light.color * light.area * geometryFactor;
+
+                        directColor += (kD * albedo / PI + specular) * radiance;
+                    }
                 }
             }
             directColor /= 4.0f;
@@ -280,34 +300,51 @@ void main(
 
         float NdotL_ind = max(dot(N, L_ind), 0.0f);
 
-        if (NdotL_ind > 0.0f) {
-            RayPayload secondaryPayload;
-            secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
-            secondaryPayload.depth = payload.depth + 1;
-            secondaryPayload.rngState = payload.rngState; 
+        ShadowPayload shadowPayload_ind;
+                shadowPayload_ind.isShadowed = true;
 
-            float3 rayOrigin = SafeOffsetRayOrigin(worldPos, N);
+        RayDesc rayShadow_ind;
+        rayShadow_ind.Origin    = worldPos + 0.001 * N; //SafeOffsetRayOrigin(worldPos, N);
+        rayShadow_ind.Direction = L_ind;
+        rayShadow_ind.TMin      = 0.001f;
+        rayShadow_ind.TMax      = 10000.0f;
 
-            RayDesc ray;
-            ray.Origin    = rayOrigin;
-            ray.Direction = L_ind;
-            ray.TMin      = 0.001f;
-            ray.TMax      = 10000.0f;
+        TraceRay(tlas, 
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 
+            0xFF, 0, 0, 1, // Points to Shadow Miss Shader (Index 1)
+            rayShadow_ind, shadowPayload_ind);
 
-            TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
+        if(!shadowPayload_ind.isShadowed) {
+         
+             if (NdotL_ind > 0.0f) {
+                RayPayload secondaryPayload;
+                secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
+                secondaryPayload.depth = payload.depth + 1;
+                secondaryPayload.rngState = payload.rngState; 
+
+                float3 rayOrigin = SafeOffsetRayOrigin(worldPos, N);
+
+                RayDesc ray;
+                ray.Origin    = rayOrigin;
+                ray.Direction = L_ind;
+                ray.TMin      = 0.001f;
+                ray.TMax      = 10000.0f;
+
+                TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
             
-            payload.rngState = secondaryPayload.rngState;
+                payload.rngState = secondaryPayload.rngState;
 
-            if (isSpecularBounce) {
-                // PDF for picking specular is specularChance
-                indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
-            } else {
-                // PDF for picking diffuse is (1.0 - specularChance)
-                float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
-                // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
-                indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
+                if (isSpecularBounce) {
+                    // PDF for picking specular is specularChance
+                    indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
+                } else {
+                    // PDF for picking diffuse is (1.0 - specularChance)
+                    float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
+                    // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
+                    indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
+                }
             }
-        }
+        }       
     }
 
     payload.hitColor = emission + directColor + indirectColor;

@@ -24,6 +24,7 @@ namespace Fox {
 						builder->AddShader("Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
 							.AddShader("Shaders/miss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.AddShader("Shaders/closesthit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
+							.AddShader("Shaders/shadowmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.SetLayout(rayTracingPipelineLayout->Get())
 							.SetMaxRecursionDepth(4);
 

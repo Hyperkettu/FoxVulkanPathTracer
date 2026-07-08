@@ -518,5 +518,8 @@
     <None Include="Shaders\miss.slang">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\shadowmiss.slang">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

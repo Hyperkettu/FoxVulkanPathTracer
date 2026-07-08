@@ -106,7 +106,7 @@ namespace Fox {
                     uint32_t handleAlign = rtProps.shaderGroupBaseAlignment;
 
                     uint32_t raygenCount = 1;
-                    uint32_t missCount = 1;
+                    uint32_t missCount = 2;
                     uint32_t hitCount = groupCount - raygenCount - missCount;
 
                     uint32_t raygenSize = Align(handleSize, handleAlign);
@@ -164,11 +164,15 @@ namespace Fox {
                     vkMapMemory(device, sbtMemory, 0, VK_WHOLE_SIZE, 0, &mapped);
 
                     uint8_t* p = static_cast<uint8_t*>(mapped);
-                    memcpy(p, handles.data(), handleSize);                  // raygen
-                    memcpy(p + raygenSize, handles.data() + handleSize, handleSize); // miss
-                    memcpy(p + raygenSize + missSize,
-                        handles.data() + handleSize * 2,
-                        handleSize * hitCount);                           // hit
+                    // 1. RayGen (Group 0)
+                    memcpy(p, handles.data() + (0 * handleSize), handleSize);
+
+                    // 2. Miss Block: Copy Reflection Miss (Group 1) and Shadow Miss (Group 3)
+                    memcpy(p + raygenSize, handles.data() + (1 * handleSize), handleSize); // Reflection Miss
+                    memcpy(p + raygenSize + handleSize, handles.data() + (3 * handleSize), handleSize); // Shadow Miss
+
+                    // 3. Hit Block: Copy Closest Hit (Group 2)
+                    memcpy(p + raygenSize + missSize, handles.data() + (2 * handleSize), handleSize * hitCount);
 
                     vkUnmapMemory(device, sbtMemory);
 

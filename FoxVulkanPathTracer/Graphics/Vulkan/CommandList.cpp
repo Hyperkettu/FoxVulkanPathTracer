@@ -53,7 +53,7 @@ Fox::Graphics::Vulkan::CommandList& Fox::Graphics::Vulkan::CommandList::SetRecur
 
 	uint32_t rayGenGroupIdx = 0;
 	uint32_t missGroupIdx = 1; // Reflection miss
-	uint32_t shadowMissGroupIdx = 2; // Shadow miss 
+	uint32_t shadowMissGroupIdx = 3; // Shadow miss 
 	uint32_t chitGroupIdx = 2; // Closest Hit  
 
 	VkDeviceSize rayGenStackSize = vkGetRayTracingShaderGroupStackSizeKHR(
@@ -65,13 +65,17 @@ Fox::Graphics::Vulkan::CommandList& Fox::Graphics::Vulkan::CommandList::SetRecur
 		device, pipeline, missGroupIdx,
 		VkShaderGroupShaderKHR::VK_SHADER_GROUP_SHADER_GENERAL_KHR);
 
+	VkDeviceSize shadowMissStackSize = vkGetRayTracingShaderGroupStackSizeKHR(
+		device, pipeline, shadowMissGroupIdx,
+		VkShaderGroupShaderKHR::VK_SHADER_GROUP_SHADER_GENERAL_KHR);
+
 	// Query Closest Hit Group Stack Size (Note the specific enum name)
 	VkDeviceSize chitStackSize = vkGetRayTracingShaderGroupStackSizeKHR(
 		device, pipeline, chitGroupIdx,
 		VkShaderGroupShaderKHR::VK_SHADER_GROUP_SHADER_CLOSEST_HIT_KHR);
 
 	// Find the heaviest miss shader
-	VkDeviceSize maxMissStackSize = missStackSize; //std::max(missStackSize, 0);
+	VkDeviceSize maxMissStackSize = std::max(missStackSize, shadowMissStackSize); //std::max(missStackSize, 0);
 
 	// 3. Compute the official Vulkan recursive stack size
 	// Max Depth = 4
