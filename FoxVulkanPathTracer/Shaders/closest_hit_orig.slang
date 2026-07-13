@@ -75,13 +75,15 @@ struct RayPayload
 
 struct ShadowPayload {
     bool isShadowed;
-};
+}
 
+// 1. Core PCG hash function (transforms a 32-bit state)
 uint PCG_Hash(uint state) {
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
 
+// 2. Advances the LCG step and returns a pseudo-random uint
 uint NextRandomUInt(inout uint state) {
     state = state * 747796405u + 289133645u;
     return PCG_Hash(state);
@@ -129,30 +131,12 @@ float3 SafeOffsetRayOrigin(float3 p, float3 n) {
                   abs(p.z) < origin ? p.z + float_scale * n.z : p_i.z);
 }
 
-bool IsShadowed(float3 position, float3 normal, float3 lightDirection, float distance) {
-    RayDesc shadowRayDesc;
-    shadowRayDesc.Origin = position + 0.001f * normal;
-    shadowRayDesc.Direction = lightDirection;
-    shadowRayDesc.TMin = 0.001f;
-    shadowRayDesc.TMax = distance - 0.002f;
-
-    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-    let rayFlags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH;
-
-    query.TraceRayInline(tlas, rayFlags, 0xFF, shadowRayDesc);
-
-    query.Proceed();
-                
-    bool isShadowed = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
-
-    return isShadowed;
-}
-
 [shader("closesthit")]
 void main(
     inout RayPayload payload,
     BuiltInTriangleIntersectionAttributes attribs)
 {
+    // Instance corresponds directly to one Submesh
     uint submeshID = InstanceID();
     uint primitiveID = PrimitiveIndex();
 
@@ -166,15 +150,18 @@ void main(
     uint i1 = gAllIndices[baseIndex + 1];
     uint i2 = gAllIndices[baseIndex + 2];
 
+    // Fetch vertices
     Vertex v0 = gAllVertices[i0];
     Vertex v1 = gAllVertices[i1];
     Vertex v2 = gAllVertices[i2];
 
+    // Barycentrics
     float3 barycentrics = float3(
         1.0 - attribs.barycentrics.x - attribs.barycentrics.y,
         attribs.barycentrics.x,
         attribs.barycentrics.y);
 
+    // Interpolate normal
     float3 localNormal =
         normalize(
             v0.normal.xyz * barycentrics.x +
@@ -189,17 +176,20 @@ void main(
 
     float3 N = normalize(mul(normalMatrix, localNormal));
     float3 worldPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    
-    float3 albedo = material.albedo.xyz;
-    float roughness = max(material.roughnessMetallic.x, 0.0f);
-    float metallic = material.roughnessMetallic.y;
-
     float3 V = normalize(-WorldRayDirection());
 
+    float3 albedo = material.albedo.xyz;
+    
+    // Fix 1: Clamp roughness to prevent GGX NDF math from collapsing to zero
+    float roughness = max(material.roughnessMetallic.x, 0.0f);
+    float metallic = material.roughnessMetallic.y;
+    
     float3 F0 = lerp(float3(0.04f), albedo, metallic);
     float3 emission = material.emissiveColor.xyz; 
-    float3 directColor = float3(0.0);
 
+    float3 directColor = float3(0.0f, 0.0f, 0.0f);
+
+    // Seed initialization for this light check
     uint seed = payload.rngState;
 
     for(uint i = 0; i < 1; i++) {
@@ -217,11 +207,26 @@ void main(
                 float dist = length(L);
                 L = normalize(L);
 
+                ShadowPayload shadowPayload;
+                shadowPayload.isShadowed = true;
+
+                RayDesc rayShadow;
+                rayShadow.Origin    = worldPos + 0.001 * N; //SafeOffsetRayOrigin(worldPos, N);
+                rayShadow.Direction = L;
+                rayShadow.TMin      = 0.001f;
+                rayShadow.TMax      = dist - 0.002;
+
+                TraceRay(tlas, 
+                    RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 
+                    0xFF, 0, 0, 1, // Points to Shadow Miss Shader (Index 1)
+                    rayShadow, shadowPayload);
+
                 float lightNdotL = max(dot(light.normal, -L), 0.0f);
                 float NdotL = max(dot(N, L), 0.0f);
 
                 if (NdotL > 0.0f && lightNdotL > 0.0f) {
-                    if(!IsShadowed(worldPos, N, L, dist)) {
+                    // ... Traced Shadow Ray successfully ...
+                    if(!shadowPayload.isShadowed) {
         
                         // 1. Evaluate standard BRDF terms f(l, v)
                         float3 H = normalize(V + L);
@@ -262,10 +267,7 @@ void main(
     // Pass updated seed back to payload
     payload.rngState = seed;
 
-
-
-    // INDIRECT LIGHT
-    float3 indirectColor = float3(0.0f, 0.0f, 0.0f);
+ float3 indirectColor = float3(0.0f, 0.0f, 0.0f);
     const int MAX_BOUNCES = 4;
 
     if (payload.depth <= MAX_BOUNCES) {
@@ -317,7 +319,7 @@ void main(
             secondaryPayload.depth = payload.depth + 1;
             secondaryPayload.rngState = payload.rngState; 
 
-            float3 rayOrigin = worldPos + 0.001 * N;
+            float3 rayOrigin = SafeOffsetRayOrigin(worldPos, N);
 
             RayDesc ray;
             ray.Origin    = rayOrigin;
@@ -343,5 +345,4 @@ void main(
     }
 
     payload.hitColor = emission + directColor + indirectColor;
-
 }

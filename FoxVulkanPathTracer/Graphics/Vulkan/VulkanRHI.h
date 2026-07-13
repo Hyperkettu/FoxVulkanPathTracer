@@ -80,6 +80,8 @@ namespace Fox {
 
 				std::unique_ptr<Fox::Scene::RayTracing::MainRayTracingScene> raytracingScene;
 
+				uint32_t currentImageIndex = 0u;
+
 			};
 
 		}

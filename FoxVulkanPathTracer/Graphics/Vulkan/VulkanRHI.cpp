@@ -453,59 +453,23 @@ namespace Fox {
 					camera->MoveDown(cameraSpeed * deltaTime);
 				}
 
+				currentFrame = (currentFrameIndex) % config.MAX_FRAMES_IN_FLIGHT;
 				auto frameResource = frameResources[currentFrame].get();
 
+				// 2. STALL THE CPU right here if the GPU hasn't cleared this specific slot's workload yet
 				frameResource->renderFence->Wait();
-				frameResource->renderFence->Reset();
+				// Do not reset the fence yet! Wait until after swapchain acquisition succeeds.
 
-				std::array<VkClearValue, 2> clearValues{};
-				clearValues[0].color = { 0.0f, 0.0f, 0.5f, 1.0f };
-				clearValues[1].depthStencil = { 1.0f, 0 };
-
-				frameResource->commandPool->Reset();
-				
+				// 3. Acquire the image index safely
 				uint32_t imageIndex = swapchain->AcquireNextImage(frameResource->imageAvailableSemaphore->Get());
 
+				currentImageIndex = imageIndex;
+
+				// 4. NOW it is safe to reset the fence and clear out command buffers
+				frameResource->renderFence->Reset();
+				frameResource->commandPool->Reset();
+				
 				UpdateUniformBuffer(currentFrame);
-
-			/*	auto offscreenPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipeline(Fox::Graphics::Managers::Vulkan::PipelineCategory::OFFSCREEN_RENDERING)->Get();
-				auto offscreenPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipelineLayout(Fox::Graphics::Managers::Vulkan::PipelineCategory::OFFSCREEN_RENDERING)->Get();
-
-
-				frameResource->offscreenCommandList->Begin()
-					.BeginRenderPass(Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::OFFSCREEN)->Get(), 
-						offscreenTarget->Get(), capabilities.currentExtent, &clearValues[0], 2)
-					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.BindPipeline(offscreenPipeline)
-					.BindDescriptorSets(offscreenPipelineLayout, 0, { frameResource->offscreenDescriptorSet->Get() })
-					.RenderMeshShader(1, 1, 1)
-					.EndRenderPass()
-					.End()
-					.Submit(graphicsQueue, frameResource->imageAvailableSemaphore->Get(), frameResource->offscreenFinishedSemaphore->Get(), VK_NULL_HANDLE);
-
-				std::array<VkClearValue, 2> clearValuesPost{};
-				clearValuesPost[0].color = { 1.0f, 0.0f, 1.0f, 1.0f };
-				clearValuesPost[1].depthStencil = { 1.0f, 0 };
-
-				auto basicMeshShaderPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipeline(Fox::Graphics::Managers::Vulkan::PipelineCategory::BASIC_MESH_SHADER)->Get();
-				auto basicMeshShaderPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipeline(Fox::Graphics::Managers::Vulkan::PipelineCategory::BASIC_MESH_SHADER)->GetLayout();
-
-				frameResource->commandList->Begin()
-					.BeginRenderPass(Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT)->Get(), 
-						swapchain->GetFramebuffer(imageIndex), capabilities.currentExtent, &clearValuesPost[0], 2)
-					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.BindPipeline(basicMeshShaderPipeline)
-					.BindDescriptorSets(basicMeshShaderPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get() })
-					.BindVertexBuffers(0, { scene->GetVertexBuffer()->Get()}, {0})
-					.BindIndexBuffer(scene->GetIndexBuffer()->Get(), 0, VkIndexType::VK_INDEX_TYPE_UINT32)
-					.RenderMeshShader(scene->GetSceneMeshInfos().size(), 1, 1)
-					.EndRenderPass()
-					.End()
-					.Submit(graphicsQueue, frameResource->offscreenFinishedSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
-				*/
-
 
 				VkImageSubresourceRange subresourceRange = {
 						VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
@@ -516,31 +480,64 @@ namespace Fox {
 
 				frameResource->commandList->Begin()
 					.SetRecursionStackSize(raytracingPipeline->GetPipeline())
-					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
-					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height) 
+					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
+					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
+
 					.Raytrace(
 						raytracingPipeline->GetRaygenRegion(),
 						raytracingPipeline->GetMissRegion(),
-						raytracingPipeline->GetHitRegion(), 
-						raytracingPipeline->GetCallableRegion(), capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.TransitionImageLayout(frameResource->storageTexture->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresourceRange, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
-					.TransitionImageLayout(swapchain->GetImage(imageIndex), VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
+						raytracingPipeline->GetHitRegion(),
+						raytracingPipeline->GetCallableRegion(),
+						capabilities.currentExtent.width, capabilities.currentExtent.height)
 
-					.CopyImage(frameResource->storageTexture->GetImage(), swapchain->GetImage(imageIndex), capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.TransitionImageLayout(swapchain->GetImage(imageIndex), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, subresourceRange, 
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-					.TransitionImageLayout(frameResource->storageTexture->GetImage(), VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VkImageLayout::VK_IMAGE_LAYOUT_GENERAL, subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+					// 1. Wait for Ray Tracing writes to finish before reading as a Transfer Source
+					.TransitionImageLayout(
+						frameResource->storageTexture->GetImage(),
+						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
+						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						subresourceRange,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
+
+					// 2. Treat the freshly acquired swapchain image as UNDEFINED to prevent synchronization faults
+					.TransitionImageLayout(
+						swapchain->GetImage(imageIndex),
+						VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED, // Changed from PRESENT_SRC
+						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+						subresourceRange,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
+
+					.CopyImage(
+						frameResource->storageTexture->GetImage(),
+						swapchain->GetImage(imageIndex),
+						capabilities.currentExtent.width,
+						capabilities.currentExtent.height)
+
+					// 3. Ready swapchain image for presentation
+					.TransitionImageLayout(
+						swapchain->GetImage(imageIndex),
+						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+						VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+						subresourceRange,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
+
+					// 4. Return storage texture safely back to General layout for the next frame's Raytrace pass
+					.TransitionImageLayout(
+						frameResource->storageTexture->GetImage(),
+						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
+						subresourceRange,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
+						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
 					.End()
 					.Submit(graphicsQueue, frameResource->imageAvailableSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
 
 				Present(swapchain, imageIndex, frameResource->renderFinishedSemaphore);
 
-				currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
 				currentFrameIndex++;
 			}
 
