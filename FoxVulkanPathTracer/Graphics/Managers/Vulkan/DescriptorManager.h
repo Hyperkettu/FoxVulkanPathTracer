@@ -12,6 +12,7 @@ namespace Fox {
 
 				enum class Descriptor : int32_t {
 					OFFSCREEN = 0,
+					BINDLESS_TEXTURES,
 					RAY_TRACING
 				};
 

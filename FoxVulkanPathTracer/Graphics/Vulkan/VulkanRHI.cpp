@@ -113,6 +113,7 @@ namespace Fox {
 					return 0;
 				}
 
+
 				Fox::Graphics::Managers::Vulkan::MeshManager::Get().Initialize(device);
 				Fox::Graphics::Managers::Vulkan::SceneManager::Get().Initialize(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, capabilities);
 
@@ -165,7 +166,7 @@ namespace Fox {
 
 				}
 
-				if (!CreateUniformBuffers()) {
+ 				if (!CreateUniformBuffers()) {
 					std::cerr << "Creating uniform buffer failed\n";
 					return 0;
 				}
@@ -483,7 +484,7 @@ namespace Fox {
 					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
-					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
+					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get(), Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 
 					.Raytrace(
 						raytracingPipeline->GetRaygenRegion(),
@@ -743,6 +744,18 @@ namespace Fox {
 					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique()); 
 					frameResources[i]->perFrameDescriptorSet->Update();  
 				}
+
+				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(
+					descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::BINDLESS_TEXTURES)->AllocateSet({ 32 }));
+
+				uint32_t index = 0u;
+
+				for (auto* texture : Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray()) {
+					Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetBindlessTexture(0, index, texture); 
+					index++;
+				}
+
+
 
 
 

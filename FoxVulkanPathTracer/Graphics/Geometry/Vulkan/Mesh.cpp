@@ -50,16 +50,14 @@ namespace Fox {
                         Fox::Graphics::Vulkan::Material mat;
                         mat.albedo = glm::vec4(materials[i].baseColorFactor[0], materials[i].baseColorFactor[1], materials[i].baseColorFactor[2], materials[i].baseColorFactor[3]);
                         mat.roughnessMetallic = glm::vec2(materials[i].roughnessFactor, materials[i].metallicFactor);
-                        mat.roughnessMetallicTextureIndex = -1;
 
-                        if (mat.albedo.g > mat.albedo.r) {
-                            mat.roughnessMetallic = glm::vec2(0.0f, 1.0f);
-                        }
+                        mat.albedoTextureIndex = materials[i].baseColorTextureIndex;
+                        mat.roughnessMetallicTextureIndex = materials[i].metallicRoughnessTextureIndex;
 
-                        mat.albedoTextureIndex = -1;
                         mat.emissiveColor = glm::vec3(materials[i].emissiveFactor[0], materials[i].emissiveFactor[1], materials[i].emissiveFactor[2]);
-                        mat.emissiveTextureIndex = -1;
+                        mat.emissiveTextureIndex = mat.emissiveTextureIndex;
                         mat.intensity = materials[i].emissiveStrength;
+
                         this->materials.push_back(mat);
                     }
 
@@ -72,13 +70,18 @@ namespace Fox {
                             l.area = light.area;
                             l.position = light.position;
                             l.color = light.color * light.intensity;
-                            l.normal = light.normal;
+                             l.normal = light.normal;
                             l.tangentX = light.tangentX;
                             l.tangentY = light.tangentY;
                             l.type = static_cast<int>(light.type);
                         }
 
                         this->lights.push_back(l);
+                    }
+
+                    for (auto tex : textures) {
+                        auto* texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool->Get(), graphicsQueue, tex.pixelData.data(), tex.width, tex.height, tex.componentCount);
+                        Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(texture); 
                     }
                 }
 

@@ -27,8 +27,8 @@ struct Submesh
 struct Material {
     float4 albedo;                         // Offset: 0   (16 bytes)
     float2 roughnessMetallic;              // Offset: 16  (8 bytes)
-    uint albedoTextureIndex;               // Offset: 24  (4 bytes)
-    uint roughnessMetallicTextureIndex;    // Offset: 28  (4 bytes)
+    int albedoTextureIndex;               // Offset: 24  (4 bytes)
+    int roughnessMetallicTextureIndex;    // Offset: 28  (4 bytes)
     float3 emissiveColor;                  // Offset: 32  (12 bytes)
     int emissiveTextureIndex;              // Offset: 44  (4 bytes)
     float intensity;                       // Offset: 48  (4 bytes)
@@ -65,6 +65,8 @@ struct Light {
 [[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
 [[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
 [[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
+
+[[vk::binding(0, 1)]] Sampler2D gTextures[];
 
 struct RayPayload
 {
@@ -191,8 +193,19 @@ void main(
     float3 worldPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     
     float3 albedo = material.albedo.xyz;
+
+    if(material.albedoTextureIndex >= 0) {
+        albedo = gTextures[material.albedoTextureIndex].Sample(uv).xyz;
+    }
+
     float roughness = max(material.roughnessMetallic.x, 0.0f);
     float metallic = material.roughnessMetallic.y;
+
+    if(material.roughnessMetallicTextureIndex >= 0) {
+        float3 values = gTextures[material.roughnessMetallicTextureIndex].Sample(uv).rgb;
+        roughness = values.g;
+        metallic = values.b;
+    }
 
     float3 V = normalize(-WorldRayDirection());
 

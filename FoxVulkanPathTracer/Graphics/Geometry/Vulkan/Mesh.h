@@ -16,9 +16,22 @@ namespace Fox {
 					using IndexType = uint32_t;
 
 					Mesh() = default;
+
+					Mesh(
+						VkDevice device, 
+						VkPhysicalDevice physicalDevice, 
+						VkQueue graphicsQueue,
+						uint32_t queueFamilyIndex
+					) : device(device), 
+						physicalDevice(physicalDevice), 
+					    graphicsQueue(graphicsQueue) 
+					{
+						commandPool = std::make_unique<Fox::Graphics::Vulkan::CommandPool>(device, queueFamilyIndex);
+					} 
+
 					Mesh(std::vector<Fox::Graphics::Vulkan::Vertex>& vertices, std::vector<IndexType>& indices)
 						: vertices(vertices), indices(indices) {
-					}
+					} 
 
 					void LoadFromGLTF(const std::string& filePath);
 
@@ -117,6 +130,13 @@ namespace Fox {
 					}
 
 				private:
+					VkDevice device;  
+					VkPhysicalDevice physicalDevice;
+					VkQueue graphicsQueue;
+
+					std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool; 
+
+
 					std::vector<Fox::Graphics::Vulkan::Vertex> vertices;
 					std::vector<IndexType> indices;
 					std::vector<Fox::Graphics::Geometry::Submesh> submeshes;

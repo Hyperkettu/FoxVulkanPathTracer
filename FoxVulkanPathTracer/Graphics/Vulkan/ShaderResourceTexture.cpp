@@ -8,7 +8,7 @@ namespace Fox {
 
     namespace Graphics {
 
-		namespace Vulkan {
+        namespace Vulkan {
 
             Fox::Graphics::Vulkan::ShaderResourceTexture* ShaderResourceTexture::LoadFromFile(
                 VkDevice device,
@@ -22,19 +22,33 @@ namespace Fox {
                 if (!pixels)
                     throw std::runtime_error("Failed to load texture image: " + filename);
 
-               ShaderResourceTexture* texture = new Fox::Graphics::Vulkan::ShaderResourceTexture(
+                auto* tex = LoadFromPixelData(device, physicalDevice, commandPool, graphicsQueue, pixels, texWidth, texHeight, texChannels);
+
+                stbi_image_free(pixels);
+
+
+                return tex;
+            }
+
+            Fox::Graphics::Vulkan::ShaderResourceTexture* Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(
+                VkDevice device, 
+                VkPhysicalDevice physicalDevice, 
+                VkCommandPool commandPool,
+                VkQueue graphicsQueue, 
+                uint8_t* pixels, uint32_t width, uint32_t height, uint32_t numChannels) {
+                ShaderResourceTexture* texture = new Fox::Graphics::Vulkan::ShaderResourceTexture(
                     ShaderResourceTexture(
                         device,
                         physicalDevice,
-                        VkExtent3D{ static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), 1 },
+                        VkExtent3D{ static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 },
                         VK_FORMAT_R8G8B8A8_SRGB,
                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                         VK_IMAGE_ASPECT_COLOR_BIT
                     ));
 
-                texture->width = static_cast<uint32_t>(texWidth);
-                texture->height = static_cast<uint32_t>(texHeight);
-                VkDeviceSize imageSize = texture->width * texture->height * 4;
+                texture->width = static_cast<uint32_t>(width);
+                texture->height = static_cast<uint32_t>(height);
+                VkDeviceSize imageSize = texture->width * texture->height * numChannels;
 
                 Fox::Graphics::Vulkan::Buffer stagingBuffer(device, physicalDevice, imageSize,
                     VkBufferUsageFlagBits::VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -44,8 +58,6 @@ namespace Fox {
                 void* stagingBufferData = stagingBuffer.Map();
                 memcpy(stagingBufferData, pixels, static_cast<size_t>(imageSize));
                 stagingBuffer.Unmap();
-
-                stbi_image_free(pixels);
 
                 // Transition to TRANSFER_DST_OPTIMAL
                 VkImageSubresourceRange subresource{};
@@ -88,6 +100,7 @@ namespace Fox {
 
                 return texture;
             }
+
    
          } // namespace Vulkan
     }     // namespace Graphics

@@ -32,7 +32,7 @@ namespace Fox {
 
             protected:
 
-                Fox::Graphics::Geometry::Vulkan::Mesh mesh;
+                std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh> mesh;
                
             };
         }

@@ -521,13 +521,13 @@ namespace Fox {
                 return vkGetBufferDeviceAddress(device, &info);
             }
 
-            void RayTracingScene::AddMesh(Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform) {
+            void RayTracingScene::AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, const glm::mat4& transform) {
 
-                auto meshVertices = mesh.GetVertices();
-                auto meshIndices = mesh.GetIndices();
-                auto meshSubmeshes = mesh.GetSubmeshesForGPU();
-                auto meshMaterials = mesh.GetMaterials();
-                auto meshLights = mesh.GetLights();
+                auto meshVertices = mesh->GetVertices();
+                auto meshIndices = mesh->GetIndices();
+                auto meshSubmeshes = mesh->GetSubmeshesForGPU();
+                auto meshMaterials = mesh->GetMaterials();
+                auto meshLights = mesh->GetLights();
 
                 for (auto i = 0; i < meshVertices.size(); i++) {
                     vertices.push_back(meshVertices[i]);
@@ -576,7 +576,7 @@ namespace Fox {
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
 
-                auto instances = mesh.GetInstanceData();
+                auto instances = mesh->GetInstanceData();
                 size_t elementCount = submeshes.size(); 
 
                 for (size_t i = 0; i < elementCount; i++) {

@@ -15,9 +15,10 @@ namespace Fox {
 				bool PipelineManager::Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceCapabilitiesKHR capabilities) {
 					{
 						VkDescriptorSetLayout descriptorSetLayouts = Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->GetLayout().Get();
+						VkDescriptorSetLayout bindlessTextureLayout = Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->GetLayout();
 
 						std::unique_ptr<Fox::Graphics::Vulkan::PipelineLayout> rayTracingPipelineLayout = std::make_unique<Fox::Graphics::Vulkan::PipelineLayout>(device,
-							std::vector<VkDescriptorSetLayout>{ descriptorSetLayouts },
+							std::vector<VkDescriptorSetLayout>{ descriptorSetLayouts, bindlessTextureLayout },
 							std::vector<VkPushConstantRange>{});
 
 						auto builder = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder>(device, physicalDevice);

@@ -47,6 +47,18 @@ namespace Fox {
 						//}
 
 						renderTargetTextures.clear();
+
+						for (auto* texture : bindlessTextureArray) {
+							SAFE_DELETE(texture); 
+						}
+					}
+
+					inline void AddBindlessTexture(Fox::Graphics::Vulkan::Texture* texture) {
+						bindlessTextureArray.push_back(texture);
+					}
+
+					inline std::vector<Fox::Graphics::Vulkan::Texture*>& GetBindlessTextureArray() {
+						return bindlessTextureArray; 
 					}
 
 					inline std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>& GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture depthTexture) {
@@ -61,10 +73,14 @@ namespace Fox {
 						return renderTargetTextures[renderTargetTexture];
 					}
 
+					std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet > bindlessTextureDescriptorSet;  
+
 				private:
 					std::unordered_map<Fox::Graphics::Managers::Vulkan::DepthTexture, std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>> depthTextures;
 					std::unordered_map<Fox::Graphics::Managers::Vulkan::ShaderResourceTexture, std::unique_ptr<Fox::Graphics::Vulkan::ShaderResourceTexture>> shaderResourceTextures;
 					std::unordered_map<Fox::Graphics::Managers::Vulkan::RenderTargetTexture, std::unique_ptr<Fox::Graphics::Vulkan::RenderTargetTexture>> renderTargetTextures;
+
+					std::vector<Fox::Graphics::Vulkan::Texture*> bindlessTextureArray;
 				};
 			}
 		}

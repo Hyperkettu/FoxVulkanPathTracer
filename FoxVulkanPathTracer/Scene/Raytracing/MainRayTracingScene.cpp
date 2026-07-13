@@ -7,8 +7,8 @@ namespace Fox {
 		namespace RayTracing {
 		
 			void MainRayTracingScene::Initialize() {
-				mesh = Fox::Graphics::Geometry::Vulkan::Mesh();
-				mesh.LoadFromGLTF("Models/cornell_box.glb");
+				mesh = std::make_unique<Fox::Graphics::Geometry::Vulkan::Mesh>(device, physicalDevice, queue, queueFamily); 
+				mesh->LoadFromGLTF("Models/box.glb");
 	
 				AddMesh(mesh, glm::mat4(1.0f));
 

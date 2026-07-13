@@ -56,8 +56,16 @@ namespace Fox {
 
                 VkSampler GetSampler() const { return sampler; }
 
+
+                static Fox::Graphics::Vulkan::ShaderResourceTexture* LoadFromPixelData(
+                    VkDevice device, 
+                    VkPhysicalDevice physicalDevice, 
+                    VkCommandPool commandPool,
+                    VkQueue graphicsQueue, 
+                    uint8_t* pixels, uint32_t width, uint32_t height, uint32_t numChannels);
+
                 static Fox::Graphics::Vulkan::ShaderResourceTexture* LoadFromFile(
-                    VkDevice device,
+                    VkDevice device, 
                     VkPhysicalDevice physicalDevice,
                     VkCommandPool commandPool,
                     VkQueue graphicsQueue,
