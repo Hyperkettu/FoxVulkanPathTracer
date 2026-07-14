@@ -16,8 +16,8 @@ namespace Fox {
 	
 				AddMesh(mesh, model);
 
-		//		glm::mat4 offset = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, 0.0f));
-		//		AddMesh(mesh, offset);
+				glm::mat4 offset = glm::translate(glm::mat4(1.0f), glm::vec3(10.0f, 0.0f, 20.0f));
+				AddMesh(mesh, offset); 
 
 				Build();
 			

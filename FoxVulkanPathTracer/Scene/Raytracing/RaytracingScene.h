@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <glm/glm.hpp>
 
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingInstance.h"
+
+
 namespace Fox {
     namespace Scene {
         namespace RayTracing {
@@ -113,6 +116,7 @@ namespace Fox {
                 std::vector<Fox::Graphics::Vulkan::Submesh> submeshes;
                 std::vector<Fox::Graphics::Vulkan::Material> materials;
                 std::vector<Fox::Graphics::Vulkan::Light> lights; 
+                std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> rayTracingInstances;
 
 
             private:
@@ -136,6 +140,8 @@ namespace Fox {
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer>> indexBuffers;
 
                 uint32_t meshIndex = 0;
+
+                uint32_t meshOffset = 0u;
             };
 
         } // Raytracing

@@ -541,7 +541,7 @@ namespace Fox {
                 }
 
                 for (auto i = 0; i < meshIndices.size(); i++) {
-                    indices.push_back(meshIndices[i]);
+                    indices.push_back(meshIndices[i] + meshOffset);
                 }
 
                 for (auto i = 0; i < meshSubmeshes.size(); i++) {
@@ -583,12 +583,17 @@ namespace Fox {
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
 
-                auto instances = mesh->GetInstanceData();
+                auto meshInstances = mesh->GetInstanceData();
+
+                for (auto i = 0; i < meshInstances.size(); i++) { 
+                    rayTracingInstances.push_back(meshInstances[i]);
+                }
+
                 size_t elementCount = submeshes.size(); 
 
                 for (size_t i = 0; i < elementCount; i++) {
                     const auto& subMesh = submeshes[i];
-                    const auto& instance = instances[i];
+                    const auto& instance = rayTracingInstances[i];
                     glm::mat4 matrix = transform * instance.transform;
 
                     auto blasIndex = AddBLAS(
