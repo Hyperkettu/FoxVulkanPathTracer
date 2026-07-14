@@ -52,6 +52,8 @@ namespace Fox {
 
                 vkBindBufferMemory(device, buffer, memory, 0);
 
+             
+
 #ifdef _DEBUG
                 if (name.size() > 0) {
                     Fox::Graphics::Vulkan::CommandList::SetName(name, reinterpret_cast<uint64_t>(buffer), VkObjectType::VK_OBJECT_TYPE_BUFFER, device);
@@ -107,13 +109,12 @@ namespace Fox {
                     }
                 }
 
-                // Destroy scratch buffer
-                if (scratchBuffer != VK_NULL_HANDLE) {
+                for (auto scratchBuffer : scratchBuffers) {
                     vkDestroyBuffer(device, scratchBuffer, nullptr);
                 }
 
-                if (scratchMemory != VK_NULL_HANDLE) {
-                    vkFreeMemory(device, scratchMemory, nullptr);
+                for (auto scratchBufferMemory : scratchBufferMemories) {
+                    vkFreeMemory(device, scratchBufferMemory, nullptr);
                 }
 
                 vertexBuffers.clear();
@@ -231,6 +232,9 @@ namespace Fox {
                 VkDeviceMemory globalScratchMemory;
                 CreateScratchBuffer(device, physicalDevice, maxScratchSize, globalScratchBuffer, globalScratchMemory, "Global BLAS Scratch");
                 VkDeviceAddress scratchAddress = GetBufferAddress(globalScratchBuffer);
+
+                scratchBuffers.push_back(globalScratchBuffer);
+                scratchBufferMemories.push_back(globalScratchMemory); 
 
                 for (auto& blas : bottomLevelAccelerationStructure)
                 {
@@ -357,6 +361,9 @@ namespace Fox {
                     sizeInfo.buildScratchSize,
                     scratchBuffer, 
                     scratchMemory);
+
+                scratchBuffers.push_back(scratchBuffer); 
+                scratchBufferMemories.push_back(scratchMemory);
 
                 buildInfo.dstAccelerationStructure = topLevelAccelerationStructure.handle;
                 buildInfo.scratchData.deviceAddress =

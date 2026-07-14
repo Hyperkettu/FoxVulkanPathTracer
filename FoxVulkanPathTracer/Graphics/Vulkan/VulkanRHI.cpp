@@ -296,6 +296,7 @@ namespace Fox {
 					VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
 					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+					VK_KHR_RAY_QUERY_EXTENSION_NAME,
 
 					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
 				};
@@ -331,7 +332,7 @@ namespace Fox {
 				deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 				deviceCreateInfo.queueCreateInfoCount = 1;
 				deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-				deviceCreateInfo.enabledExtensionCount = 10;
+				deviceCreateInfo.enabledExtensionCount = 12;
 				deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
 
 				VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingFeatures; 
@@ -353,6 +354,13 @@ namespace Fox {
 				accelFeatures.pNext = &raytracingFeatures;
 
 				deviceCreateInfo.pNext = &accelFeatures;
+
+				VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures; 
+				rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR; 
+				rayQueryFeatures.rayQuery = VK_TRUE; 
+				rayQueryFeatures.pNext = nullptr;
+				
+				descriptorIndexingFeatures.pNext = &rayQueryFeatures;
 
 
 				if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) != VK_SUCCESS) {

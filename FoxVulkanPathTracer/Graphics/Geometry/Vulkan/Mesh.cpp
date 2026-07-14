@@ -79,6 +79,15 @@ namespace Fox {
                         this->lights.push_back(l);
                     }
 
+                    if (this->lights.size() == 0) {
+                        Fox::Graphics::Vulkan::Light light;
+                        light.color = glm::vec3(1.0f);
+                        light.normal = glm::vec3(1.0f, 1.0, 1.0f); 
+                        light.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::Directional);
+
+                        this->lights.push_back(light);
+                    }
+
                     for (auto tex : textures) {
                         auto* texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool->Get(), graphicsQueue, tex.pixelData.data(), tex.width, tex.height, tex.componentCount);
                         Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(texture); 

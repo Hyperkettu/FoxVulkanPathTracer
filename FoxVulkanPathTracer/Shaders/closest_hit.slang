@@ -195,14 +195,14 @@ void main(
     float3 albedo = material.albedo.xyz;
 
     if(material.albedoTextureIndex >= 0) {
-        albedo = gTextures[material.albedoTextureIndex].Sample(uv).xyz;
+        albedo = gTextures[material.albedoTextureIndex].SampleLevel(uv, 0.0f).xyz;
     }
 
     float roughness = max(material.roughnessMetallic.x, 0.0f);
     float metallic = material.roughnessMetallic.y;
 
     if(material.roughnessMetallicTextureIndex >= 0) {
-        float3 values = gTextures[material.roughnessMetallicTextureIndex].Sample(uv).rgb;
+        float3 values = gTextures[material.roughnessMetallicTextureIndex].SampleLevel(uv, 0.0f).rgb;
         roughness = values.g;
         metallic = values.b;
     }
@@ -218,7 +218,34 @@ void main(
     for(uint i = 0; i < 1; i++) {
         Light light = gAllLights[i];
 
-        if(light.type == (int)LightType::QuadAreaLight) {
+        if(light.type == (int)LightType::Directional) {
+            float3 L = normalize(light.normal);
+            float NdotL = max(dot(N, L), 0.0f);
+
+            if(!IsShadowed(worldPos, N, L, 10000.0f)) {
+                // 1. Evaluate standard BRDF terms f(l, v)
+                float3 H = normalize(V + L);
+                float  D = DistributionGGX(N, H, roughness);
+                float  G = GeometrySmith(N, V, L, roughness);
+                float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
+
+                float3 numerator = D * G * F;
+                // Standard BRDF denominator includes NdotV and NdotL
+                float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
+                float3 specular = numerator / max(denominator, 0.000001f);
+
+                float3 kS = F;
+                float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
+        
+                float3 BRDF = (kD * albedo / PI) + specular;
+        
+                float3 emmitedRadiance = light.color; 
+
+                directColor += BRDF * emmitedRadiance * NdotL;
+            }
+            
+        
+        } else if(light.type == (int)LightType::QuadAreaLight) {
 
             for(uint j = 0; j < 4; j++) {
                 // Fix 3: Keep updating the seed state sequentially so sample positions are random

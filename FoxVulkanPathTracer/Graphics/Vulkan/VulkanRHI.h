@@ -72,7 +72,7 @@ namespace Fox {
 				Fox::Graphics::RendererConfig config;
 
 				// input
-				float cameraSpeed = 1000.0f;
+				float cameraSpeed = 10.0f;
 				float deltaTime = 1.0f / 60.0f; // TODO add real delta time
 				Fox::Input::InputManager* inputManager;
 				Fox::Core::Connection mouseInputBind;
