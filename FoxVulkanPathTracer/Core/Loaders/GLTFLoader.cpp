@@ -473,7 +473,7 @@ namespace Fox {
                         instanceMetadata.firstIndex = indexOffset;
                         instanceMetadata.indexCount = indexCountForPrimitive;
                         instanceMetadata.materialIndex = materialIdx;
-                        instanceMetadata.transform = ConvertMatrixToVulkanRT(worldMatrix);
+                        instanceMetadata.transform = ArrayToGlmMat4(worldMatrix);
 
                         Fox::Core::Loaders::GLTF::SubmeshData submesh;
                         submesh.indexOffset = indexOffset;

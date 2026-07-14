@@ -1,5 +1,7 @@
 #pragma once 
 
+#include <glm/glm.hpp>
+
 namespace Fox {
 	
 	namespace Graphics {
@@ -12,7 +14,7 @@ namespace Fox {
 					uint32_t firstIndex;
 					uint32_t indexCount;
 					uint32_t materialIndex;
-					VkTransformMatrixKHR transform; // Transposed 3x4 matrix for Vulkan Acceleration Structures
+					glm::mat4 transform; // Transposed 3x4 matrix for Vulkan Acceleration Structures
 				};
 			}
 		}

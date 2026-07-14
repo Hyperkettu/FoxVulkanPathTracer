@@ -528,7 +528,7 @@ namespace Fox {
                 return vkGetBufferDeviceAddress(device, &info);
             }
 
-            void RayTracingScene::AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, const glm::mat4& transform) {
+            void RayTracingScene::AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, glm::mat4& transform) {
 
                 auto meshVertices = mesh->GetVertices();
                 auto meshIndices = mesh->GetIndices();
@@ -589,6 +589,7 @@ namespace Fox {
                 for (size_t i = 0; i < elementCount; i++) {
                     const auto& subMesh = submeshes[i];
                     const auto& instance = instances[i];
+                    glm::mat4 matrix = transform * instance.transform;
 
                     auto blasIndex = AddBLAS(
                         vertexBuffers.back()->Get(),
@@ -598,10 +599,10 @@ namespace Fox {
                         indexAddress,
                         subMesh.indexCount,   
                         subMesh.indexOffset,     
-                        subMesh.vertexOffset         
+                        subMesh.vertexOffset      
                     );
 
-                    AddInstance(blasIndex, instance.transform, instance.materialIndex, 0xFF);
+                    AddInstance(blasIndex, matrix, instance.materialIndex, 0xFF);
                 }
             }
 

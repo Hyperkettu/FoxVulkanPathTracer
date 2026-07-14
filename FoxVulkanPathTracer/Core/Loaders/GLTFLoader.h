@@ -92,6 +92,19 @@ namespace Fox {
                         std::vector<SubmeshData>& outSubmeshes
                     );
 
+                    static VkTransformMatrixKHR glmToVkTransformMatrix(const glm::mat4& matrix)
+                    {
+                        // Transpose the matrix first to convert it from column-major to row-major
+                        glm::mat4 rowMajor = glm::transpose(matrix);
+
+                        VkTransformMatrixKHR outMatrix;
+
+                        // Copy the top 3 rows (which now contain the original translation and rotation columns)
+                        std::memcpy(&outMatrix.matrix, &rowMajor, sizeof(VkTransformMatrixKHR));
+
+                        return outMatrix;
+                    }
+
                 private:
                     static VkTransformMatrixKHR ConvertMatrixToVulkanRT(const double m[16]);
                     static glm::mat4 ArrayToGlmMat4(const double m[16]);
