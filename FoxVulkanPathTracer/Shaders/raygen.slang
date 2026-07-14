@@ -63,7 +63,7 @@ void main()
     float3 color = float3(0, 0, 0);
     float aspectRatio = camera.resolution.x / camera.resolution.y;
 
-    uint MONTE_CARLO_SAMPLES_PER_PIXEL = 1;
+    uint MONTE_CARLO_SAMPLES_PER_PIXEL = 2;
 
     for(uint i = 0; i < MONTE_CARLO_SAMPLES_PER_PIXEL; i++) {
         float2 offset = float2(NextRandomFloat(seed), NextRandomFloat(seed)) - 0.5f;

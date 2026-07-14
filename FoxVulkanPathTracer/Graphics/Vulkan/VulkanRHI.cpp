@@ -188,13 +188,13 @@ namespace Fox {
 				);
 
 
-				offscreenTarget = std::make_unique<Fox::Graphics::Vulkan::Framebuffer>(
+				/*offscreenTarget = std::make_unique<Fox::Graphics::Vulkan::Framebuffer>(
 					device,
 					Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::OFFSCREEN)->Get(),
 					attachments,
 					capabilities.currentExtent.width,
 					capabilities.currentExtent.height
-				);
+				);*/
 
 				
 
@@ -489,8 +489,8 @@ namespace Fox {
 
 				frameResource->commandList->Begin()
 					.SetRecursionStackSize(raytracingPipeline->GetPipeline())
-					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
+				//	.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
+				//	.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get(), Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 
@@ -812,6 +812,63 @@ namespace Fox {
 					}
 				});
 
+			}
+
+			void VulkanRHI::Resize(uint32_t width, uint32_t height) {
+
+				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
+
+				swapchain = nullptr;
+				CreateSwapchain(); 
+
+				Fox::Graphics::Managers::Vulkan::SceneManager::Get().GetScene(Fox::Graphics::Managers::Vulkan::SceneId::MAIN_SCENE)->SetUpCamera(capabilities);
+
+
+				for (auto& fr : frameResources) {
+					fr->storageTexture = nullptr;
+
+					fr->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
+						VK_FORMAT_R8G8B8A8_UNORM,
+						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+					VkImageMemoryBarrier barrier{
+						.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+						.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+						.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+						.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+						.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+						.image = fr->storageTexture->GetImage(),
+						.subresourceRange = {
+							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+							.baseMipLevel = 0,
+							.levelCount = 1,
+							.baseArrayLayer = 0,
+							.layerCount = 1
+						}
+					};
+
+					VkImageSubresourceRange subresourceRange = {
+							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+							.baseMipLevel = 0,
+							.levelCount = 1,
+							.baseArrayLayer = 0,
+							.layerCount = 1
+					};
+
+					barrier.srcAccessMask = 0;
+					barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+					std::unique_ptr<Fox::Graphics::Vulkan::CommandList> cmdList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, frameResources[0]->commandPool->Get());
+
+					cmdList->Begin()
+						.TransitionImageLayout(fr->storageTexture->GetImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+							subresourceRange, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+						.End().SubmitAndWait(graphicsQueue);
+
+					fr->perFrameDescriptorSet->ClearWrites();
+					fr->perFrameDescriptorSet->SetStorageImage(1, fr->storageTexture->GetView());
+					fr->perFrameDescriptorSet->Update();
+				}
 			}
 
 		}

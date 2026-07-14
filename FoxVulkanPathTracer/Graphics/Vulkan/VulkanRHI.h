@@ -13,6 +13,8 @@ namespace Fox {
 				int32_t Initialize(const Fox::Graphics::RendererConfig& config) override;
 				int32_t Destroy() override;
 				virtual void Render() override;
+				virtual void Resize(uint32_t width, uint32_t height) override;
+
 
 				void RegisterInput(Fox::Input::InputManager& input) override;
 

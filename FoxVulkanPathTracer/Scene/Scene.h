@@ -43,9 +43,10 @@ namespace Fox {
                 return sceneMeshInfos;
             }
 
+            virtual void SetUpCamera(VkSurfaceCapabilitiesKHR capabilities) = 0;
+
         protected:
 
-            virtual void SetUpCamera(VkSurfaceCapabilitiesKHR capabilities) = 0;
 
             void BuildBuffers(VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool commandPool, VkQueue queue) {
                 vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();

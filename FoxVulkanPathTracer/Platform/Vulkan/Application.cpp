@@ -82,10 +82,25 @@ namespace Fox {
 
                 return 1;
 			}
+
+            void Application::ToggleScreen(SDL_Scancode key) {
+                if (key == SDL_SCANCODE_T) {
+                    ToggleFullscreen(window, isFullscreen);
+                    int w, h;
+                    SDL_GetWindowSize(window, &w, &h);
+                    width = static_cast<uint32_t>(w);
+                    height = static_cast<uint32_t>(h);
+
+                    currentRHI->Resize(width, height);
+                }
+
+            }
 		
 			void Application::Run() {
                 SDL_Event e;
                 bool running = true;
+
+                fullscreenToggleBind = inputManager->OnKeyReleased.ConnectMember(this, &Application::ToggleScreen);
 
                 inputManager->ResetDeltas();
                 while (running) {
