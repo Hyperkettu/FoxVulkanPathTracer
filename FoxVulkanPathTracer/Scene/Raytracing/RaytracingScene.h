@@ -28,7 +28,7 @@ namespace Fox {
 
                 void Build();
 
-                void AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, glm::mat4& transform);
+                void AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, glm::mat4& transform, bool finalize);
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;
@@ -117,7 +117,7 @@ namespace Fox {
                 std::vector<Fox::Graphics::Vulkan::Material> materials;
                 std::vector<Fox::Graphics::Vulkan::Light> lights; 
                 std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> rayTracingInstances;
-
+                std::vector<glm::mat4> transforms;
 
             private:
                 void CreateAccelerationStructure(
@@ -141,7 +141,9 @@ namespace Fox {
 
                 uint32_t meshIndex = 0;
 
+                uint32_t indexOffset = 0u; 
                 uint32_t meshOffset = 0u;
+                uint32_t materialOffset = 0u;
             };
 
         } // Raytracing

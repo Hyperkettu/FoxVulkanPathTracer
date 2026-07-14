@@ -480,6 +480,7 @@ namespace Fox {
                         submesh.vertexOffset = vertexOffset;
                         submesh.indexCount = indexCountForPrimitive;
                         submesh.vertexCount = static_cast<uint32_t>(posAccessor.count);
+                        submesh.materialIndex = materialIdx;
 
                         outSubmeshes.push_back(submesh);
                         outInstances.push_back(instanceMetadata);

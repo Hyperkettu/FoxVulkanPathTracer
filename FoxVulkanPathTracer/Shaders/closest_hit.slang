@@ -22,6 +22,10 @@ struct Submesh
     uint indexOffset;
     uint vertexCount;
     uint indexCount;
+    uint materialIndex;
+    uint pa0;
+    uint pad1;
+    uint pad2;
 };
 
 struct Material {
@@ -159,7 +163,7 @@ void main(
     uint primitiveID = PrimitiveIndex();
 
     Submesh submesh = gAllSubmeshes[submeshID];
-    Material material = gAllMaterials[submeshID];
+    Material material = gAllMaterials[submesh.materialIndex];
 
     // Triangle indices
     uint baseIndex = submesh.indexOffset + primitiveID * 3;
@@ -215,7 +219,7 @@ void main(
 
     uint seed = payload.rngState;
 
-    for(uint i = 0; i < 1; i++) {
+    for(uint i = 0; i < 2; i++) {
         Light light = gAllLights[i];
 
         if(light.type == (int)LightType::Directional) {

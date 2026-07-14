@@ -754,7 +754,7 @@ namespace Fox {
 				}
 
 				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(
-					descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::BINDLESS_TEXTURES)->AllocateSet({ 32 }));
+					descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::BINDLESS_TEXTURES)->AllocateSet({ 100 }));
 
 				uint32_t index = 0u;
 

@@ -53,8 +53,10 @@ namespace Fox {
 						}
 					}
 
-					inline void AddBindlessTexture(Fox::Graphics::Vulkan::Texture* texture) {
+					inline uint32_t AddBindlessTexture(Fox::Graphics::Vulkan::Texture* texture) {
+
 						bindlessTextureArray.push_back(texture);
+						return bindlessTextureArray.size() - 1;
 					}
 
 					inline std::vector<Fox::Graphics::Vulkan::Texture*>& GetBindlessTextureArray() {

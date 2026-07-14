@@ -1,5 +1,7 @@
 #include "FoxRenderer.h"
 
+#include <map>
+
 namespace Fox {
     namespace Graphics {
         namespace Geometry {
@@ -43,7 +45,19 @@ namespace Fox {
                         submesh.indexCount = submeshes[i].indexCount;
                         submesh.vertexOffset = submeshes[i].vertexOffset;
                         submesh.vertexCount = submeshes[i].vertexCount;
+                        submesh.materialIndex = submeshes[i].materialIndex;
                         this->gpuSubmeshes.push_back(submesh);
+                    }
+
+                    std::map<int, int> textureMap;
+                    textureMap[-1] = -1;
+
+                    uint32_t i = 0;
+                    for (auto tex : textures) {
+                        auto* texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool->Get(), graphicsQueue, tex.pixelData.data(), tex.width, tex.height, tex.componentCount);
+                        uint32_t textureIndex = Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(texture);
+                        textureMap[i] = textureIndex; 
+                        i++;
                     }
 
                     for (auto i = 0; i < materials.size(); i++) {
@@ -51,11 +65,11 @@ namespace Fox {
                         mat.albedo = glm::vec4(materials[i].baseColorFactor[0], materials[i].baseColorFactor[1], materials[i].baseColorFactor[2], materials[i].baseColorFactor[3]);
                         mat.roughnessMetallic = glm::vec2(materials[i].roughnessFactor, materials[i].metallicFactor);
 
-                        mat.albedoTextureIndex = materials[i].baseColorTextureIndex;
-                        mat.roughnessMetallicTextureIndex = materials[i].metallicRoughnessTextureIndex;
+                        mat.albedoTextureIndex = textureMap[materials[i].baseColorTextureIndex];
+                        mat.roughnessMetallicTextureIndex = textureMap[materials[i].metallicRoughnessTextureIndex];
 
                         mat.emissiveColor = glm::vec3(materials[i].emissiveFactor[0], materials[i].emissiveFactor[1], materials[i].emissiveFactor[2]);
-                        mat.emissiveTextureIndex = mat.emissiveTextureIndex;
+                        mat.emissiveTextureIndex = textureMap[mat.emissiveTextureIndex];
                         mat.intensity = materials[i].emissiveStrength;
 
                         this->materials.push_back(mat);
@@ -81,17 +95,14 @@ namespace Fox {
 
                     if (this->lights.size() == 0) {
                         Fox::Graphics::Vulkan::Light light;
-                        light.color = glm::vec3(1.0f);
+                        light.color = glm::vec3(1.0f) * 100.0f;
                         light.normal = glm::vec3(1.0f, 1.0, 1.0f); 
                         light.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::Directional);
 
                         this->lights.push_back(light);
                     }
 
-                    for (auto tex : textures) {
-                        auto* texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool->Get(), graphicsQueue, tex.pixelData.data(), tex.width, tex.height, tex.componentCount);
-                        Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(texture); 
-                    }
+               
                 }
 
             }

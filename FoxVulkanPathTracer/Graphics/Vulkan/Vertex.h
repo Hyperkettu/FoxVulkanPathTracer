@@ -20,6 +20,10 @@ namespace Fox {
 				uint32_t indexOffset = 0;
 				uint32_t vertexCount = 0;
 				uint32_t indexCount = 0;
+				uint32_t materialIndex = 0;
+				uint32_t pad0;
+				uint32_t pad1;
+				uint32_t pad2;
 			};
 		}
 	}
