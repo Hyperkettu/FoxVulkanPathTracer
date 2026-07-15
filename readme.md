@@ -1,7 +1,3 @@
-\#\[Fox Vulkan Path Tracing Renderer](FoxVulkanPathTracer/Textures/box.png)
-
-
-
 \# Fox Vulkan Path Tracing Renderer
 
 
@@ -29,8 +25,6 @@ The renderer can load glTF 2.0 files in both binary (`.glb`) and JSON text (`.gl
 
 
 \## TODO List
-
-
 
 \- \[ ] Multiple Importance Sampling (MIS) lighting
 
