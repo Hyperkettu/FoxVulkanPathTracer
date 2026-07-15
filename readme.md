@@ -1,4 +1,4 @@
-\#\[Fox Vulkan Path Tracing Renderer](image.png)
+\#\[Fox Vulkan Path Tracing Renderer](FoxVulkanPathTracer/Textures/box.png)
 
 
 
@@ -10,11 +10,11 @@ Fox Vulkan Path Tracing Renderer is implemented by using the low-level Vulkan AP
 
 
 
-!\[Fox Vulkan Path Tracing Renderer Screenshot](FoxPathTracer/Textures/box.png)
+!\[Fox Vulkan Path Tracing Renderer Screenshot](FoxVulkanPathTracer/Textures/box.png)
 
 
 
-The renderer can load glTF 2.0 files in both binary (\\`.glb\\`) and JSON text (\\`.gltf\\`) formats. It utilizes the Cook-Torrance BRDF (Bidirectional Reflective Distribution Function) to accurately calculate the portion of reflected and refracted light on a surface.
+The renderer can load glTF 2.0 files in both binary (`.glb`) and JSON text (`.gltf`) formats. It utilizes the Cook-Torrance BRDF (Bidirectional Reflective Distribution Function) to accurately calculate the portion of reflected and refracted light on a surface.
 
 
 
