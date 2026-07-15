@@ -22,7 +22,7 @@ namespace Fox {
                 if (!pixels)
                     throw std::runtime_error("Failed to load texture image: " + filename);
 
-                auto* tex = LoadFromPixelData(device, physicalDevice, commandPool, graphicsQueue, pixels, texWidth, texHeight, texChannels);
+                auto* tex = LoadFromPixelData(device, physicalDevice, commandPool, graphicsQueue, pixels, texWidth, texHeight, 4);
 
                 stbi_image_free(pixels);
 

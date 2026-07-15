@@ -33,7 +33,9 @@ namespace Fox {
 					{
 						auto bindlessTextureArrayDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSetBuilder>(Fox::Graphics::Vulkan::DescriptorSetBuilder(device));
 						bindlessTextureArrayDescriptorSet
-							->AddBinding(0, VkDescriptorType::VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VkShaderStageFlagBits::VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+							->AddBinding(0, VkDescriptorType::VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VkShaderStageFlagBits::VK_SHADER_STAGE_MISS_BIT_KHR)
+
+							.AddBinding(1, VkDescriptorType::VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VkShaderStageFlagBits::VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VkShaderStageFlagBits::VK_SHADER_STAGE_MISS_BIT_KHR,
 								VkDescriptorBindingFlagBits::VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
 								VkDescriptorBindingFlagBits::VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT, 100)
 							.SetMaxSets(1) 

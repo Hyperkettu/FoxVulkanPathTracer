@@ -4,6 +4,9 @@
 std::unique_ptr<Fox::Graphics::Managers::Vulkan::TextureManager> Fox::Core::Singleton<Fox::Graphics::Managers::Vulkan::TextureManager>::instance = nullptr;
 std::once_flag Fox::Core::Singleton<Fox::Graphics::Managers::Vulkan::TextureManager>::initFlag;
 
+uint32_t Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX = ~0u;
+float Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY = 1.0f;
+
 namespace Fox {
 
 	namespace Graphics {
@@ -21,6 +24,9 @@ namespace Fox {
 					VkQueue graphicsQueue, 
 					std::unique_ptr<Fox::Graphics::Vulkan::CommandPool>& commandPool
 				) {
+
+					environmentUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>>(device, physicalDevice, "Environment UBO"); 
+
 					
 					{
 						VkExtent3D extent3D = {
@@ -43,6 +49,18 @@ namespace Fox {
 						);
 
 						shaderResourceTextures[Fox::Graphics::Managers::Vulkan::ShaderResourceTexture::BOX] = std::make_unique<Fox::Graphics::Vulkan::ShaderResourceTexture>(std::move(*texture));
+					}
+
+					{
+						auto texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromFile(device,
+							physicalDevice,
+							commandPool->Get(),
+							graphicsQueue,
+							"Textures/environment_map.hdr"
+						);
+
+						ENVIRONMENT_MAP_TEXTURE_INDEX = AddBindlessTexture(texture);
+
 					}
 
 					{

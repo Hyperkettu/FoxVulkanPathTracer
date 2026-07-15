@@ -489,8 +489,6 @@ namespace Fox {
 
 				frameResource->commandList->Begin()
 					.SetRecursionStackSize(raytracingPipeline->GetPipeline())
-				//	.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-				//	.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get(), Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
 
@@ -501,7 +499,6 @@ namespace Fox {
 						raytracingPipeline->GetCallableRegion(),
 						capabilities.currentExtent.width, capabilities.currentExtent.height)
 
-					// 1. Wait for Ray Tracing writes to finish before reading as a Transfer Source
 					.TransitionImageLayout(
 						frameResource->storageTexture->GetImage(),
 						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
@@ -510,10 +507,9 @@ namespace Fox {
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 
-					// 2. Treat the freshly acquired swapchain image as UNDEFINED to prevent synchronization faults
 					.TransitionImageLayout(
 						swapchain->GetImage(imageIndex),
-						VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED, // Changed from PRESENT_SRC
+						VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED, 
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 						subresourceRange,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -525,7 +521,6 @@ namespace Fox {
 						capabilities.currentExtent.width,
 						capabilities.currentExtent.height)
 
-					// 3. Ready swapchain image for presentation
 					.TransitionImageLayout(
 						swapchain->GetImage(imageIndex),
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -534,7 +529,6 @@ namespace Fox {
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
 
-					// 4. Return storage texture safely back to General layout for the next frame's Raytrace pass
 					.TransitionImageLayout(
 						frameResource->storageTexture->GetImage(),
 						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -759,9 +753,19 @@ namespace Fox {
 				uint32_t index = 0u;
 
 				for (auto* texture : Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray()) {
-					Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetBindlessTexture(0, index, texture); 
+					Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetBindlessTexture(1, index, texture); 
 					index++;
 				}
+
+				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->ClearWrites();
+				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetConstantBuffer(0, Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO);
+				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Update();
+
+				Fox::Graphics::Vulkan::Environment env; 
+				env.environmentMapIntensity = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY;  
+				env.environmentMapTextureIndex = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX; 
+
+				Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO->Update(env); 
 
 
 
@@ -809,6 +813,28 @@ namespace Fox {
 
 					if (input.IsRelativeMode()) {
 						Fox::Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(static_cast<float>(dx) * sensitivity, -static_cast<float>(dy) * sensitivity);
+					}
+				});
+
+				keyInputBind = input.OnKeyReleased.Connect([=](SDL_Scancode key) {
+					if (key == SDL_SCANCODE_9) {
+						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY -= 0.05f;
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
+					}
+					if (key == SDL_SCANCODE_0) {
+						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY += 0.05f;
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
+					}
+					if (key == SDL_SCANCODE_7) {
+						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX++;
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
+					}
+					if (key == SDL_SCANCODE_8) { 
+						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX--;
+						if (Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX == ~0u) {
+							Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX = 0;
+						}
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
 					}
 				});
 

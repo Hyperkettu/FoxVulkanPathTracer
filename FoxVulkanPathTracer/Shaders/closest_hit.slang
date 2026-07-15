@@ -70,7 +70,7 @@ struct Light {
 [[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
 [[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
 
-[[vk::binding(0, 1)]] Sampler2D gTextures[];
+[[vk::binding(1, 1)]] Sampler2D gTextures[];
 
 struct RayPayload
 {

@@ -16,6 +16,7 @@ namespace Fox {
 
 				enum class ShaderResourceTexture : int32_t {
 					BOX = 0,
+					ENV_MAP
 				};
 
 				enum class RenderTargetTexture : int32_t {
@@ -51,12 +52,24 @@ namespace Fox {
 						for (auto* texture : bindlessTextureArray) {
 							SAFE_DELETE(texture); 
 						}
+
+						environmentUBO = nullptr;
 					}
 
 					inline uint32_t AddBindlessTexture(Fox::Graphics::Vulkan::Texture* texture) {
 
 						bindlessTextureArray.push_back(texture);
 						return bindlessTextureArray.size() - 1;
+					}
+
+					inline void UpdateEnvironment() {
+						Fox::Graphics::Vulkan::Environment env; 
+						env.environmentMapIntensity = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY; 
+						env.environmentMapTextureIndex = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX; 
+
+						std::cout << "Environment Map Intensity: " << env.environmentMapIntensity << " Enviromnent Map Texture Index: " << env.environmentMapTextureIndex << std::endl;
+
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO->Update(env); 
 					}
 
 					inline std::vector<Fox::Graphics::Vulkan::Texture*>& GetBindlessTextureArray() {
@@ -75,7 +88,13 @@ namespace Fox {
 						return renderTargetTextures[renderTargetTexture];
 					}
 
-					std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet > bindlessTextureDescriptorSet;  
+					std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet > bindlessTextureDescriptorSet;
+					std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>> environmentUBO; 
+ 
+
+					static uint32_t ENVIRONMENT_MAP_TEXTURE_INDEX;
+					static float ENVIRONMENT_MAP_INTENSITY;
+
 
 				private:
 					std::unordered_map<Fox::Graphics::Managers::Vulkan::DepthTexture, std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>> depthTextures;
@@ -83,6 +102,7 @@ namespace Fox {
 					std::unordered_map<Fox::Graphics::Managers::Vulkan::RenderTargetTexture, std::unique_ptr<Fox::Graphics::Vulkan::RenderTargetTexture>> renderTargetTextures;
 
 					std::vector<Fox::Graphics::Vulkan::Texture*> bindlessTextureArray;
+
 				};
 			}
 		}

@@ -39,6 +39,13 @@ namespace Fox {
 			struct MeshInfos {
 				std::vector<MeshInfo> meshInfos;
 			};
+
+			struct Environment {
+				uint32_t environmentMapTextureIndex;
+				float environmentMapIntensity;
+				int32_t pad0;
+				int32_t pad1;
+			}; 
 	    }
     }
 }
