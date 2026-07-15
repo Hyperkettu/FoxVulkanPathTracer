@@ -1,68 +1,64 @@
-\##Fox Vulkan Path Tracing Renderer
+\#\[Fox Vulkan Path Tracing Renderer](image.png)
 
 
 
-Fox Vulkan Path Tracing Renderer is impelemented by using low-level Vulkan API and C++.
+\# Fox Vulkan Path Tracing Renderer
 
 
 
-The renderer can load GLTF 2.0 files in binary and JSON text format. It uses Cook-Torrance BRDF to calculate the portion of reflected/refracted light on a surface.
+Fox Vulkan Path Tracing Renderer is implemented by using the low-level Vulkan API and C++.
 
 
 
-
-
-\##TODO List 
-
-
-
-\-MIS lighting
+!\[Fox Vulkan Path Tracing Renderer Screenshot](FoxPathTracer/Textures/box.png)
 
 
 
-\-refraction, Fresnel
+The renderer can load glTF 2.0 files in both binary (\\`.glb\\`) and JSON text (\\`.gltf\\`) formats. It utilizes the Cook-Torrance BRDF (Bidirectional Reflective Distribution Function) to accurately calculate the portion of reflected and refracted light on a surface.
 
 
 
-\-BRDF indices recursive
+\## Features \& Implementation Details
+
+\- \*\*Low-Level Vulkan API:\*\* Built from the ground up using C++ and modern Vulkan APIs.
+
+\- \*\*glTF 2.0 Support:\*\* Parsing and rendering of binary and text-based glTF scenes.
+
+\- \*\*Physically Based Rendering (PBR):\*\* Implements Cook-Torrance microfacet BRDF for realistic material shading.
 
 
 
-\-procedural terrain
+\## TODO List
 
 
 
-\-procedural trees
+\- \[ ] Multiple Importance Sampling (MIS) lighting
 
+\- \[ ] Refraction and Fresnel effects
 
+\- \[ ] Recursive BRDF evaluation / ray depth handling
 
-\-particle effects
+\- \[ ] Procedural terrain generation
 
+\- \[ ] Procedural tree generation
 
+\- \[ ] Particle systems and GPU-driven effects
 
-\-acceleration structure refit
+\- \[ ] Acceleration structure (BLAS/TLAS) refitting
 
+\- \[ ] Full hierarchical scene graph
 
+\- \[ ] Skeletal animation support
 
-\-scene graph
+\- \[ ] Integration of a physics engine (e.g., Box2D for 2D, or a 3D physics library)
 
+\- \[ ] Instance buffer updates for dynamic object movement
 
+\- \[ ] Improved glTF binary format compliance (roughness, metallic parameter checks)
 
-\-skeletal animation
+\- \[ ] Scene configuration files using JSON (Fox Scene format)
 
+\- \[ ] Denoiser integration (SVGF and DLSS 4.5/Ray Reconstruction)
 
-
-\-physics engine, box2d, some other 3D
-
-
-
-\-instance buffer update for movement
-
-
-
-\-gltf binary format updates (check roughness, metallic)
-
-
-
-\-json file for Fox Scene
+\- \[ ] Normal mapping and displacement mapping
 
