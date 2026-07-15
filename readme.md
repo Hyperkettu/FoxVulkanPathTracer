@@ -30,3 +30,27 @@ Below is the active development checklist for the renderer.
 ### 💡 Rendering & Lighting
 
 - [ ] Multiple Importance Sampling (MIS) lighting
+- [ ] Refraction and Fresnel effects
+- [ ] Recursive BRDF evaluation / ray depth handling
+- [ ] Normal mapping and displacement mapping
+- [ ] Denoiser integration (SVGF & DLSS 4.5/Ray Reconstruction)
+
+### ⛰️ Procedural & Special Effects
+- [ ] Procedural terrain generation
+- [ ] Procedural tree generation
+- [ ] Particle systems and GPU-driven effects
+
+### 🏗️ Scene Graph & Performance
+- [ ] Acceleration structure (BLAS/TLAS) refitting
+- [ ] Full hierarchical scene graph
+- [ ] Instance buffer updates for dynamic object movement
+- [ ] Scene configuration files using JSON (*Fox Scene format*)
+
+### 🏃 Animation & Physics
+- [ ] Skeletal animation support
+- [ ] Integration of a physics engine (e.g., Box2D/3D physics library)
+
+### 🐛 Bug Fixes & Refinement
+- [ ] Improved glTF binary format compliance (roughness, metallic parameter checks)
+
+---
