@@ -126,8 +126,6 @@ namespace Fox {
                         return *this;
                     }
 
-                    CommandList& SetRecursionStackSize(VkPipeline pipeline);
-
                     CommandList& BindDescriptorSets(VkPipelineLayout layout,
                                                     uint32_t firstSet,
                                                     const std::vector<VkDescriptorSet>& sets,
@@ -199,11 +197,6 @@ namespace Fox {
                             exit(1);
                         }
 					}
-
-                    static void RegisterRayTracingStackSizeFunctions(PFN_vkGetRayTracingShaderGroupStackSizeKHR getRayTracingShaderGroupStackSize, PFN_vkCmdSetRayTracingPipelineStackSizeKHR setRayTracingStackSize) {
-                        vkGetRayTracingShaderGroupStackSizeKHR = getRayTracingShaderGroupStackSize;
-                        vkCmdSetRayTracingPipelineStackSizeKHR = setRayTracingStackSize;
-                    }
 
                     static void SetName(std::string name, uint64_t objectHandle, VkObjectType objectType, VkDevice device)
                     {
@@ -436,6 +429,33 @@ namespace Fox {
                         return *this;
                     }
 
+                    // --- Explicit image barrier ---
+                    // For cases the layout based helper above cannot express, e.g. synchronizing
+                    // reads and writes of an image that stays in VK_IMAGE_LAYOUT_GENERAL.
+                    CommandList& ImageBarrier(VkImage image,
+                        const VkImageSubresourceRange& subresourceRange,
+                        VkImageLayout oldLayout,
+                        VkImageLayout newLayout,
+                        VkAccessFlags srcAccessMask,
+                        VkAccessFlags dstAccessMask,
+                        VkPipelineStageFlags srcStageMask,
+                        VkPipelineStageFlags dstStageMask)
+                    {
+                        VkImageMemoryBarrier barrier{};
+                        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                        barrier.srcAccessMask = srcAccessMask;
+                        barrier.dstAccessMask = dstAccessMask;
+                        barrier.oldLayout = oldLayout;
+                        barrier.newLayout = newLayout;
+                        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        barrier.image = image;
+                        barrier.subresourceRange = subresourceRange;
+
+                        vkCmdPipelineBarrier(cmd, srcStageMask, dstStageMask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+                        return *this;
+                    }
+
                     // --- Buffer memory barrier helper ---
                     CommandList& BufferMemoryBarrier(VkBuffer buffer,
                         VkDeviceSize offset,
@@ -497,8 +517,6 @@ namespace Fox {
 
                     static PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT;
                     static PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
-                    static PFN_vkGetRayTracingShaderGroupStackSizeKHR vkGetRayTracingShaderGroupStackSizeKHR;
-                    static PFN_vkCmdSetRayTracingPipelineStackSizeKHR vkCmdSetRayTracingPipelineStackSizeKHR;
 
                     static PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT;
                     static PFN_vkDebugMarkerSetObjectNameEXT vkGetObjectNameEXT;

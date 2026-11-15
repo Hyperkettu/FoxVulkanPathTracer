@@ -30,9 +30,6 @@ namespace Fox {
                 virtual void Initialize() override;
                 virtual void Update(float deltaTime) override;
 
-            protected:
-
-                std::vector<std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>> meshes;
                
             };
         }

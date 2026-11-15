@@ -30,7 +30,6 @@ namespace Fox {
                     uint32_t maxRecursionDepth)
                     : device(device)
                     , physicalDevice(physicalDevice)
-                    , pipeline(pipeline)    
                 {
 					Create(pipelineLayout, stages, groups, maxRecursionDepth);
                 }
@@ -75,9 +74,11 @@ namespace Fox {
                         nullptr,
                         &pipeline);
 
-                    assert(res == VK_SUCCESS);
+                    if (res != VK_SUCCESS) {
+                        throw std::runtime_error("Failed to create the ray tracing pipeline!");
+                    }
 
-                    CreateSBT(uint32_t(groups.size()), "Raytracign SBT");
+                    CreateSBT(uint32_t(groups.size()), "Raytracing SBT");
                 }
 
                 void RayTracingPipeline::Bind(VkCommandBuffer cmd) const
@@ -156,7 +157,7 @@ namespace Fox {
                         pipeline,
                         0,
                         groupCount,
-                        handles.size(),
+                        static_cast<uint32_t>(handles.size()),
                         handles.data());
 
                     // Copy to SBT

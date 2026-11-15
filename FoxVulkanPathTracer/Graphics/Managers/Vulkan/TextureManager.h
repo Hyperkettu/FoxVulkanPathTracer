@@ -14,97 +14,71 @@ namespace Fox {
 					DEFAULT_DEPTH_STENCIL = 0,
 				};
 
-				enum class ShaderResourceTexture : int32_t {
-					BOX = 0,
-					ENV_MAP
-				};
-
-				enum class RenderTargetTexture : int32_t {
-					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET = 0,
-					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_2 = 1,
-					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_3 = 2,
-
-				};
-
+				// Owns the textures shared across the renderer: the depth buffer of the presentation pass
+				// and the bindless array sampled by the ray tracing shaders (material textures + environment map).
 				class TextureManager : public Fox::Core::Singleton<TextureManager> {
 					friend class Singleton<Fox::Graphics::Managers::Vulkan::TextureManager>;
 
-				public: 
+				public:
+					// Size of the bindless texture array declared in the descriptor set layout.
+					static constexpr uint32_t MAX_BINDLESS_TEXTURES = 100;
+
 					TextureManager() = default;
 					~TextureManager() = default;
-					
+
 					bool Initialize(
 						VkDevice device,
 						VkPhysicalDevice physicalDevice,
-						VkSurfaceCapabilitiesKHR capabilities,
-						VkSurfaceFormatKHR surfaceFormat,
+						VkExtent2D extent,
 						VkFormat depthFormat,
 						VkQueue graphicsQueue,
-						std::unique_ptr<Fox::Graphics::Vulkan::CommandPool>& commandPool);
+						VkCommandPool commandPool);
+
+					// Recreates the resolution dependent textures. The device must be idle.
+					void Resize(VkExtent2D extent);
 
 					void Destroy() {
+						bindlessTextureDescriptorSet = nullptr;
 						depthTextures.clear();
-						shaderResourceTextures.clear();
-
-						//for (auto& texture : shaderResourceTextures) {
-						// delete texture;
-						//}
-
-						renderTargetTextures.clear();
-
-						for (auto* texture : bindlessTextureArray) {
-							SAFE_DELETE(texture); 
-						}
-
+						bindlessTextureArray.clear();
 						environmentUBO = nullptr;
 					}
 
-					inline uint32_t AddBindlessTexture(Fox::Graphics::Vulkan::Texture* texture) {
+					// Takes ownership and returns the index the shaders use to address the texture.
+					uint32_t AddBindlessTexture(std::unique_ptr<Fox::Graphics::Vulkan::Texture> texture) {
+						if (bindlessTextureArray.size() >= MAX_BINDLESS_TEXTURES) {
+							throw std::runtime_error("Bindless texture array is full - raise TextureManager::MAX_BINDLESS_TEXTURES.");
+						}
 
-						bindlessTextureArray.push_back(texture);
-						return bindlessTextureArray.size() - 1;
+						bindlessTextureArray.push_back(std::move(texture));
+						return static_cast<uint32_t>(bindlessTextureArray.size() - 1);
 					}
 
-					inline void UpdateEnvironment() {
-						Fox::Graphics::Vulkan::Environment env; 
-						env.environmentMapIntensity = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY; 
-						env.environmentMapTextureIndex = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX; 
+					// Uploads the current environment settings (map index + intensity) to the GPU.
+					void UpdateEnvironment();
 
-						std::cout << "Environment Map Intensity: " << env.environmentMapIntensity << " Enviromnent Map Texture Index: " << env.environmentMapTextureIndex << std::endl;
-
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO->Update(env); 
-					}
-
-					inline std::vector<Fox::Graphics::Vulkan::Texture*>& GetBindlessTextureArray() {
-						return bindlessTextureArray; 
+					inline const std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Texture>>& GetBindlessTextureArray() const {
+						return bindlessTextureArray;
 					}
 
 					inline std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>& GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture depthTexture) {
 						return depthTextures[depthTexture];
 					}
 
-					inline std::unique_ptr<Fox::Graphics::Vulkan::ShaderResourceTexture>& GetShaderResourceTexture(Fox::Graphics::Managers::Vulkan::ShaderResourceTexture shaderResourceTexture) {
-						return shaderResourceTextures[shaderResourceTexture];
-					}
-
-					inline std::unique_ptr<Fox::Graphics::Vulkan::RenderTargetTexture>& GetRenderTargetTexture(Fox::Graphics::Managers::Vulkan::RenderTargetTexture renderTargetTexture) {
-						return renderTargetTextures[renderTargetTexture];
-					}
-
 					std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet > bindlessTextureDescriptorSet;
-					std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>> environmentUBO; 
- 
+					std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>> environmentUBO;
 
 					static uint32_t ENVIRONMENT_MAP_TEXTURE_INDEX;
 					static float ENVIRONMENT_MAP_INTENSITY;
 
-
 				private:
-					std::unordered_map<Fox::Graphics::Managers::Vulkan::DepthTexture, std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>> depthTextures;
-					std::unordered_map<Fox::Graphics::Managers::Vulkan::ShaderResourceTexture, std::unique_ptr<Fox::Graphics::Vulkan::ShaderResourceTexture>> shaderResourceTextures;
-					std::unordered_map<Fox::Graphics::Managers::Vulkan::RenderTargetTexture, std::unique_ptr<Fox::Graphics::Vulkan::RenderTargetTexture>> renderTargetTextures;
+					VkDevice device = VK_NULL_HANDLE;
+					VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+					VkFormat depthFormat = VK_FORMAT_UNDEFINED;
 
-					std::vector<Fox::Graphics::Vulkan::Texture*> bindlessTextureArray;
+					std::unordered_map<Fox::Graphics::Managers::Vulkan::DepthTexture, std::unique_ptr<Fox::Graphics::Vulkan::DepthTexture>> depthTextures;
+
+					std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Texture>> bindlessTextureArray;
 
 				};
 			}

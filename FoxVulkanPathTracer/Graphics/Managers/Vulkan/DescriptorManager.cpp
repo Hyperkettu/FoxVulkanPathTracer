@@ -37,21 +37,21 @@ namespace Fox {
 
 							.AddBinding(1, VkDescriptorType::VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VkShaderStageFlagBits::VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VkShaderStageFlagBits::VK_SHADER_STAGE_MISS_BIT_KHR,
 								VkDescriptorBindingFlagBits::VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-								VkDescriptorBindingFlagBits::VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT, 100)
+								VkDescriptorBindingFlagBits::VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT, Fox::Graphics::Managers::Vulkan::TextureManager::MAX_BINDLESS_TEXTURES)
 							.SetMaxSets(1) 
 							.Build();
 
 						descriptorSetBuilders[Fox::Graphics::Managers::Vulkan::Descriptor::BINDLESS_TEXTURES] = std::move(bindlessTextureArrayDescriptorSet);
 					}
 					{
-						auto offscreenDescriptorSets = std::make_unique<Fox::Graphics::Vulkan::DescriptorSetBuilder>(Fox::Graphics::Vulkan::DescriptorSetBuilder(device));
-						offscreenDescriptorSets
-							->AddBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VkShaderStageFlagBits::VK_SHADER_STAGE_MESH_BIT_EXT)
-							.AddBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT)
-							.SetMaxSets(config.MAX_FRAMES_IN_FLIGHT)
+						// Tone mapping pass: binding 0 = the HDR image produced by the path tracer.
+						auto toneMappingDescriptorSets = std::make_unique<Fox::Graphics::Vulkan::DescriptorSetBuilder>(device);
+						toneMappingDescriptorSets
+							->AddBinding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VkShaderStageFlagBits::VK_SHADER_STAGE_FRAGMENT_BIT)
+							.SetMaxSets(1)
 							.Build();
 
-						descriptorSetBuilders[Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN] = std::move(offscreenDescriptorSets);
+						descriptorSetBuilders[Fox::Graphics::Managers::Vulkan::Descriptor::TONE_MAPPING] = std::move(toneMappingDescriptorSets);
 					}
 
 					return true;

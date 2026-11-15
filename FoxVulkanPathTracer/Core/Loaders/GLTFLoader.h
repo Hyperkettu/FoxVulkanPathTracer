@@ -36,6 +36,7 @@ namespace Fox {
                     int width = 0;
                     int height = 0;
                     int componentCount = 0;
+                    bool srgb = true; // Colour data (base colour, emissive) is sRGB; data textures are linear
                 };
 
                 struct MaterialData {

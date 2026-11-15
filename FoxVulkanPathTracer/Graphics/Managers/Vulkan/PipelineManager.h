@@ -20,6 +20,12 @@ namespace Fox {
 					MAIN_RAYTRACING_PIPELINE = 0
 				};
 
+				// Indirect bounces traced after the primary hit. Must match MAX_BOUNCES in Shaders/common.slang.
+				inline constexpr uint32_t MAX_PATH_BOUNCES = 4;
+
+				// Primary ray + one nested TraceRay per bounce. Shadows use inline ray queries, which do not recurse.
+				inline constexpr uint32_t MAX_RAY_RECURSION_DEPTH = MAX_PATH_BOUNCES + 1;
+
 				class PipelineManager : public Fox::Core::Singleton<Fox::Graphics::Managers::Vulkan::PipelineManager> {
 					friend class Singleton<Fox::Graphics::Managers::Vulkan::PipelineManager>;
 

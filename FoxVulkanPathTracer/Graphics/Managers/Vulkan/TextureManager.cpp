@@ -16,92 +16,41 @@ namespace Fox {
 			namespace Vulkan {
 
 				bool TextureManager::Initialize(
-					VkDevice device, 
-					VkPhysicalDevice physicalDevice, 
-					VkSurfaceCapabilitiesKHR capabilities, 
-					VkSurfaceFormatKHR surfaceFormat, 
-					VkFormat depthFormat, 
-					VkQueue graphicsQueue, 
-					std::unique_ptr<Fox::Graphics::Vulkan::CommandPool>& commandPool
+					VkDevice device,
+					VkPhysicalDevice physicalDevice,
+					VkExtent2D extent,
+					VkFormat depthFormat,
+					VkQueue graphicsQueue,
+					VkCommandPool commandPool
 				) {
+					this->device = device;
+					this->physicalDevice = physicalDevice;
+					this->depthFormat = depthFormat;
 
-					environmentUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>>(device, physicalDevice, "Environment UBO"); 
+					environmentUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>>(device, physicalDevice, "Environment UBO");
 
-					
-					{
-						VkExtent3D extent3D = {
-							capabilities.currentExtent.width,
-							capabilities.currentExtent.height,
-							1
-						};
+					Resize(extent);
 
-						auto defaultDepthStencilTexture = std::make_unique<Fox::Graphics::Vulkan::DepthTexture>(device, physicalDevice, extent3D, depthFormat);
+					ENVIRONMENT_MAP_TEXTURE_INDEX = AddBindlessTexture(
+						Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromFile(device, physicalDevice, commandPool, graphicsQueue, "Textures/environment_map.hdr"));
 
-						depthTextures[Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL] = std::move(defaultDepthStencilTexture);
-					}
-		
-					{
-						auto texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromFile(device,
-							physicalDevice,
-							commandPool->Get(),
-							graphicsQueue,
-							"Textures/box.png"
-						);
+					return true;
+				}
 
-						shaderResourceTextures[Fox::Graphics::Managers::Vulkan::ShaderResourceTexture::BOX] = std::make_unique<Fox::Graphics::Vulkan::ShaderResourceTexture>(std::move(*texture));
-					}
+				void TextureManager::Resize(VkExtent2D extent) {
+					depthTextures[Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL] =
+						std::make_unique<Fox::Graphics::Vulkan::DepthTexture>(device, physicalDevice, VkExtent3D{ extent.width, extent.height, 1 }, depthFormat);
+				}
 
-					{
-						auto texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromFile(device,
-							physicalDevice,
-							commandPool->Get(),
-							graphicsQueue,
-							"Textures/environment_map.hdr"
-						);
+				void TextureManager::UpdateEnvironment() {
+					Fox::Graphics::Vulkan::Environment env{};
+					env.environmentMapIntensity = ENVIRONMENT_MAP_INTENSITY;
+					env.environmentMapTextureIndex = ENVIRONMENT_MAP_TEXTURE_INDEX;
 
-						ENVIRONMENT_MAP_TEXTURE_INDEX = AddBindlessTexture(texture);
-
-					}
-
-					{
-						auto renderTargetTexture = std::make_unique<Fox::Graphics::Vulkan::RenderTargetTexture>(
-							device,
-							physicalDevice,
-							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
-							VK_FORMAT_R16G16B16A16_SFLOAT,
-							VK_IMAGE_ASPECT_COLOR_BIT);
-
-						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET] = std::move(renderTargetTexture);
-					}
-
-					{
-						auto renderTargetTexture = std::make_unique<Fox::Graphics::Vulkan::RenderTargetTexture>(
-							device,
-							physicalDevice,
-							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
-							VK_FORMAT_R16G16B16A16_SFLOAT,
-							VK_IMAGE_ASPECT_COLOR_BIT);
-
-						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_2] = std::move(renderTargetTexture);
-					}
-
-					{
-						auto renderTargetTexture = std::make_unique<Fox::Graphics::Vulkan::RenderTargetTexture>(
-							device,
-							physicalDevice,
-							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
-							VK_FORMAT_R16G16B16A16_SFLOAT,
-							VK_IMAGE_ASPECT_COLOR_BIT);
-
-						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_3] = std::move(renderTargetTexture); 
-					}
-
-
-						return true;
-					}
-
+					environmentUBO->Update(env);
 				}
 
 			}
 		}
 	}
+}

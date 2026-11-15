@@ -1,119 +1,127 @@
 #include "FoxRenderer.h"
 
+#include <chrono>
+
 namespace Fox {
 
 	namespace Platform {
-	
+
 		namespace Vulkan {
-			
-			Application::Application() {}
 
 			Application::~Application() {
-                std::cout << "Destroy application" << std::endl;
-                currentRHI = nullptr;
-                SDL_DestroyWindow(window);
-                SDL_Quit();
-            }
+				keyReleasedBind.Disconnect();
+				currentRHI = nullptr;
+				inputManager = nullptr;
 
-			int32_t Application::Initialize() {
-                // Initialize SDL with video and Vulkan
-                if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-                    std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
-                    return EXIT_FAILURE;
-                }
-
-                window = SDL_CreateWindow(title.c_str(),
-                    SDL_WINDOWPOS_CENTERED,
-                    SDL_WINDOWPOS_CENTERED,
-                    width, height,
-                    SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN);
-
-                if (!window) {
-                    std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
-                    SDL_Quit();
-                    return EXIT_FAILURE;
-                }
-
-                // Get required Vulkan extensions from SDL
-                unsigned int extensionCount = 0;
-                if (!SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, nullptr)) {
-                    std::cerr << "SDL_Vulkan_GetInstanceExtensions (count) failed\n";
-                    return EXIT_FAILURE;
-                }
-
-                std::vector<const char*> extensions(extensionCount);
-                if (!SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, extensions.data())) {
-                    std::cerr << "SDL_Vulkan_GetInstanceExtensions (data) failed\n";
-                    return EXIT_FAILURE;
-                }
-
-                // for mesh shaders 
-                extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-                extensionCount++;
-
-#if _DEBUG
-                extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-                extensionCount++;
-#endif
-
-                std::vector<const char*> layers;
-#if _DEBUG
-                layers.push_back("VK_LAYER_KHRONOS_validation");
-#endif
-
-                inputManager = std::make_unique<Fox::Input::InputManager>();
-
-                Fox::Graphics::RendererConfig config;
-                config.extensionCount = extensionCount;
-                config.instanceExtensions = extensions;
-                config.layerCount = static_cast<uint32_t>(layers.size());
-                config.layers = layers;
-                config.windowHandle = static_cast<void*>(window);
-                config.MAX_FRAMES_IN_FLIGHT = 2u;
-
-                currentRHI = std::make_unique<Fox::Graphics::Vulkan::VulkanRHI>();
-                int32_t vulkanInitialized = currentRHI->Initialize(config);
-
-                currentRHI->RegisterInput(*inputManager.get());
-
-                if (!vulkanInitialized) {
-                    return vulkanInitialized;
-                }
-
-                return 1;
+				if (window) {
+					SDL_DestroyWindow(window);
+				}
+				SDL_Quit();
 			}
 
-            void Application::ToggleScreen(SDL_Scancode key) {
-                if (key == SDL_SCANCODE_T) {
-                    ToggleFullscreen(window, isFullscreen);
-                    int w, h;
-                    SDL_GetWindowSize(window, &w, &h);
-                    width = static_cast<uint32_t>(w);
-                    height = static_cast<uint32_t>(h);
+			bool Application::Initialize() {
+				if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+					std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+					return false;
+				}
 
-                    currentRHI->Resize(width, height);
-                }
+				window = SDL_CreateWindow(title.c_str(),
+					SDL_WINDOWPOS_CENTERED,
+					SDL_WINDOWPOS_CENTERED,
+					static_cast<int>(width), static_cast<int>(height),
+					SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN);
 
-            }
-		
+				if (!window) {
+					std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
+					return false;
+				}
+
+				// Instance extensions SDL needs to create a Vulkan surface for this window
+				unsigned int extensionCount = 0;
+				if (!SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, nullptr)) {
+					std::cerr << "SDL_Vulkan_GetInstanceExtensions (count) failed: " << SDL_GetError() << "\n";
+					return false;
+				}
+
+				Fox::Graphics::RendererConfig config;
+				config.instanceExtensions.resize(extensionCount);
+				if (!SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, config.instanceExtensions.data())) {
+					std::cerr << "SDL_Vulkan_GetInstanceExtensions (data) failed: " << SDL_GetError() << "\n";
+					return false;
+				}
+
+#ifdef _DEBUG
+				config.instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+				config.layers.push_back("VK_LAYER_KHRONOS_validation");
+#endif
+
+				config.windowHandle = static_cast<void*>(window);
+				config.MAX_FRAMES_IN_FLIGHT = 2u;
+
+				inputManager = std::make_unique<Fox::Input::InputManager>();
+
+				currentRHI = std::make_unique<Fox::Graphics::Vulkan::VulkanRHI>();
+				if (!currentRHI->Initialize(config)) {
+					return false;
+				}
+
+				currentRHI->RegisterInput(*inputManager);
+				keyReleasedBind = inputManager->OnKeyReleased.ConnectMember(this, &Application::OnKeyReleased);
+
+				return true;
+			}
+
+			void Application::OnKeyReleased(SDL_Scancode key) {
+				switch (key) {
+				case SDL_SCANCODE_T:
+					ToggleFullscreen();
+					break;
+				case SDL_SCANCODE_ESCAPE:
+					running = false;
+					break;
+				default:
+					break;
+				}
+			}
+
+			void Application::ToggleFullscreen() {
+				isFullscreen = !isFullscreen;
+				SDL_SetWindowFullscreen(window, isFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+
+				int w = 0, h = 0;
+				SDL_Vulkan_GetDrawableSize(window, &w, &h);
+				width = static_cast<uint32_t>(w);
+				height = static_cast<uint32_t>(h);
+
+				currentRHI->Resize(width, height);
+			}
+
 			void Application::Run() {
-                SDL_Event e;
-                bool running = true;
+				using Clock = std::chrono::steady_clock;
 
-                fullscreenToggleBind = inputManager->OnKeyReleased.ConnectMember(this, &Application::ToggleScreen);
+				running = true;
+				inputManager->ResetDeltas();
 
-                inputManager->ResetDeltas();
-                while (running) {
-                    while (SDL_PollEvent(&e)) {
-                        if (e.type == SDL_QUIT) {
-                            running = false;
-                        }
+				auto previousTime = Clock::now();
 
-                        inputManager->ProcessEvent(e);
-                    }
-                    currentRHI->Render();
-                    SDL_Delay(16);
-                }
+				while (running) {
+					SDL_Event e;
+					while (SDL_PollEvent(&e)) {
+						if (e.type == SDL_QUIT) {
+							running = false;
+						}
+
+						inputManager->ProcessEvent(e);
+					}
+
+					const auto now = Clock::now();
+					// Clamp so a long stall (e.g. window drag) does not teleport the camera
+					const float deltaTime = std::min(std::chrono::duration<float>(now - previousTime).count(), 0.1f);
+					previousTime = now;
+
+					// Presentation is vsynced (FIFO), which paces the loop - no manual sleep needed
+					currentRHI->Render(deltaTime);
+				}
 			}
 		}
 	}

@@ -477,49 +477,4 @@
       <Filter>Public\Graphics\Vulkan</Filter>
     </ClInclude>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="Shaders\triangle.mesh">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\basic.frag">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\cube.mesh">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\basic_color.frag">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\textured.frag">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\texturedCube.mesh">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\generic_mesh.mesh" />
-    <None Include="Shaders\multi_generic_mesh.mesh" />
-    <None Include="Shaders\textured_icosahedron.frag" />
-    <None Include="Shaders\textured_multi_generic_mesh.frag" />
-    <None Include="Shaders\closest_hit.rchit">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\miss.rmiss">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\raygen.rgen">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\raygen.slang">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\closest_hit.slang">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\miss.slang">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="Shaders\shadowmiss.slang">
-      <Filter>Shaders</Filter>
-    </None>
-  </ItemGroup>
 </Project>

@@ -125,7 +125,7 @@ namespace Fox {
 					const std::vector<Fox::Graphics::Vulkan::Light>& GetLights() const { return lights; }
 
 
-					std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> GetInstanceData() {
+					const std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance>& GetInstanceData() const {
 						return instances;
 					}
 

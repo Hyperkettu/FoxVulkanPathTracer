@@ -21,31 +21,35 @@ namespace Fox {
 							std::vector<VkDescriptorSetLayout>{ descriptorSetLayouts, bindlessTextureLayout },
 							std::vector<VkPushConstantRange>{});
 
-						auto builder = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder>(device, physicalDevice);
-						builder->AddShader("Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
+						// The shader binding table layout in RayTracingPipeline::CreateSBT depends on this order.
+						Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder builder(device, physicalDevice);
+						builder.AddShader("Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
 							.AddShader("Shaders/miss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
-							.AddShader("Shaders/closesthit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
+							.AddShader("Shaders/closest_hit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
 							.AddShader("Shaders/shadowmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.SetLayout(rayTracingPipelineLayout->Get())
-							.SetMaxRecursionDepth(4);
+							.SetMaxRecursionDepth(MAX_RAY_RECURSION_DEPTH);
 
-						rayTracingPipelines[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(std::move(*builder->Build()));
+						rayTracingPipelines[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = builder.Build();
 						rayTracingPipelineLayouts[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = std::move(rayTracingPipelineLayout);
 
-						builder->DestroyShaderModules();
+						builder.DestroyShaderModules();
 
 					}
 
 					{
-				//		VkDescriptorSetLayout descriptorSetLayouts = Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::POST_PROCESSOR)->GetLayout().Get();
+						// Tone mapping: a mesh shader emits a full-screen quad, the fragment shader maps HDR -> LDR.
+						VkDescriptorSetLayout toneMappingLayout = Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::TONE_MAPPING)->GetLayout().Get();
 
 						std::unique_ptr<Fox::Graphics::Vulkan::PipelineLayout> postProcessorPipelineLayout = std::make_unique<Fox::Graphics::Vulkan::PipelineLayout>(device,
-							std::vector<VkDescriptorSetLayout>{ },
+							std::vector<VkDescriptorSetLayout>{ toneMappingLayout },
 							std::vector<VkPushConstantRange>{});
 
 						std::unique_ptr<Fox::Graphics::Vulkan::Pipeline> postProcessorPipeline = std::make_unique<Fox::Graphics::Vulkan::Pipeline>(Fox::Graphics::Vulkan::PipelineBuilder(device)
-							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::MESH_SHADER, "Shaders/post_processor.spv")
-							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::FRAGMENT_SHADER, "Shaders/post_processor_frag.spv")
+							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::MESH_SHADER, "Shaders/tonemapping_mesh.spv")
+							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::FRAGMENT_SHADER, "Shaders/tonemapping_frag.spv")
+							.WithRasterization(VK_FALSE, VK_FALSE, VK_POLYGON_MODE_FILL, 1.0f, VK_CULL_MODE_NONE)
+							.WithDepthStencil(VK_FALSE, VK_FALSE)
 							.WithViewport(0.0f, 0.0f, static_cast<float>(capabilities.currentExtent.width), static_cast<float>(capabilities.currentExtent.height), 0.0f, 1.0f)
 							.WithScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
 							.SetLayout(postProcessorPipelineLayout->Get())

@@ -11,7 +11,7 @@ namespace Fox {
 			namespace Vulkan {
 
 				enum class Descriptor : int32_t {
-					OFFSCREEN = 0,
+					TONE_MAPPING = 0,
 					BINDLESS_TEXTURES,
 					RAY_TRACING
 				};

@@ -1,7 +1,5 @@
 ﻿#include "FoxRenderer.h"
 
-extern struct RayTracingInstance;
-
 namespace Fox {
 
 	namespace Scene {
@@ -528,121 +526,119 @@ namespace Fox {
                 return vkGetBufferDeviceAddress(device, &info);
             }
 
-            void RayTracingScene::AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, glm::mat4& transform, bool finalize) {
+            void RayTracingScene::AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform) {
 
-                auto meshVertices = mesh->GetVertices();
-                auto meshIndices = mesh->GetIndices();
-                auto meshSubmeshes = mesh->GetSubmeshesForGPU();
-                auto meshMaterials = mesh->GetMaterials();
-                auto meshLights = mesh->GetLights();
+                const auto& meshVertices = mesh.GetVertices();
+                const auto& meshIndices = mesh.GetIndices();
+                const auto& meshMaterials = mesh.GetMaterials();
 
-                for (auto i = 0; i < meshVertices.size(); i++) {
-                    vertices.push_back(meshVertices[i]);
+                vertices.insert(vertices.end(), meshVertices.begin(), meshVertices.end());
+
+                // Indices are relative to the mesh, rebase them onto the scene-wide vertex array
+                indices.reserve(indices.size() + meshIndices.size());
+                for (uint32_t index : meshIndices) {
+                    indices.push_back(index + vertexOffset);
                 }
 
-                for (auto i = 0; i < meshIndices.size(); i++) {
-                    indices.push_back(meshIndices[i] + meshOffset);
-                }
-
-                for (auto i = 0; i < meshSubmeshes.size(); i++) {
-                    meshSubmeshes[i].vertexOffset += meshOffset;
-                    meshSubmeshes[i].indexOffset += indexOffset;
-                    meshSubmeshes[i].materialIndex += materialOffset;
-                    submeshes.push_back(meshSubmeshes[i]);
+                for (Fox::Graphics::Vulkan::Submesh submesh : mesh.GetSubmeshesForGPU()) {
+                    submesh.vertexOffset += vertexOffset;
+                    submesh.indexOffset += indexOffset;
+                    submesh.materialIndex += materialOffset;
+                    submeshes.push_back(submesh);
                     transforms.push_back(transform);
-
                 }
 
-                for (auto i = 0; i < meshMaterials.size(); i++) {
-                    materials.push_back(meshMaterials[i]);
-                }
+                materials.insert(materials.end(), meshMaterials.begin(), meshMaterials.end());
 
-                for (auto i = 0; i < meshLights.size(); i++) {
-
-                    if (meshLights[i].type == (int)Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
-                        glm::vec4 pos = transform *  glm::vec4(meshLights[i].position, 1.0f);
-                        meshLights[i].position = glm::vec3(pos.x, pos.y, pos.z);
-                        glm::vec3 n = glm::normalize(glm::mat3(transform) * meshLights[i].normal);
-                        glm::vec3 tx = (glm::mat3(transform) * meshLights[i].tangentX);
-                        glm::vec3 ty = (glm::mat3(transform) * meshLights[i].tangentY);
-
-                        meshLights[i].normal = n;
-                        meshLights[i].tangentX = tx; 
-                        meshLights[i].tangentY = ty;
+                // Lights are stored in world space
+                const glm::mat3 linearTransform(transform);
+                for (Fox::Graphics::Vulkan::Light light : mesh.GetLights()) {
+                    if (light.type == (int)Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
+                        light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
+                        light.tangentX = linearTransform * light.tangentX;
+                        light.tangentY = linearTransform * light.tangentY;
                     }
 
-                    lights.push_back(meshLights[i]);
+                    light.normal = glm::normalize(linearTransform * light.normal);
+                    lights.push_back(light);
                 }
 
-                auto meshInstances = mesh->GetInstanceData();
+                // One instance per submesh, in the same order as the submeshes above
+                const auto meshInstances = mesh.GetInstanceData();
+                rayTracingInstances.insert(rayTracingInstances.end(), meshInstances.begin(), meshInstances.end());
 
-                for (auto i = 0; i < meshInstances.size(); i++) {
-                    meshInstances[i].materialIndex;;
-                    rayTracingInstances.push_back(meshInstances[i]);
+                vertexOffset += static_cast<uint32_t>(meshVertices.size());
+                indexOffset += static_cast<uint32_t>(meshIndices.size());
+                materialOffset += static_cast<uint32_t>(meshMaterials.size());
+            }
+
+            void RayTracingScene::UploadGeometry() {
+                // The light buffer must never be empty: fall back to a default sun.
+                if (lights.empty()) {
+                    Fox::Graphics::Vulkan::Light sun{};
+                    sun.color = glm::vec3(DEFAULT_SUN_RADIANCE);
+                    sun.normal = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)); // Direction towards the light
+                    sun.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::Directional);
+                    lights.push_back(sun);
                 }
 
-                meshOffset += meshVertices.size();
-                indexOffset += meshIndices.size();
-                materialOffset += meshMaterials.size();
+                // Acceleration structure build inputs
+                auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
+                vertexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, vertices, "Raytracing Vertex Buffer");
+                vertexBuffers.push_back(std::move(vertexBuffer));
 
-                if (finalize) {
+                auto indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
+                indexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, indices, "Raytracing Index Buffer");
+                indexBuffers.push_back(std::move(indexBuffer));
 
-                    auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
-                    vertexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, vertices, "Raytracing Vertex Buffer");
-                    vertexBuffers.push_back(std::move(vertexBuffer));
+                // Shader visible copies of the scene data
+                vertexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>>(device, physicalDevice, "Scene Vertex SSBO", vertices);
+                vertexSSBO->Update(vertices);
 
-                    auto indexBuffer = std::make_unique<Fox::Graphics::Vulkan::IndexBuffer>();
-                    indexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, indices, "Raytracing Index Buffer");
-                    indexBuffers.push_back(std::move(indexBuffer));
+                indexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<uint32_t>>(device, physicalDevice, "Scene Index SSBO", indices);
+                indexSSBO->Update(indices);
 
+                submeshSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>>(device, physicalDevice, "Scene Submesh SSBO", submeshes);
+                submeshSSBO->Update(submeshes);
 
-                    vertexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>>(device, physicalDevice, "Scene Vertex SSBO", vertices);
-                    vertexSSBO->Update(vertices);
+                materialsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>>(device, physicalDevice, "Scene Materials", materials);
+                materialsSSBO->Update(materials);
 
-                    indexSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<uint32_t>>(device, physicalDevice, "Mesh Index SSBO ", indices);
-                    indexSSBO->Update(indices);
+                lightsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>>(device, physicalDevice, "Scene Lights", lights);
+                lightsSSBO->Update(lights);
 
-                    submeshSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>>(device, physicalDevice, "Mesh Submesh SSBO ", submeshes);
-                    submeshSSBO->Update(submeshes);
+                VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
+                VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
 
-                    materialsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>>(device, physicalDevice, "Scene Materials", materials);
-                    materialsSSBO->Update(materials);
+                // One BLAS + one TLAS instance per submesh. The instance's custom index is the submesh
+                // index, which is how the closest hit shader finds the submesh and its material.
+                for (size_t i = 0; i < submeshes.size(); i++) {
+                    const auto& subMesh = submeshes[i];
+                    const glm::mat4 matrix = transforms[i] * rayTracingInstances[i].transform;
 
-                    lightsSSBO = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>>(device, physicalDevice, "Scene Lights", lights);
-                    lightsSSBO->Update(lights);
+                    uint32_t blasIndex = AddBLAS(
+                        vertexBuffers.back()->Get(),
+                        vertexAddress,
+                        subMesh.vertexCount,
+                        indexBuffers.back()->Get(),
+                        indexAddress,
+                        subMesh.indexCount,
+                        subMesh.indexOffset,
+                        subMesh.vertexOffset
+                    );
 
-                    VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
-                    VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
-
-                    size_t elementCount = submeshes.size(); 
-
-                    for (size_t i = 0; i < elementCount; i++) {
-                        const auto& subMesh = submeshes[i];
-                        const auto& instance = rayTracingInstances[i];
-                        glm::mat4 matrix = transforms[i] * instance.transform;
-
-                        auto blasIndex = AddBLAS(
-                            vertexBuffers.back()->Get(),
-                            vertexAddress,
-                            subMesh.vertexCount,
-                            indexBuffers.back()->Get(),
-                            indexAddress,
-                            subMesh.indexCount,
-                            subMesh.indexOffset,
-                            subMesh.vertexOffset
-                        );
-
-                        AddInstance(blasIndex, matrix, i, 0xFF);
-                    }
+                    AddInstance(blasIndex, matrix, static_cast<uint32_t>(i), 0xFF);
                 }
             }
 
             void RayTracingScene::Build() {
+                UploadGeometry();
+
                 Fox::Graphics::Vulkan::CommandList cmdList(device, commandPool->Get());
-                    cmdList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
-                        .BuildAccelerationStructures(*this)
-                        .End()
-                        .SubmitAndWait(queue);
+                cmdList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+                    .BuildAccelerationStructures(*this)
+                    .End()
+                    .SubmitAndWait(queue);
             }
 		}
 	}

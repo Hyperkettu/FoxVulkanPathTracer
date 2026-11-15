@@ -26,21 +26,21 @@ namespace Fox
 
 					if (stage == VK_SHADER_STAGE_RAYGEN_BIT_KHR) {
 						group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-						group.generalShader = shaderStages.size() - 1;
+						group.generalShader = static_cast<uint32_t>(shaderStages.size() - 1);
 						group.closestHitShader = VK_SHADER_UNUSED_KHR;
 						group.anyHitShader = VK_SHADER_UNUSED_KHR;
 						group.intersectionShader = VK_SHADER_UNUSED_KHR;
 					}
 					else if (stage == VK_SHADER_STAGE_MISS_BIT_KHR) {
 						group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-						group.generalShader = shaderStages.size() - 1;
+						group.generalShader = static_cast<uint32_t>(shaderStages.size() - 1);
 						group.closestHitShader = VK_SHADER_UNUSED_KHR;
 						group.anyHitShader = VK_SHADER_UNUSED_KHR;
 						group.intersectionShader = VK_SHADER_UNUSED_KHR;
 					}
 					else if (stage == VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR) {
 						group.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-						group.closestHitShader = shaderStages.size() - 1;
+						group.closestHitShader = static_cast<uint32_t>(shaderStages.size() - 1);
 						group.generalShader = VK_SHADER_UNUSED_KHR;
 						group.anyHitShader = VK_SHADER_UNUSED_KHR;
 						group.intersectionShader = VK_SHADER_UNUSED_KHR;
@@ -51,8 +51,8 @@ namespace Fox
                     return *this;
                 }
 
-				Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline* Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder::Build() const {
-					return new Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline(device, physicalDevice, pipelineLayout, shaderStages, shaderGroups, maxRecursionDepth);
+				std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder::Build() const {
+					return std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(device, physicalDevice, pipelineLayout, shaderStages, shaderGroups, maxRecursionDepth);
 				}
             }
         } 

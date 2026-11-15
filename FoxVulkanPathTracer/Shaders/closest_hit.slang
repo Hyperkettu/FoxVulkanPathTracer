@@ -1,4 +1,4 @@
-static const float PI = 3.14159265359;
+#include "common.slang"
 
 enum class LightType
 { 
@@ -63,6 +63,7 @@ struct Light {
 };
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
+[[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
 
 [[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
 [[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
@@ -71,32 +72,6 @@ struct Light {
 [[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
 
 [[vk::binding(1, 1)]] Sampler2D gTextures[];
-
-struct RayPayload
-{
-    half3 hitColor;
-    int depth;
-    uint rngState;
-};
-
-struct ShadowPayload {
-    bool isShadowed;
-};
-
-uint PCG_Hash(uint state) {
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
-uint NextRandomUInt(inout uint state) {
-    state = state * 747796405u + 289133645u;
-    return PCG_Hash(state);
-}
-
-// 3. Returns a high-quality uniform float between [0.0, 1.0)
-float NextRandomFloat(inout uint state) {
-    return float(NextRandomUInt(state)) / 4294967296.0;
-}
 
 float DistributionGGX(float3 N, float3 H, float roughness) {
     float a = roughness * roughness;
@@ -154,6 +129,8 @@ bool IsShadowed(float3 position, float3 normal, float3 lightDirection, float dis
     return isShadowed;
 }
 
+static const uint AREA_LIGHT_SAMPLES = 4;
+
 [shader("closesthit")]
 void main(
     inout RayPayload payload,
@@ -199,14 +176,14 @@ void main(
     float3 albedo = material.albedo.xyz;
 
     if(material.albedoTextureIndex >= 0) {
-        albedo = gTextures[material.albedoTextureIndex].SampleLevel(uv, 0.0f).xyz;
+        albedo = gTextures[NonUniformResourceIndex(material.albedoTextureIndex)].SampleLevel(uv, 0.0f).xyz;
     }
 
     float roughness = max(material.roughnessMetallic.x, 0.0f);
     float metallic = material.roughnessMetallic.y;
 
     if(material.roughnessMetallicTextureIndex >= 0) {
-        float3 values = gTextures[material.roughnessMetallicTextureIndex].SampleLevel(uv, 0.0f).rgb;
+        float3 values = gTextures[NonUniformResourceIndex(material.roughnessMetallicTextureIndex)].SampleLevel(uv, 0.0f).rgb;
         roughness = values.g;
         metallic = values.b;
     }
@@ -219,7 +196,7 @@ void main(
 
     uint seed = payload.rngState;
 
-    for(uint i = 0; i < 2; i++) {
+    for(uint i = 0; i < camera.lightCount; i++) {
         Light light = gAllLights[i];
 
         if(light.type == (int)LightType::Directional) {
@@ -251,7 +228,11 @@ void main(
         
         } else if(light.type == (int)LightType::QuadAreaLight) {
 
-            for(uint j = 0; j < 4; j++) {
+            // Accumulate this light separately so the sample average below does not
+            // also scale down the contribution of the lights evaluated before it.
+            half3 areaLightColor = half3(0.0h);
+
+            for(uint j = 0; j < AREA_LIGHT_SAMPLES; j++) {
                 // Fix 3: Keep updating the seed state sequentially so sample positions are random
                 float u1 = NextRandomFloat(seed) * 2.0f - 1.0f;
                 float u2 = NextRandomFloat(seed) * 2.0f - 1.0f;
@@ -292,14 +273,14 @@ void main(
 
                         // 3. Final Integration: BRDF * Radiance * NdotL / PDF
                         // Because PDF = 1.0 / light.area, dividing by PDF means multiplying by light.area
-                        directColor += half3(BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area);
+                        areaLightColor += half3(BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area);
                     }
                 }
               
 
                 
             }
-            directColor /= 4.0h;
+            directColor += areaLightColor / half(AREA_LIGHT_SAMPLES);
         }
     }
     
@@ -310,13 +291,12 @@ void main(
 
     // INDIRECT LIGHT
     half3 indirectColor = half3(0.0h, 0.0h, 0.0h);
-    const int MAX_BOUNCES = 4;
 
-    if (payload.depth <= MAX_BOUNCES) {
-        uint seed = payload.rngState;
+    // payload.depth counts the bounces already taken, so the deepest TraceRay call sits at
+    // recursion level MAX_BOUNCES + 1 - exactly what the pipeline was created with.
+    if (payload.depth < MAX_BOUNCES) {
         float r1 = NextRandomFloat(seed);
         float r2 = NextRandomFloat(seed);
-        payload.rngState = seed; 
 
         float3 F_ind = FresnelSchlick(max(dot(N, V), 0.0f), F0);
         float specularChance = max(max(F_ind.x, F_ind.y), F_ind.z);

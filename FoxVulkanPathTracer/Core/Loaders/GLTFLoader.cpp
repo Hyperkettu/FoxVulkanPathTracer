@@ -42,7 +42,16 @@ namespace Fox {
                 tinygltf::TinyGLTF loader;
                 std::string err, warn;
 
-                if (!loader.LoadBinaryFromFile(&model, &err, &warn, filename)) return false;
+                const bool isBinary = filename.size() >= 4 && filename.compare(filename.size() - 4, 4, ".glb") == 0;
+                    const bool loaded = isBinary
+                        ? loader.LoadBinaryFromFile(&model, &err, &warn, filename)
+                        : loader.LoadASCIIFromFile(&model, &err, &warn, filename);
+
+                    if (!warn.empty()) std::cerr << "glTF warning (" << filename << "): " << warn << "\n";
+                    if (!loaded) {
+                        std::cerr << "Failed to load glTF file " << filename << ": " << err << "\n";
+                        return false;
+                    }
 
                 std::vector<int> gltfImageMap(model.images.size(), -1);
                 double identityMatrix[16] = { 1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1 };
@@ -139,7 +148,7 @@ namespace Fox {
                 out[0] = static_cast<float>(m[0] * in[0] + m[4] * in[1] + m[8] * in[2] + m[12] * in[3]);
                 out[1] = static_cast<float>(m[1] * in[0] + m[5] * in[1] + m[9] * in[2] + m[13] * in[3]);
                 out[2] = static_cast<float>(m[2] * in[0] + m[6] * in[1] + m[10] * in[2] + m[14] * in[3]);
-                out[3] = static_cast<float>(m[3] * in[0] + m[7] * in[1] + m[8] * in[2] + m[15] * in[3]);
+                out[3] = static_cast<float>(m[3] * in[0] + m[7] * in[1] + m[11] * in[2] + m[15] * in[3]);
             }
 
             void GLTFLoader::GetNodeMatrix(const tinygltf::Node& node, double matrix[16]) {
@@ -246,7 +255,7 @@ namespace Fox {
                 if (node.extensions.find("KHR_lights_punctual") != node.extensions.end()) {
                     const auto& ext = node.extensions.at("KHR_lights_punctual");
                     if (ext.IsObject() && ext.Has("light")) {
-                        int lightIndex = ext.Get("light").GetNumberAsInt();
+                        int lightIndex = static_cast<int>(ext.Get("light").GetNumberAsInt());
                         if (lightIndex >= 0 && lightIndex < model.lights.size()) {
                             const tinygltf::Light& gltfLight = model.lights[lightIndex];
                             LightData light;
@@ -327,6 +336,7 @@ namespace Fox {
                                     } else {
                                         const auto& img = model.images[srcImg];
                                         TextureData tex{ img.image, img.width, img.height, img.component };
+                                        tex.srgb = false; // Roughness/metallic are linear values, not colours
                                         outTextures.push_back(tex);
                                         gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
                                         currentMaterial.metallicRoughnessTextureIndex = gltfImageMap[srcImg];

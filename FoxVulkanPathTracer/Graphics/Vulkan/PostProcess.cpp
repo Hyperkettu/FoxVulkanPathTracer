@@ -6,52 +6,60 @@ namespace Fox {
 
 		namespace Vulkan {
 
-			void PostProcessor::Process(Fox::Graphics::Vulkan::CommandList& commandList, VkSurfaceCapabilitiesKHR capabilities, VkQueue graphicsQueue, VkSemaphore renderFinishedSemaphore, std::unique_ptr<Fox::Graphics::Vulkan::Swapchain>& swapchain, uint32_t imageIndex) {
+			namespace Managers = Fox::Graphics::Managers::Vulkan;
 
-				std::array<VkClearValue, 2> clearValues{};
-				clearValues[0].color = { 0.0f, 0.0f, 0.0f, 0.0f };
-				clearValues[1].depthStencil = { 1.0f, 0 };
+			PostProcessor::PostProcessor(VkDevice device) : device(device) {
+				// The HDR image always matches the swapchain resolution, so a nearest/clamped lookup is exact.
+				VkSamplerCreateInfo samplerInfo{};
+				samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+				samplerInfo.magFilter = VK_FILTER_NEAREST;
+				samplerInfo.minFilter = VK_FILTER_NEAREST;
+				samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+				samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+				samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+				samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+				samplerInfo.maxAnisotropy = 1.0f;
 
-				VkImageSubresourceRange subresourceRange = { 
-					VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
-				};
+				if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+					throw std::runtime_error("Failed to create the tone mapping sampler!");
+				}
 
-				auto postProcessingPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipeline(Fox::Graphics::Managers::Vulkan::PipelineCategory::POST_PROCESSOR)->Get();
-				auto postProcessingPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetPipelineLayout(Fox::Graphics::Managers::Vulkan::PipelineCategory::POST_PROCESSOR)->Get();
-
-				VkFramebuffer frameBuffer = nullptr;
-
-				commandList.Begin()
-					.BeginRenderPass(Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT)->Get(),
-						frameBuffer, capabilities.currentExtent, &clearValues[0], 2)
-					.SetViewport(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.SetScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
-					.BindPipeline(postProcessingPipeline)
-					.BindDescriptorSets(postProcessingPipelineLayout, 0, {})
-					.RenderMeshShader(1, 1, 1)
-					.EndRenderPass()
-				/*	.TransitionImageLayout(
-						swapchain->GetImage(imageIndex),
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-
-					.TransitionImageLayout(
-					//	frameResource->storageTexture->GetImage(),
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET)->GetImage(),
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)*/ 
-					.End();
-
-				
-				commandList.Submit(graphicsQueue, VK_NULL_HANDLE, renderFinishedSemaphore, VK_NULL_HANDLE);
+				descriptorSet = std::make_unique<DescriptorSet>(
+					Managers::DescriptorManager::Get().GetDescriptorSet(Managers::Descriptor::TONE_MAPPING)->AllocateSet());
 			}
 
+			PostProcessor::~PostProcessor() {
+				// The descriptor set is freed together with its pool (owned by the DescriptorManager).
+				if (sampler) {
+					vkDestroySampler(device, sampler, nullptr);
+				}
+			}
+
+			void PostProcessor::SetInput(VkImageView hdrImageView, VkImageLayout layout) {
+				descriptorSet->ClearWrites();
+				descriptorSet->SetCombinedImageSampler(0, hdrImageView, sampler, layout);
+				descriptorSet->Update();
+			}
+
+			void PostProcessor::Record(CommandList& commandList, VkFramebuffer framebuffer, VkExtent2D extent) {
+				std::array<VkClearValue, 2> clearValues{};
+				clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+				clearValues[1].depthStencil = { 1.0f, 0 };
+
+				auto& pipelineManager = Managers::PipelineManager::Get();
+				VkPipeline pipeline = pipelineManager.GetPipeline(Managers::PipelineCategory::POST_PROCESSOR)->Get();
+				VkPipelineLayout pipelineLayout = pipelineManager.GetPipelineLayout(Managers::PipelineCategory::POST_PROCESSOR)->Get();
+				VkRenderPass renderPass = Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get();
+
+				commandList
+					.BeginRenderPass(renderPass, framebuffer, extent, clearValues.data(), static_cast<uint32_t>(clearValues.size()))
+					.SetViewport(0, 0, extent.width, extent.height)
+					.SetScissor(0, 0, extent.width, extent.height)
+					.BindPipeline(pipeline)
+					.BindDescriptorSets(pipelineLayout, 0, { descriptorSet->Get() })
+					.RenderMeshShader(1, 1, 1)
+					.EndRenderPass();
+			}
 
 		}
 	}

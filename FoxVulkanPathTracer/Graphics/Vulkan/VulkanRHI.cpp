@@ -6,18 +6,203 @@ namespace Fox {
 
 		namespace Vulkan {
 
-			VulkanRHI::VulkanRHI() {
+			namespace Managers = Fox::Graphics::Managers::Vulkan;
+
+			namespace {
+
+				// Everything the renderer cannot run without. Devices missing any of these are skipped.
+				const std::vector<const char*> REQUIRED_DEVICE_EXTENSIONS = {
+					VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+					VK_EXT_MESH_SHADER_EXTENSION_NAME,
+
+					// Ray tracing
+					VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+					VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+					VK_KHR_RAY_QUERY_EXTENSION_NAME,
+					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+				};
+
+				const VkFormat ACCUMULATION_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // Must match raygen.slang
+
+				const VkImageSubresourceRange COLOR_SUBRESOURCE_RANGE = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1
+				};
+
+				bool SupportsExtensions(VkPhysicalDevice physicalDevice, const std::vector<const char*>& required) {
+					uint32_t count = 0;
+					vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr);
+					std::vector<VkExtensionProperties> available(count);
+					vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, available.data());
+
+					for (const char* name : required) {
+						const bool found = std::any_of(available.begin(), available.end(),
+							[name](const VkExtensionProperties& ext) { return strcmp(ext.extensionName, name) == 0; });
+
+						if (!found) {
+							return false;
+						}
+					}
+
+					return true;
+				}
+
+				VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
+					VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+					VkDebugUtilsMessageTypeFlagsEXT type,
+					const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
+					void* userData) {
+
+					const char* severityName = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) ? "ERROR" : "WARNING";
+
+					// type is a bitmask, several bits may be set at once
+					const char* typeName = "General";
+					if (type & VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT) typeName = "Validation";
+					else if (type & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) typeName = "Performance";
+
+					std::cerr << "[Vulkan " << severityName << " / " << typeName << "] " << callbackData->pMessage << "\n";
+
+					return VK_FALSE;
+				}
 			}
 
 			VulkanRHI::~VulkanRHI() {
-				vkDeviceWaitIdle(device);
 				Destroy();
 			}
 
-			int32_t VulkanRHI::Initialize(const Fox::Graphics::RendererConfig& config) {
+			// ------------------------------------------------------------------------------------
+			// Initialization
+			// ------------------------------------------------------------------------------------
+
+			bool VulkanRHI::Initialize(const Fox::Graphics::RendererConfig& config) {
 				this->config = config;
 
-				// Create Vulkan instance
+				if (!CreateInstance()) {
+					return false;
+				}
+
+#ifdef _DEBUG
+				CreateDebugCallback();
+#endif
+
+				if (!SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(config.windowHandle), instance, &surface)) {
+					std::cerr << "SDL_Vulkan_CreateSurface failed: " << SDL_GetError() << "\n";
+					return false;
+				}
+
+				if (!PickPhysicalDevice()) {
+					std::cerr << "No GPU with hardware ray tracing and mesh shader support was found.\n";
+					return false;
+				}
+
+				if (!FindGraphicsQueueFamily()) {
+					std::cerr << "Failed to find a queue family that supports graphics and presentation.\n";
+					return false;
+				}
+
+				if (!CreateLogicalDevice()) {
+					std::cerr << "Failed to create the logical device.\n";
+					return false;
+				}
+
+				LoadExtensionAPIFunctions();
+
+				// One family serves both roles (see FindGraphicsQueueFamily)
+				vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
+				presentQueue = graphicsQueue;
+
+				if (!ChooseSurfaceFormat() || !ChooseDepthFormat()) {
+					std::cerr << "Failed to find suitable surface / depth formats.\n";
+					return false;
+				}
+
+				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
+
+				Managers::RenderPassManager::Get().Initialize(device, capabilities, surfaceFormat, depthFormat);
+
+				frameResources.resize(config.MAX_FRAMES_IN_FLIGHT);
+				for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+					frameResources[i] = std::make_unique<FrameResource>();
+					frameResources[i]->frameIndex = i;
+					frameResources[i]->CreateSynchronizationObjects(device, true);
+					frameResources[i]->CreateGraphicsCommandResources(device, graphicsQueueFamily);
+					frameResources[i]->CreateConstantBuffers(device, physicalDevice);
+				}
+
+				VkCommandPool setupCommandPool = frameResources[0]->commandPool->Get();
+
+				Managers::TextureManager::Get().Initialize(device, physicalDevice, capabilities.currentExtent, depthFormat, graphicsQueue, setupCommandPool);
+
+				CreateSwapchain();
+
+				Managers::MeshManager::Get().Initialize(device);
+				Managers::SceneManager::Get().Initialize(device, physicalDevice, setupCommandPool, graphicsQueue, capabilities);
+
+				RayTracing::RayTracingPipeline::RegisterExtensionFunctions(device);
+				Fox::Scene::RayTracing::RayTracingScene::RegisterExtensionFunctions(device);
+
+				raytracingScene = std::make_unique<Fox::Scene::RayTracing::MainRayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
+
+				CreateAccumulationTexture();
+
+				Managers::DescriptorManager::Get().Initialize(device, config);
+				CreateFrameDescriptors();
+
+				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities);
+
+				postProcessor = std::make_unique<PostProcessor>(device);
+				BindAccumulationTexture();
+
+				std::cout << "Vulkan renderer initialized (" << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ").\n";
+				return true;
+			}
+
+			void VulkanRHI::Destroy() {
+				if (device != VK_NULL_HANDLE) {
+					vkDeviceWaitIdle(device);
+
+					mouseInputBind.Disconnect();
+					keyInputBind.Disconnect();
+
+					for (auto& frameResource : frameResources) {
+						frameResource->Destroy(device);
+					}
+					frameResources.clear();
+
+					postProcessor = nullptr;
+					renderFinishedSemaphores.clear();
+					accumulationTexture = nullptr;
+					swapchain = nullptr;
+					raytracingScene = nullptr;
+
+					Managers::RenderPassManager::Get().Destroy();
+					Managers::PipelineManager::Get().Destroy();
+					Managers::TextureManager::Get().Destroy();
+					Managers::DescriptorManager::Get().Destroy();
+					Managers::MeshManager::Get().Destroy();
+					Managers::SceneManager::Get().Destroy();
+
+					vkDestroyDevice(device, nullptr);
+					device = VK_NULL_HANDLE;
+				}
+
+				if (instance != VK_NULL_HANDLE) {
+					if (surface != VK_NULL_HANDLE) {
+						vkDestroySurfaceKHR(instance, surface, nullptr);
+						surface = VK_NULL_HANDLE;
+					}
+
+					DestroyDebugCallback();
+
+					vkDestroyInstance(instance, nullptr);
+					instance = VK_NULL_HANDLE;
+				}
+			}
+
+			bool VulkanRHI::CreateInstance() {
 				VkApplicationInfo appInfo{};
 				appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 				appInfo.pApplicationName = "Fox Vulkan Path Tracing Renderer";
@@ -29,250 +214,70 @@ namespace Fox {
 				VkInstanceCreateInfo instanceCreateInfo{};
 				instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 				instanceCreateInfo.pApplicationInfo = &appInfo;
-				instanceCreateInfo.enabledExtensionCount = config.extensionCount;
+				instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(config.instanceExtensions.size());
 				instanceCreateInfo.ppEnabledExtensionNames = config.instanceExtensions.data();
-				instanceCreateInfo.enabledLayerCount = config.layerCount;
+				instanceCreateInfo.enabledLayerCount = static_cast<uint32_t>(config.layers.size());
 				instanceCreateInfo.ppEnabledLayerNames = config.layers.data();
 
 				VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 				if (result != VK_SUCCESS) {
 					std::cerr << "vkCreateInstance failed: " << result << "\n";
-					return EXIT_FAILURE;
+					return false;
 				}
 
-#ifdef _DEBUG
-				CreateDebugCallback();
-#endif
-
-				if (!SDL_Vulkan_CreateSurface(static_cast<SDL_Window*>(config.windowHandle), instance, &surface)) {
-					std::cerr << "SDL_Vulkan_CreateSurface failed\n";
-					return 0;
-				}
-
-				frameResources.resize(config.MAX_FRAMES_IN_FLIGHT);
-				for(auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++)
-				{
-					frameResources[i] = std::make_unique<FrameResource>();
-					frameResources[i]->frameIndex = i;
-				}
-
-				// currently just choose the first one
-				if (!PickPhysicalDevice()) {
-					std::cerr << "Picking physical device failed\n";
-					return 0;
-				}
-
-				if (!FindGraphicsQueueFamily()) {
-					std::cerr << "Finding graphics queue family failed\n";
-					return 0;
-				}
-
-				if (!CreateLogicalDevice()) {
-					std::cerr << "Creating logical device failed\n";
-					return 0;
-				}
-
-				LoadExtensionAPIFunctions();
-
-				if (!GetGraphicsQueue()) {
-					std::cerr << "Getting graphics queue failed\n";
-					return 0;
-				}
-				if (!GetPresentQueue()) {
-					std::cerr << "Getting present queue failed\n";
-					return 0;
-				}
-
-
-				if (!GetSurfaceFormat()) {
-					std::cerr << "Getting surface format failed\n";
-					return 0;
-				}
-
-				if (!CreateDefaultRenderPass()) {
-					std::cerr << "Creating default render pass failed\n";
-					return 0;
-				}
-
-				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
-
-				if (!CreateInFlightSemaphoresAndFences()) {
-					std::cerr << "Creating sync objects failed\n";
-					return 0;
-				}
-
-				if (!CreateCommandPoolsAndAssociatedBuffersForGraphicsQueue()) {
-					std::cerr << "Creating graphics queue command resources failed\n";
-					return 0;
-				}
-
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().Initialize(device, physicalDevice, capabilities, surfaceFormat, depthFormat, graphicsQueue, frameResources[0]->commandPool);
-
-				if (!CreateSwapchain()) {
-					std::cerr << "Creating swapchain failed\n";
-					return 0;
-				}
-
-
-				Fox::Graphics::Managers::Vulkan::MeshManager::Get().Initialize(device);
-				Fox::Graphics::Managers::Vulkan::SceneManager::Get().Initialize(device, physicalDevice, frameResources[0]->commandPool->Get(), graphicsQueue, capabilities);
-
-				Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline::RegisterExtensionFunctions(device);
-				Fox::Scene::RayTracing::RayTracingScene::RegisterExtensionFunctions(device);
-
-				raytracingScene = std::make_unique <Fox::Scene::RayTracing::MainRayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
-
-				for (auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) { 
-
-					auto frameResource = frameResources[i].get();
-
-					frameResource->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
-						VK_FORMAT_R16G16B16A16_SFLOAT,
-						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-
-					VkImageMemoryBarrier barrier{
-						.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-						.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-						.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-						.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-						.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-						.image = frameResource->storageTexture->GetImage(),
-						.subresourceRange = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-							.baseMipLevel = 0,
-							.levelCount = 1,
-							.baseArrayLayer = 0,
-							.layerCount = 1
-						}
-					};
-
-					VkImageSubresourceRange subresourceRange = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-							.baseMipLevel = 0,
-							.levelCount = 1,
-							.baseArrayLayer = 0,
-							.layerCount = 1
-					};
-
-					barrier.srcAccessMask = 0;
-					barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-
-					std::unique_ptr<Fox::Graphics::Vulkan::CommandList> cmdList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, frameResources[0]->commandPool->Get());
-
-					cmdList->Begin()
-						.TransitionImageLayout(frameResource->storageTexture->GetImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-							subresourceRange, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
-						.End().SubmitAndWait(graphicsQueue);
-
-				}
-
- 				if (!CreateUniformBuffers()) {
-					std::cerr << "Creating uniform buffer failed\n";
-					return 0;
-				}
-				if (!InitializePipelines()) {
-					std::cerr << "Creating pipelines failed\n";
-					return 0;
-				}
-
-				Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().Initialize(
-					device,
-					capabilities,
-					surfaceFormat,
-					depthFormat
-				);
-
-				postProcessor = std::make_unique<Fox::Graphics::Vulkan::PostProcessor>(device, physicalDevice);
-				
-				uint32_t index = 0u;
-				for (auto& fr : frameResources) {
-
-					std::vector<VkImageView> attachments = {
-							Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
-							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + index))->GetView(), 
-							Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL)->GetView()
-					};
-					fr->frameBuffer = std::make_unique<Fox::Graphics::Vulkan::Framebuffer>(device, Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT, attachments, capabilities.currentExtent.width, capabilities.currentExtent.height); 
-					index++;
-				}
-
-				std::cout << "Vulkan instance created successfully.\n";
-				return 1;
+				return true;
 			}
 
-			int32_t VulkanRHI::Destroy() {
-				std::cout << "Destroy Vulkan RHI" << std::endl;
-
-				for (uint32_t i = 0u; i < frameResources.size(); i++)
-				{
-					frameResources[i]->Destroy(device);
-				}
-
-				offscreenTarget = nullptr;
-
-				swapchain = nullptr;
-				raytracingScene = nullptr;	
-				
-
-				Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().Destroy(); 
-				Fox::Graphics::Managers::Vulkan::PipelineManager::Get().Destroy();
-				Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().Destroy();
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().Destroy();
-				Fox::Graphics::Managers::Vulkan::MeshManager::Get().Destroy();
-				Fox::Graphics::Managers::Vulkan::SceneManager::Get().Destroy();
-				
-
-				vkDestroyDevice(device, nullptr);
-				vkDestroySurfaceKHR(instance, surface, nullptr);
-
-#ifdef _DEBUG
-				DestroyDebugCallback();
-#endif
-
-				vkDestroyInstance(instance, nullptr);
-				return 1;
-			}
-
-			int32_t VulkanRHI::PickPhysicalDevice() {
-				// Enumerate physical devices
+			bool VulkanRHI::PickPhysicalDevice() {
 				uint32_t gpuCount = 0;
 				vkEnumeratePhysicalDevices(instance, &gpuCount, nullptr);
-				if (gpuCount == 0) {
-					std::cerr << "No Vulkan-compatible GPU found.\n";
-					return 0;
-				}
 				std::vector<VkPhysicalDevice> physicalDevices(gpuCount);
 				vkEnumeratePhysicalDevices(instance, &gpuCount, physicalDevices.data());
-				physicalDevice = physicalDevices[0];
 
-				return 1;
+				// Take the first device that can run the renderer, but prefer a discrete GPU:
+				// on laptops the integrated GPU is frequently enumerated first.
+				for (VkPhysicalDevice candidate : physicalDevices) {
+					if (!SupportsExtensions(candidate, REQUIRED_DEVICE_EXTENSIONS)) {
+						continue;
+					}
+
+					VkPhysicalDeviceProperties properties{};
+					vkGetPhysicalDeviceProperties(candidate, &properties);
+
+					const bool isDiscrete = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+					if (physicalDevice == VK_NULL_HANDLE || isDiscrete) {
+						physicalDevice = candidate;
+						std::cout << "Using GPU: " << properties.deviceName << "\n";
+					}
+
+					if (isDiscrete) {
+						break;
+					}
+				}
+
+				return physicalDevice != VK_NULL_HANDLE;
 			}
 
-			int32_t VulkanRHI::FindGraphicsQueueFamily() {
-				// Find graphics queue family
+			bool VulkanRHI::FindGraphicsQueueFamily() {
 				uint32_t queueFamilyCount = 0;
 				vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
 				std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
 				vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
 
-				graphicsQueueFamily = -1;
-				for (int i = 0; i < queueFamilies.size(); ++i) {
-					VkBool32 presentSupport = false;
+				for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+					VkBool32 presentSupport = VK_FALSE;
 					vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
-					if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && presentSupport) {
+
+					if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && presentSupport) {
 						graphicsQueueFamily = i;
-						break;
+						return true;
 					}
 				}
-				if (graphicsQueueFamily == -1) {
-					std::cerr << "Failed to find suitable queue family.\n";
-					return 0;
-				}
 
-				return 1;
+				return false;
 			}
 
-			int32_t VulkanRHI::CreateLogicalDevice() {
+			bool VulkanRHI::CreateLogicalDevice() {
 				float queuePriority = 1.0f;
 				VkDeviceQueueCreateInfo queueCreateInfo{};
 				queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -280,609 +285,448 @@ namespace Fox {
 				queueCreateInfo.queueCount = 1;
 				queueCreateInfo.pQueuePriorities = &queuePriority;
 
-				const char* deviceExtensions[] = {
-					VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-					VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
-					VK_EXT_MESH_SHADER_EXTENSION_NAME,
-					VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-					VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
-					// Ray tracing
-					VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-					VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+				// Feature chain. Everything here is used by the shaders or the acceleration structure code.
+				// Features that were promoted to core are enabled through the Vulkan 1.x feature structs,
+				// which is why the matching extensions are not listed in REQUIRED_DEVICE_EXTENSIONS.
+				VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+				rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+				rayQueryFeatures.rayQuery = VK_TRUE; // Inline shadow rays in closest_hit.slang
 
-					// Dependencies
-					VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-					VK_KHR_RAY_QUERY_EXTENSION_NAME,
+				VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingFeatures{};
+				raytracingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+				raytracingFeatures.pNext = &rayQueryFeatures;
+				raytracingFeatures.rayTracingPipeline = VK_TRUE;
 
-					VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
-				};
+				VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{};
+				accelFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+				accelFeatures.pNext = &raytracingFeatures;
+				accelFeatures.accelerationStructure = VK_TRUE;
 
-				VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
-				descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-
-				// Enable non-uniform indexing
-				descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
-				descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
-				descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = VK_TRUE;
-				descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
-
-				VkPhysicalDeviceMaintenance4Features maintenance4Features = {
-					.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,
-					.maintenance4 = VK_TRUE,
-				};
-				maintenance4Features.pNext = &descriptorIndexingFeatures;
-
-				VkPhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures = {};
+				VkPhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures{};
 				meshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
-				meshShaderFeatures.meshShader = VK_TRUE;
-				meshShaderFeatures.pNext = &maintenance4Features;
+				meshShaderFeatures.pNext = &accelFeatures;
+				meshShaderFeatures.meshShader = VK_TRUE; // Full-screen quad of the tone mapping pass
 
-				VkPhysicalDeviceBufferDeviceAddressFeatures bufferAddress{
-				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
-				.bufferDeviceAddress = VK_TRUE
-				};
+				VkPhysicalDeviceVulkan13Features vulkan13Features{};
+				vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+				vulkan13Features.pNext = &meshShaderFeatures;
+				vulkan13Features.maintenance4 = VK_TRUE;
 
-				bufferAddress.pNext = &meshShaderFeatures;
+				VkPhysicalDeviceVulkan12Features vulkan12Features{};
+				vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+				vulkan12Features.pNext = &vulkan13Features;
+				vulkan12Features.bufferDeviceAddress = VK_TRUE;
+				vulkan12Features.shaderFloat16 = VK_TRUE; // The ray payload stores half precision colours
+				// Bindless texture array
+				vulkan12Features.descriptorIndexing = VK_TRUE;
+				vulkan12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+				vulkan12Features.runtimeDescriptorArray = VK_TRUE;
+				vulkan12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+				vulkan12Features.descriptorBindingPartiallyBound = VK_TRUE;
 
 				VkDeviceCreateInfo deviceCreateInfo{};
 				deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+				deviceCreateInfo.pNext = &vulkan12Features;
 				deviceCreateInfo.queueCreateInfoCount = 1;
 				deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-				deviceCreateInfo.enabledExtensionCount = 12;
-				deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
+				deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size());
+				deviceCreateInfo.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data();
 
-				VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingFeatures; 
-				raytracingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-				raytracingFeatures.rayTracingPipeline = VK_TRUE;
-				raytracingFeatures.rayTracingPipelineShaderGroupHandleCaptureReplay = VK_FALSE;
-				raytracingFeatures.rayTracingPipelineShaderGroupHandleCaptureReplayMixed = VK_FALSE;
-				raytracingFeatures.rayTracingPipelineTraceRaysIndirect = VK_TRUE;
-				raytracingFeatures.rayTraversalPrimitiveCulling = VK_FALSE;
-				raytracingFeatures.pNext = &bufferAddress;
+				return vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) == VK_SUCCESS;
+			}
 
-				VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures;
-				accelFeatures.accelerationStructure = VK_TRUE;
-				accelFeatures.accelerationStructureCaptureReplay = VK_FALSE;
-				accelFeatures.accelerationStructureHostCommands = VK_FALSE;
-				accelFeatures.accelerationStructureIndirectBuild = VK_FALSE;
-				accelFeatures.descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE;
-				accelFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-				accelFeatures.pNext = &raytracingFeatures;
-
-				deviceCreateInfo.pNext = &accelFeatures;
-
-				VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures; 
-				rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR; 
-				rayQueryFeatures.rayQuery = VK_TRUE; 
-				rayQueryFeatures.pNext = nullptr;
-				
-				descriptorIndexingFeatures.pNext = &rayQueryFeatures;
-
-
-				if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) != VK_SUCCESS) {
-					std::cerr << "Failed to create logical device.\n";
-					return 0;
+			bool VulkanRHI::ChooseSurfaceFormat() {
+				uint32_t formatCount = 0;
+				vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+				if (formatCount == 0) {
+					return false;
 				}
 
-				return 1;
-			}
-
-			int32_t VulkanRHI::GetGraphicsQueue() {
-				vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
-				return 1;
-			}
-
-			int32_t VulkanRHI::GetPresentQueue() {
-				vkGetDeviceQueue(device, graphicsQueueFamily, 0, &presentQueue);
-				return 1;
-			}
-
-			int32_t VulkanRHI::GetSurfaceFormat() {
-				uint32_t formatCount;
-				vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
 				std::vector<VkSurfaceFormatKHR> formats(formatCount);
 				vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats.data());
 
-				// pick 2  because it's usually VK_FORMAT_R8G8B8A8_UNORM
-				surfaceFormat = formats[2];
+				// The tone mapping shader applies the sRGB transfer curve itself, so pick a UNORM
+				// format: an _SRGB one would encode the output a second time.
+				surfaceFormat = formats[0];
+				for (const VkSurfaceFormatKHR& candidate : formats) {
+					const bool isUnorm = candidate.format == VK_FORMAT_B8G8R8A8_UNORM || candidate.format == VK_FORMAT_R8G8B8A8_UNORM;
 
-				return 1;
-			}
-
-			int32_t VulkanRHI::CreateSwapchain() {
-				swapchain = std::make_unique<Swapchain>(
-					device, 
-					Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT)->Get(), 
-					Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL)->GetView(),
-					surface,
-					surfaceFormat, 
-					capabilities, 
-					config.MAX_FRAMES_IN_FLIGHT);
-
-				return 1;
-			}
-
-			int32_t VulkanRHI::CreateCommandPoolsAndAssociatedBuffersForGraphicsQueue() {
-				for (uint32_t i = 0u; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-					frameResources[i]->CreateGraphicsCommandResources(device, graphicsQueueFamily);
-				}
-
-				return 1;
-			}
-
-			int32_t VulkanRHI::CreateDefaultRenderPass() {
-				Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().Initialize(
-					device,
-					capabilities,
-					surfaceFormat,
-					depthFormat
-				);
-
-				return 1;
-			}
-
-			int32_t VulkanRHI::CreateInFlightSemaphoresAndFences() {
-				for (size_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT ; i++) {
-
-					if(!frameResources[i]->CreateSynchronizationObjects(device, true))
-					{
-						std::cerr << "Failed to create synchronization objects for a frame!\n";
-						return 0;
+					if (isUnorm && candidate.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+						surfaceFormat = candidate;
+						return true;
 					}
 				}
 
-				return 1;
+				std::cerr << "No 8-bit UNORM surface format available, colours may look washed out.\n";
+				return true;
 			}
 
-			void VulkanRHI::Render() {
+			bool VulkanRHI::ChooseDepthFormat() {
+				for (VkFormat candidate : { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT_S8_UINT }) {
+					VkFormatProperties properties{};
+					vkGetPhysicalDeviceFormatProperties(physicalDevice, candidate, &properties);
 
-				auto& scene = Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene();
-				auto& camera = scene->GetMainCamera();
-
-				if (inputManager->IsKeyDown(SDL_SCANCODE_A)) {
-					camera->MoveLeft(cameraSpeed * deltaTime);
-				}
-				if (inputManager->IsKeyDown(SDL_SCANCODE_D)) {
-					camera->MoveRight(cameraSpeed * deltaTime);
-				}
-				if (inputManager->IsKeyDown(SDL_SCANCODE_W)) {
-					camera->MoveForward(cameraSpeed * deltaTime);
-				}
-				if (inputManager->IsKeyDown(SDL_SCANCODE_S)) {
-					camera->MoveBackward(cameraSpeed * deltaTime);
-				}
-				if (inputManager->IsKeyDown(SDL_SCANCODE_R)) {
-					camera->MoveUp(cameraSpeed * deltaTime);
-				}
-				if (inputManager->IsKeyDown(SDL_SCANCODE_F)) {
-					camera->MoveDown(cameraSpeed * deltaTime);
+					if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+						depthFormat = candidate;
+						return true;
+					}
 				}
 
-				currentFrame = (currentFrameIndex) % config.MAX_FRAMES_IN_FLIGHT;
-				auto frameResource = frameResources[currentFrame].get();
-
-				// 2. STALL THE CPU right here if the GPU hasn't cleared this specific slot's workload yet
-				frameResource->renderFence->Wait();
-				// Do not reset the fence yet! Wait until after swapchain acquisition succeeds.
-
-				// 3. Acquire the image index safely
-				uint32_t imageIndex = swapchain->AcquireNextImage(frameResource->imageAvailableSemaphore->Get());
-
-				currentImageIndex = imageIndex;
-
-				// 4. NOW it is safe to reset the fence and clear out command buffers
-				frameResource->renderFence->Reset();
-				frameResource->commandPool->Reset();
-				
-				UpdateUniformBuffer(currentFrame);
-
-				VkImageSubresourceRange subresourceRange = {
-						VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1
-				};
-
-				auto& raytracingPipeline = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipeline(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE);
-				auto raytracingPipelineLayout = Fox::Graphics::Managers::Vulkan::PipelineManager::Get().GetRayTracingPipelineLayout(Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
-
-				frameResource->commandList->Begin()
-					.SetRecursionStackSize(raytracingPipeline->GetPipeline())
-					.BindPipeline(raytracingPipeline->GetPipeline(), VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
-					.BindDescriptorSets(raytracingPipelineLayout, 0, { frameResource->perFrameDescriptorSet->Get(), Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Get() }, VkPipelineBindPoint::VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
-
-					.Raytrace(
-						raytracingPipeline->GetRaygenRegion(),
-						raytracingPipeline->GetMissRegion(),
-						raytracingPipeline->GetHitRegion(),
-						raytracingPipeline->GetCallableRegion(),
-						capabilities.currentExtent.width, capabilities.currentExtent.height)
-
-					.TransitionImageLayout(
-						frameResource->storageTexture->GetImage(),
-						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
-
-					.TransitionImageLayout(
-						//swapchain->GetImage(imageIndex),
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
-							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + imageIndex))->GetImage(), 
-						VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED, 
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
-
-					.CopyImage(
-						frameResource->storageTexture->GetImage(),
-					//	swapchain->GetImage(imageIndex),
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
-							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + imageIndex))->GetImage(),
-						capabilities.currentExtent.width,
-						capabilities.currentExtent.height) 
-					.End()
-					.Submit(graphicsQueue, frameResource->imageAvailableSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
-
-				postProcessor->Process(*frameResource->commandList.get(), capabilities, graphicsQueue, frameResource->renderFinishedSemaphore->Get(), swapchain, imageIndex);
-
-				Present(swapchain, imageIndex, frameResource->renderFinishedSemaphore);
-
-				currentFrameIndex++;
-			}
-
-			const char* GetDebugSeverity(VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
-				switch (severity)
-				{
-				case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
-					return "Verbose";
-
-				case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
-					return "Info";
-
-				case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
-					return "Warning";
-
-				case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-					return "Error";
-
-				default:
-					std::cout << "Invalid severity code" << severity << std::endl;
-					exit(1);
-				}
-
-				return "No such severity";
-			}
-
-			void VulkanRHI::Present(const std::unique_ptr<Fox::Graphics::Vulkan::Swapchain>& swapchain,
-				uint32_t imageIndex, 
-				std::unique_ptr<Fox::Graphics::Vulkan::Semaphore>& semaphore) {
-				VkSemaphore signalSemaphores[] = { semaphore->Get()};
-
-				VkSwapchainKHR swapchainKHR = swapchain->Get();
-				VkPresentInfoKHR presentInfo{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-				presentInfo.waitSemaphoreCount = 1;
-				presentInfo.pWaitSemaphores = signalSemaphores;
-				presentInfo.swapchainCount = 1;
-				presentInfo.pSwapchains = &swapchainKHR;
-				presentInfo.pImageIndices = &imageIndex;
-
-				vkQueuePresentKHR(presentQueue, &presentInfo);
-			}
-
-			const char* GetDebugType(VkDebugUtilsMessageTypeFlagsEXT type) {
-				switch (type)
-				{
-				case VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT:
-					return "General";
-
-				case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT:
-					return "Validation";
-
-				case VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT:
-					return "Performance";
-
-				case VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT:
-					return "Device address binding";
-
-				default:
-					std::cout << "Invalid type code" << type << std::endl;;
-					exit(1);
-				}
-
-				return "No such type";
-			}
-
-			static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-				VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-				VkDebugUtilsMessageTypeFlagsEXT type,
-				const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-				void* pUserData) {
-				std::cout << "Debug callback: " << pCallbackData->pMessage << std::endl;
-				std::cout << "Severity: " << GetDebugSeverity(severity) << std::endl;
-				std::cout << "  Type " << GetDebugType(type) << std::endl;
-				std::cout << "  Objects " << std::endl;
-
-				for (uint32_t i = 0; i < pCallbackData->objectCount; i++) {
-					printf("%llx ", pCallbackData->pObjects[i].objectHandle);
-				}
-
-				return VK_FALSE;
-			}
-
-			void VulkanRHI::CreateDebugCallback() {
-				VkDebugUtilsMessengerCreateInfoEXT messengerCreateInfo = {
-					.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-					.pNext = NULL,
-					.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-									   VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-									   VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-									   VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-					.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-								   VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-								   VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
-					.pfnUserCallback = &DebugCallback,
-					.pUserData = NULL
-				};
-
-				PFN_vkCreateDebugUtilsMessengerEXT vkCreateDebugUtilsMessenger = VK_NULL_HANDLE;
-				vkCreateDebugUtilsMessenger = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-
-				if (!vkCreateDebugUtilsMessenger) {
-					std::cout << "Cannot find address of vkCreateDebugUtilsMessenger" << std::endl;
-					exit(1);
-				}
-
-				VkResult result = vkCreateDebugUtilsMessenger(instance, &messengerCreateInfo, NULL, &debugMessenger);
-				if (result != VK_SUCCESS) {
-					std::cout << "Creating debug utils messenger failed." << std::endl;
-				}
-
-				std::cout << "Debug utils messenger created." << std::endl;
-			}
-
-			void VulkanRHI::DestroyDebugCallback() {
-				PFN_vkDestroyDebugUtilsMessengerEXT vkDestroyDebugUtilsMessenger = VK_NULL_HANDLE;
-				vkDestroyDebugUtilsMessenger = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-
-				if (!vkDestroyDebugUtilsMessenger) {
-					std::cout << "Cannot find address of vkDestroyDebugUtilsMessenger" << std::endl;
-					exit(1);
-				}
-
-				vkDestroyDebugUtilsMessenger(instance, debugMessenger, NULL);
-
-				std::cout << "Debug utils messenger destroyed." << std::endl;
-			}
-
-			int32_t VulkanRHI::InitializePipelines() {
-				Fox::Graphics::Managers::Vulkan::PipelineManager::Get().Initialize(device, physicalDevice, capabilities);
-				std::cout << "Graphics pipeline successfully created" << std::endl;
-				return 1;
+				return false;
 			}
 
 			void VulkanRHI::LoadExtensionAPIFunctions() {
-				Fox::Graphics::Vulkan::CommandList::RegisterRenderMeshShaderFunction(
+				CommandList::RegisterRenderMeshShaderFunction(
 					reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT")),
 					reinterpret_cast<PFN_vkCmdTraceRaysKHR>(vkGetDeviceProcAddr(device, "vkCmdTraceRaysKHR")));
-				Fox::Graphics::Vulkan::CommandList::RegisterObjectNameFunction(
+
+#ifdef _DEBUG
+				// Only available when VK_EXT_debug_utils is enabled on the instance
+				CommandList::RegisterObjectNameFunction(
 					reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT")));
-				Fox::Graphics::Vulkan::CommandList::RegisterGetObjectName(reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(vkGetDeviceProcAddr(device, "vkGetObjectNameEXT")));
-				Fox::Graphics::Vulkan::CommandList::RegisterRayTracingStackSizeFunctions(
-					reinterpret_cast<PFN_vkGetRayTracingShaderGroupStackSizeKHR>(vkGetDeviceProcAddr(device, "vkGetRayTracingShaderGroupStackSizeKHR")),
-						reinterpret_cast<PFN_vkCmdSetRayTracingPipelineStackSizeKHR>(vkGetDeviceProcAddr(device, "vkCmdSetRayTracingPipelineStackSizeKHR")));
+#endif
 			}
 
-			int32_t VulkanRHI::CreateUniformBuffers() {
+			void VulkanRHI::CreateDebugCallback() {
+				VkDebugUtilsMessengerCreateInfoEXT messengerCreateInfo{};
+				messengerCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+				messengerCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+													  VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+				messengerCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+												  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+												  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+				messengerCreateInfo.pfnUserCallback = &DebugCallback;
 
-				auto& scene = Fox::Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene();
+				auto createMessenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
 
-				for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-					frameResources[i]->CreateConstantBuffers(device, physicalDevice);
+				if (!createMessenger || createMessenger(instance, &messengerCreateInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
+					std::cerr << "Could not create the Vulkan debug messenger, validation output is disabled.\n";
+					debugMessenger = VK_NULL_HANDLE;
 				}
-
-				Fox::Graphics::Managers::Vulkan::DescriptorManager& descriptorManager =
-					Fox::Graphics::Managers::Vulkan::DescriptorManager::Get();
-
-				descriptorManager.Initialize(device, config);
-
-				for(auto& frameResource : frameResources)
-				{
-					frameResource->perFrameDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->AllocateSet()); //({ 100 })); // 100 meshes in raytracing scene at max
-					frameResource->offscreenDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::OFFSCREEN)->AllocateSet());
-
-					frameResource->perFrameDescriptorSet->Reserve(7);
-
-					frameResource->meshInfosUBO->Update(scene->GetSceneMeshInfos());
-
-					Fox::Graphics::Vulkan::MeshTransforms meshTransforms{};
-					meshTransforms.models.push_back(glm::mat4(1.0f));
-						
-					meshTransforms.models.push_back(glm::rotate(glm::mat4(1.0f),
-						(float)rotationAngle * glm::radians(45.0f),
-						glm::vec3(0.0f, 0.0f, 1.0f)) * glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 0.0f, 0.0f)));
-
-					meshTransforms.models.push_back(glm::rotate(glm::mat4(1.0f),
-						(float)rotationAngle * glm::radians(60.0f),
-						glm::vec3(0.0f, 0.0f, 1.0f)) * glm::translate(glm::mat4(1.0f), glm::vec3(8.0f, 0.0f, 0.0f)));
-
-					frameResource->meshTransformsUBO->Update(meshTransforms.models);
-
-					Fox::Graphics::Vulkan::CameraUBO cam;
-					cam.camPos = scene->GetMainCamera()->GetPosition(); //glm::vec3(0.0f);
-					cam.camForward = scene->GetMainCamera()->GetForward();
-					cam.camRight = scene->GetMainCamera()->GetRight();
-					cam.camUp = scene->GetMainCamera()->GetUp();
-					cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
-					cam.frameIndex = currentFrameIndex;
-
-					frameResource->camUBO->Update(cam);
-				}
-
-				for (uint32_t i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
-
-					frameResources[i]->perFrameDescriptorSet->ClearWrites();
-					auto tlas = raytracingScene->GetTLAS();
-					frameResources[i]->perFrameDescriptorSet->SetAccelerationStructure(0, tlas);
-					frameResources[i]->perFrameDescriptorSet->SetStorageImage(1, frameResources[i]->storageTexture->GetView());
-					frameResources[i]->perFrameDescriptorSet->SetConstantBuffer(2, frameResources[i]->camUBO);
-					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
-					frameResources[i]->perFrameDescriptorSet->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique()); 
-					frameResources[i]->perFrameDescriptorSet->Update();  
-				}
-
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet = std::make_unique<Fox::Graphics::Vulkan::DescriptorSet>(
-					descriptorManager.GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::BINDLESS_TEXTURES)->AllocateSet({ 100 }));
-
-				uint32_t index = 0u;
-
-				for (auto* texture : Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray()) {
-					Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetBindlessTexture(1, index, texture); 
-					index++;
-				}
-
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->ClearWrites();
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->SetConstantBuffer(0, Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO);
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->Update();
-
-				Fox::Graphics::Vulkan::Environment env; 
-				env.environmentMapIntensity = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY;  
-				env.environmentMapTextureIndex = Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX; 
-
-				Fox::Graphics::Managers::Vulkan::TextureManager::Get().environmentUBO->Update(env); 
-
-
-
-
-
-				return 1;
 			}
 
-			uint32_t VulkanRHI::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
-				VkPhysicalDeviceMemoryProperties memProperties;
-				vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
-
-				for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-					if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-						return i;
-					}
+			void VulkanRHI::DestroyDebugCallback() {
+				if (debugMessenger == VK_NULL_HANDLE) {
+					return;
 				}
 
-				throw std::runtime_error("Failed to find suitable memory type!");
+				auto destroyMessenger = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
+				if (destroyMessenger) {
+					destroyMessenger(instance, debugMessenger, nullptr);
+				}
+
+				debugMessenger = VK_NULL_HANDLE;
 			}
 
-			void VulkanRHI::UpdateUniformBuffer(uint32_t currentFrame) {
-				auto& scene = Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene();
-				auto& camera = scene->GetMainCamera();
+			// ------------------------------------------------------------------------------------
+			// Resources
+			// ------------------------------------------------------------------------------------
 
-				Fox::Graphics::Vulkan::CameraUBO cam;
+			void VulkanRHI::CreateSwapchain() {
+				swapchain = std::make_unique<Swapchain>(
+					device,
+					Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get(),
+					Managers::TextureManager::Get().GetDepthTexture(Managers::DepthTexture::DEFAULT_DEPTH_STENCIL)->GetView(),
+					surface,
+					surfaceFormat,
+					capabilities,
+					config.MAX_FRAMES_IN_FLIGHT);
+
+				renderFinishedSemaphores.clear();
+				for (uint32_t i = 0; i < swapchain->GetImageCount(); i++) {
+					renderFinishedSemaphores.push_back(std::make_unique<Semaphore>(device));
+				}
+			}
+
+			void VulkanRHI::CreateAccumulationTexture() {
+				accumulationTexture = std::make_unique<StorageTexture>(
+					device,
+					physicalDevice,
+					VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
+					ACCUMULATION_FORMAT,
+					VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+					VK_IMAGE_ASPECT_COLOR_BIT);
+
+				// The image stays in GENERAL for its whole life: it is written as a storage image by the
+				// ray generation shader and sampled by the tone mapping pass within the same frame.
+				CommandList commandList(device, frameResources[0]->commandPool->Get());
+				commandList.Begin()
+					.ImageBarrier(accumulationTexture->GetImage(), COLOR_SUBRESOURCE_RANGE,
+						VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+						0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+						VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+					.End()
+					.SubmitAndWait(graphicsQueue);
+
+				ResetAccumulation();
+			}
+
+			void VulkanRHI::CreateFrameDescriptors() {
+				auto& descriptorManager = Managers::DescriptorManager::Get();
+				auto& textureManager = Managers::TextureManager::Get();
+
+				// Set 0: scene data, one copy per frame in flight because the camera buffer changes every frame.
+				VkAccelerationStructureKHR tlas = raytracingScene->GetTLAS();
+
+				for (auto& frameResource : frameResources) {
+					frameResource->perFrameDescriptorSet = std::make_unique<DescriptorSet>(
+						descriptorManager.GetDescriptorSet(Managers::Descriptor::RAY_TRACING)->AllocateSet());
+
+					auto& set = frameResource->perFrameDescriptorSet;
+					set->Reserve(8);
+					set->SetAccelerationStructure(0, tlas);
+					set->SetStorageImage(1, accumulationTexture->GetView());
+					set->SetConstantBuffer(2, frameResource->camUBO);
+					set->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
+					set->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
+					set->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
+					set->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
+					set->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique());
+					set->Update();
+				}
+
+				// Set 1: environment settings + every texture referenced by the scene's materials.
+				textureManager.bindlessTextureDescriptorSet = std::make_unique<DescriptorSet>(
+					descriptorManager.GetDescriptorSet(Managers::Descriptor::BINDLESS_TEXTURES)->AllocateSet({ Managers::TextureManager::MAX_BINDLESS_TEXTURES }));
+
+				auto& bindlessSet = textureManager.bindlessTextureDescriptorSet;
+
+				uint32_t textureIndex = 0;
+				for (const auto& texture : textureManager.GetBindlessTextureArray()) {
+					bindlessSet->SetBindlessTexture(1, textureIndex++, texture.get());
+				}
+
+				bindlessSet->SetConstantBuffer(0, textureManager.environmentUBO);
+				bindlessSet->Update();
+
+				textureManager.UpdateEnvironment();
+			}
+
+			void VulkanRHI::BindAccumulationTexture() {
+				for (auto& frameResource : frameResources) {
+					auto& set = frameResource->perFrameDescriptorSet;
+					set->ClearWrites();
+					set->SetStorageImage(1, accumulationTexture->GetView());
+					set->Update();
+				}
+
+				postProcessor->SetInput(accumulationTexture->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+			}
+
+			// ------------------------------------------------------------------------------------
+			// Frame
+			// ------------------------------------------------------------------------------------
+
+			void VulkanRHI::Render(float deltaTime) {
+				// Nothing to draw into while the window is minimized
+				if (capabilities.currentExtent.width == 0 || capabilities.currentExtent.height == 0) {
+					return;
+				}
+
+				HandleCameraInput(deltaTime);
+
+				FrameResource& frameResource = *frameResources[currentFrame];
+
+				// Block until the GPU has finished the work that last used this frame slot
+				frameResource.renderFence->Wait();
+
+				uint32_t imageIndex = 0;
+				VkResult acquireResult = swapchain->AcquireNextImage(frameResource.imageAvailableSemaphore->Get(), imageIndex);
+				if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+					Resize(0, 0);
+					return;
+				}
+
+				// Only reset once we know a submit will follow, otherwise the next Wait() would hang
+				frameResource.renderFence->Reset();
+				frameResource.commandPool->Reset();
+
+				UpdateCameraUniforms(frameResource);
+				RecordFrame(frameResource, imageIndex);
+
+				const VkSemaphore renderFinished = renderFinishedSemaphores[imageIndex]->Get();
+
+				frameResource.commandList->Submit(
+					graphicsQueue,
+					frameResource.imageAvailableSemaphore->Get(),
+					renderFinished,
+					frameResource.renderFence->Get());
+
+				VkResult presentResult = Present(imageIndex, renderFinished);
+
+				currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
+				frameCounter++;
+
+				if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+					Resize(0, 0);
+				}
+			}
+
+			void VulkanRHI::HandleCameraInput(float deltaTime) {
+				if (!inputManager) {
+					return;
+				}
+
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+				const float distance = cameraSpeed * deltaTime;
+
+				if (inputManager->IsKeyDown(SDL_SCANCODE_A)) camera->MoveLeft(distance);
+				if (inputManager->IsKeyDown(SDL_SCANCODE_D)) camera->MoveRight(distance);
+				if (inputManager->IsKeyDown(SDL_SCANCODE_W)) camera->MoveForward(distance);
+				if (inputManager->IsKeyDown(SDL_SCANCODE_S)) camera->MoveBackward(distance);
+				if (inputManager->IsKeyDown(SDL_SCANCODE_R)) camera->MoveUp(distance);
+				if (inputManager->IsKeyDown(SDL_SCANCODE_F)) camera->MoveDown(distance);
+			}
+
+			void VulkanRHI::UpdateCameraUniforms(FrameResource& frameResource) {
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+
+				// The accumulated image is only valid for a static view: start over as soon as the camera moves
+				if (camera->GetPosition() != lastCameraPosition || camera->GetForward() != lastCameraForward) {
+					ResetAccumulation();
+					lastCameraPosition = camera->GetPosition();
+					lastCameraForward = camera->GetForward();
+				}
+
+				CameraUBO cam{};
 				cam.camPos = camera->GetPosition();
 				cam.camForward = camera->GetForward();
 				cam.camRight = camera->GetRight();
 				cam.camUp = camera->GetUp();
 				cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
-				cam.frameIndex = currentFrameIndex;
+				cam.frameIndex = frameCounter;
+				cam.lightCount = raytracingScene->GetLightCount();
+				cam.accumulatedFrames = accumulatedFrames;
 
-				frameResources[currentFrame]->camUBO->Update(cam);
+				frameResource.camUBO->Update(cam);
+
+				accumulatedFrames++;
 			}
+
+			void VulkanRHI::RecordFrame(FrameResource& frameResource, uint32_t imageIndex) {
+				auto& pipelineManager = Managers::PipelineManager::Get();
+				auto& raytracingPipeline = pipelineManager.GetRayTracingPipeline(Managers::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE);
+				VkPipelineLayout raytracingPipelineLayout = pipelineManager.GetRayTracingPipelineLayout(Managers::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
+
+				const VkExtent2D extent = capabilities.currentExtent;
+				const VkImage accumulationImage = accumulationTexture->GetImage();
+				const VkPipelineBindPoint rayTracing = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
+
+				CommandList& commandList = *frameResource.commandList;
+
+				commandList.Begin()
+					// 1. Path trace. The previous frame's tone mapping pass may still be reading the image.
+					.ImageBarrier(accumulationImage, COLOR_SUBRESOURCE_RANGE,
+						VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+						VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+						VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+					.BindPipeline(raytracingPipeline->GetPipeline(), rayTracing)
+					.BindDescriptorSets(raytracingPipelineLayout, 0,
+						{ frameResource.perFrameDescriptorSet->Get(), Managers::TextureManager::Get().bindlessTextureDescriptorSet->Get() },
+						rayTracing)
+					.Raytrace(
+						raytracingPipeline->GetRaygenRegion(),
+						raytracingPipeline->GetMissRegion(),
+						raytracingPipeline->GetHitRegion(),
+						raytracingPipeline->GetCallableRegion(),
+						extent.width, extent.height)
+
+					// 2. Tone map the accumulated HDR image into the swapchain image
+					.ImageBarrier(accumulationImage, COLOR_SUBRESOURCE_RANGE,
+						VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+						VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+						VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), extent);
+
+				commandList.End();
+			}
+
+			VkResult VulkanRHI::Present(uint32_t imageIndex, VkSemaphore waitSemaphore) {
+				VkSwapchainKHR swapchainHandle = swapchain->Get();
+
+				VkPresentInfoKHR presentInfo{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+				presentInfo.waitSemaphoreCount = 1;
+				presentInfo.pWaitSemaphores = &waitSemaphore;
+				presentInfo.swapchainCount = 1;
+				presentInfo.pSwapchains = &swapchainHandle;
+				presentInfo.pImageIndices = &imageIndex;
+
+				return vkQueuePresentKHR(presentQueue, &presentInfo);
+			}
+
+			void VulkanRHI::Resize(uint32_t /*width*/, uint32_t /*height*/) {
+				// The surface is the source of truth for the size, the arguments are only a hint
+				vkDeviceWaitIdle(device);
+				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
+
+				const VkExtent2D extent = capabilities.currentExtent;
+				if (extent.width == 0 || extent.height == 0) {
+					return; // Minimized - Render() skips frames until the window is restored
+				}
+
+				// Destroy the old swapchain first: its framebuffers reference the depth texture
+				renderFinishedSemaphores.clear();
+				swapchain = nullptr;
+				Managers::TextureManager::Get().Resize(extent);
+				CreateSwapchain();
+
+				CreateAccumulationTexture();
+				BindAccumulationTexture();
+
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+				camera->SetAspectRatio(static_cast<float>(extent.width) / static_cast<float>(extent.height));
+			}
+
+			// ------------------------------------------------------------------------------------
+			// Input
+			// ------------------------------------------------------------------------------------
 
 			void VulkanRHI::RegisterInput(Fox::Input::InputManager& input) {
 				inputManager = &input;
 
-				input.ToggleRelativeMode();
+				input.SetRelativeMode(true);
 
-				float sensitivity = 0.13f;
-
-				mouseInputBind = input.OnMouseMoved.Connect([=](int dx, int dy) {
-
-					if (input.IsRelativeMode()) {
-						Fox::Graphics::Managers::Vulkan::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(static_cast<float>(dx) * sensitivity, -static_cast<float>(dy) * sensitivity);
+				mouseInputBind = input.OnMouseMoved.Connect([this](int dx, int dy) {
+					if (inputManager->IsRelativeMode()) {
+						Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(
+							static_cast<float>(dx) * mouseSensitivity, -static_cast<float>(dy) * mouseSensitivity);
 					}
 				});
 
-				keyInputBind = input.OnKeyReleased.Connect([=](SDL_Scancode key) {
-					if (key == SDL_SCANCODE_9) {
-						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY -= 0.05f;
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
-					}
-					if (key == SDL_SCANCODE_0) {
-						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_INTENSITY += 0.05f;
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
-					}
-					if (key == SDL_SCANCODE_7) {
-						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX++;
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
-					}
-					if (key == SDL_SCANCODE_8) { 
-						Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX--;
-						if (Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX == ~0u) {
-							Fox::Graphics::Managers::Vulkan::TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX = 0;
+				keyInputBind = input.OnKeyReleased.Connect([this](SDL_Scancode key) {
+					using Managers::TextureManager;
+
+					const uint32_t textureCount = static_cast<uint32_t>(TextureManager::Get().GetBindlessTextureArray().size());
+
+					switch (key) {
+					case SDL_SCANCODE_9:
+						TextureManager::ENVIRONMENT_MAP_INTENSITY = std::max(0.0f, TextureManager::ENVIRONMENT_MAP_INTENSITY - 0.05f);
+						break;
+					case SDL_SCANCODE_0:
+						TextureManager::ENVIRONMENT_MAP_INTENSITY += 0.05f;
+						break;
+					case SDL_SCANCODE_7:
+						// Debug aid: cycle which bindless texture is used as the environment map
+						if (TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX + 1 < textureCount) {
+							TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX++;
 						}
-						Fox::Graphics::Managers::Vulkan::TextureManager::Get().UpdateEnvironment();
+						break;
+					case SDL_SCANCODE_8:
+						if (TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX > 0) {
+							TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX--;
+						}
+						break;
+					default:
+						return;
 					}
+
+					std::cout << "Environment map intensity: " << TextureManager::ENVIRONMENT_MAP_INTENSITY
+						<< ", texture index: " << TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX << "\n";
+
+					TextureManager::Get().UpdateEnvironment();
+					ResetAccumulation();
 				});
-
-			}
-
-			void VulkanRHI::Resize(uint32_t width, uint32_t height) {
-
-				vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
-
-				swapchain = nullptr;
-				CreateSwapchain(); 
-
-				Fox::Graphics::Managers::Vulkan::SceneManager::Get().GetScene(Fox::Graphics::Managers::Vulkan::SceneId::MAIN_SCENE)->SetUpCamera(capabilities);
-
-
-				for (auto& fr : frameResources) {
-					fr->storageTexture = nullptr;
-
-					fr->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
-						VK_FORMAT_R16G16B16A16_SFLOAT,
-						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-
-					VkImageMemoryBarrier barrier{
-						.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-						.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-						.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-						.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-						.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-						.image = fr->storageTexture->GetImage(),
-						.subresourceRange = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-							.baseMipLevel = 0,
-							.levelCount = 1,
-							.baseArrayLayer = 0,
-							.layerCount = 1
-						}
-					};
-
-					VkImageSubresourceRange subresourceRange = {
-							.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-							.baseMipLevel = 0,
-							.levelCount = 1,
-							.baseArrayLayer = 0,
-							.layerCount = 1
-					};
-
-					barrier.srcAccessMask = 0;
-					barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-
-					std::unique_ptr<Fox::Graphics::Vulkan::CommandList> cmdList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, frameResources[0]->commandPool->Get());
-
-					cmdList->Begin()
-						.TransitionImageLayout(fr->storageTexture->GetImage(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-							subresourceRange, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
-						.End().SubmitAndWait(graphicsQueue);
-
-					fr->perFrameDescriptorSet->ClearWrites();
-					fr->perFrameDescriptorSet->SetStorageImage(1, fr->storageTexture->GetView());
-					fr->perFrameDescriptorSet->Update();
-				}
 			}
 
 		}

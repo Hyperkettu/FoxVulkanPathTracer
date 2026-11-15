@@ -22,7 +22,7 @@ namespace Fox {
                     VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsCreateInfo{};
                     if (bindingFlags.size() > 0) {
                         bindingFlagsCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-                        bindingFlagsCreateInfo.bindingCount = bindingFlags.size();
+                        bindingFlagsCreateInfo.bindingCount = static_cast<uint32_t>(bindingFlags.size());
                         bindingFlagsCreateInfo.pBindingFlags = bindingFlags.data();
                     }
 

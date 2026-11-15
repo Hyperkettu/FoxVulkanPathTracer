@@ -1,45 +1,36 @@
-// ToneMapFragment.slang
+// Tone mapping pass: linear HDR radiance -> display-referred LDR written to the swapchain.
 
-struct Vertex
+struct VertexOutput
 {
     float4 position : SV_Position;
-    float2 uv       : SV_TexCoord;
+    float2 uv       : TEXCOORD0;
 };
 
-[[vk::binding(0, 0)]]
-Texture2D<half4> hdrBuffer; 
+// The path tracer's accumulation image.
+[[vk::binding(0, 0)]] Sampler2D hdrBuffer;
 
-[[vk::binding(1, 0)]]
-SamplerState sampler;
+static const float EXPOSURE = 1.0f;
 
-/*cbuffer ToneMapParams : register(b0)
-{
-    float exposure;
-}; */
-
-// ACES Narkowicz / Fitted Curve for HDR -> LDR mapping
+// ACES filmic curve (Narkowicz fit)
 float3 ACESFilm(float3 x)
 {
-    float a = 2.51f;
-    float b = 0.03f;
-    float c = 2.43f;
-    float d = 0.59f;
-    float e = 0.14f;
+    const float a = 2.51f;
+    const float b = 0.03f;
+    const float c = 2.43f;
+    const float d = 0.59f;
+    const float e = 0.14f;
     return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
 }
 
 [shader("fragment")]
 float4 main(VertexOutput input) : SV_Target
 {
-    float exposure = 1.0f;
-    half4 hdrColor = hdrBuffer.Sample(sampler, input.uv);
-
-    // 2. Exposure scale
-    float3 color = hdrColor.rgb * exposure;
+    float3 color = hdrBuffer.Sample(input.uv).rgb * EXPOSURE;
 
     color = ACESFilm(color);
 
-    color = pow(color, float3(1.0 / 2.2));
+    // The swapchain uses a UNORM format, so the sRGB transfer curve is applied here.
+    color = pow(color, float3(1.0f / 2.2f));
 
-    return float4(color, hdrColor.a);
+    return float4(color, 1.0f);
 }

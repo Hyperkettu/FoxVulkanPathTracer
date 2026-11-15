@@ -1,3 +1,7 @@
+#pragma once
+
+#include <cstddef>
+
 
 namespace Fox {
 
@@ -12,7 +16,15 @@ namespace Fox {
 				alignas(16) glm::vec3 camUp;        // Offset 48 (12 bytes + 4 bytes auto-padding)
 				alignas(16) glm::vec2 resolution;   // Offset 64 (8 bytes)
 				alignas(8)  uint32_t frameIndex;    // Offset 72 (4 bytes) - packs right after resolution!
+				uint32_t lightCount;                // Offset 76 - number of valid entries in the light buffer
+				uint32_t accumulatedFrames;         // Offset 80 - frames already blended into the accumulation image
 			};
+
+			// Must match the Camera struct in Shaders/common.slang (std140 layout).
+			static_assert(offsetof(CameraUBO, resolution) == 64, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, frameIndex) == 72, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, lightCount) == 76, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, accumulatedFrames) == 80, "CameraUBO layout must match common.slang");
 
 			struct OldFrame {
 				alignas(16) glm::mat4 model;
@@ -48,4 +60,4 @@ namespace Fox {
 			}; 
 	    }
     }
-}
+}

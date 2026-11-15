@@ -57,19 +57,24 @@ namespace Fox {
                 VkSampler GetSampler() const { return sampler; }
 
 
-                static Fox::Graphics::Vulkan::ShaderResourceTexture* LoadFromPixelData(
+                // Uploads tightly packed pixels. bytesPerPixel must match the texel size of the format.
+                static std::unique_ptr<Fox::Graphics::Vulkan::ShaderResourceTexture> LoadFromPixelData(
                     VkDevice device, 
                     VkPhysicalDevice physicalDevice, 
                     VkCommandPool commandPool,
                     VkQueue graphicsQueue, 
-                    uint8_t* pixels, uint32_t width, uint32_t height, uint32_t numChannels);
+                    const void* pixels, uint32_t width, uint32_t height,
+                    VkFormat format = VK_FORMAT_R8G8B8A8_SRGB, uint32_t bytesPerPixel = 4);
 
-                static Fox::Graphics::Vulkan::ShaderResourceTexture* LoadFromFile(
+                // Loads an image from disk. Radiance .hdr files keep their full range (RGBA16F);
+                // everything else is loaded as 8-bit RGBA, interpreted as sRGB unless srgb is false.
+                static std::unique_ptr<Fox::Graphics::Vulkan::ShaderResourceTexture> LoadFromFile(
                     VkDevice device, 
                     VkPhysicalDevice physicalDevice,
                     VkCommandPool commandPool,
                     VkQueue graphicsQueue,
-                    const std::string& filename);
+                    const std::string& filename,
+                    bool srgb = true);
 
                 uint32_t width = 0;
                 uint32_t height = 0;

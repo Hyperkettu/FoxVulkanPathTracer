@@ -111,6 +111,11 @@ namespace Fox
                         WithDepthStencil();
                     }
 
+                    // Ignored by mesh shader pipelines, but must be a valid structure for vertex pipelines.
+                    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+                    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+                    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
                     VkGraphicsPipelineCreateInfo info{};
                     info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
                     info.stageCount = static_cast<uint32_t>(shaderStages.size());
@@ -171,7 +176,7 @@ namespace Fox
                     return *this;
                 }
 
-                Fox::Graphics::Vulkan::PipelineBuilder WithColorBlending(VkColorComponentFlags colorWriteMask = VkColorComponentFlagBits::VK_COLOR_COMPONENT_R_BIT | VkColorComponentFlagBits::VK_COLOR_COMPONENT_G_BIT |
+                Fox::Graphics::Vulkan::PipelineBuilder& WithColorBlending(VkColorComponentFlags colorWriteMask = VkColorComponentFlagBits::VK_COLOR_COMPONENT_R_BIT | VkColorComponentFlagBits::VK_COLOR_COMPONENT_G_BIT |
                     VkColorComponentFlagBits::VK_COLOR_COMPONENT_B_BIT | VkColorComponentFlagBits::VK_COLOR_COMPONENT_A_BIT, VkBool32 blendEnable = VK_FALSE, VkBool32 logicOpEnable = VK_FALSE, VkLogicOp logicOp = VkLogicOp::VK_LOGIC_OP_COPY, std::vector<float> blendConstants = { 0.0f, 0.0f, 0.0f, 0.0f }) {
                     colorBlendAttachment.colorWriteMask = colorWriteMask;
                     colorBlendAttachment.blendEnable = blendEnable;
@@ -199,7 +204,7 @@ namespace Fox
                     return *this;
                 }
 
-                Fox::Graphics::Vulkan::PipelineBuilder WithDepthStencil(
+                Fox::Graphics::Vulkan::PipelineBuilder& WithDepthStencil(
                     VkBool32 depthTestEnable = VK_TRUE,
                     VkBool32 depthWriteEnable = VK_TRUE,
                     VkCompareOp depthCompareOp = VkCompareOp::VK_COMPARE_OP_LESS,
@@ -217,7 +222,7 @@ namespace Fox
                     // Write depth values to the depth buffer
                     depthStencil.depthWriteEnable = depthWriteEnable;
 
-                    // Comparison operation: keep fragment if it’s closer
+                    // Comparison operation: keep fragment if it's closer
                     depthStencil.depthCompareOp = depthCompareOp;
 
                     // Optional: depth bounds test

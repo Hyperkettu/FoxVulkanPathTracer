@@ -26,9 +26,15 @@ namespace Fox {
                 virtual void Initialize() = 0;
                 virtual void Update(float dt) = 0;
 
+                // Appends a copy of the mesh to the scene. The same mesh can be added several times
+                // with different transforms; its textures are shared between the copies.
+                void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform);
+
+                // Uploads the geometry added so far and builds the acceleration structures.
+                // Call once, after the last AddMesh.
                 void Build();
 
-                void AddMesh(std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>& mesh, glm::mat4& transform, bool finalize);
+                uint32_t GetLightCount() const { return static_cast<uint32_t>(lights.size()); }
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;
@@ -128,6 +134,7 @@ namespace Fox {
                     VkDeviceMemory& memory);
 
                 void UploadInstanceBuffer();
+                void UploadGeometry();
                 VkDeviceAddress GetBufferAddress(VkBuffer buffer);
 
                 static PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
@@ -139,10 +146,12 @@ namespace Fox {
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer>> vertexBuffers;
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer>> indexBuffers;
 
-                uint32_t meshIndex = 0;
+                // Radiance of the directional light used when a scene defines no lights of its own
+                static constexpr float DEFAULT_SUN_RADIANCE = 4.0f;
 
+                // Running offsets into the scene-wide arrays, advanced by AddMesh
+                uint32_t vertexOffset = 0u;
                 uint32_t indexOffset = 0u; 
-                uint32_t meshOffset = 0u;
                 uint32_t materialOffset = 0u;
             };
 

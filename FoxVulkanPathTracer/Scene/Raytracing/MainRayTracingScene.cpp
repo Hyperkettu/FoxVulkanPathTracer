@@ -3,45 +3,38 @@
 namespace Fox {
 
 	namespace Scene {
-	
+
 		namespace RayTracing {
-		
+
 			void MainRayTracingScene::Initialize() {
-				auto mesh = std::make_unique<Fox::Graphics::Geometry::Vulkan::Mesh>(device, physicalDevice, queue, queueFamily); 
-				mesh->LoadFromGLTF("Models/cabin.glb");
+				using Fox::Graphics::Geometry::Vulkan::Mesh;
 
-				glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
-				model = glm::rotate(model, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-	
-				AddMesh(mesh, model, false);
+				const glm::vec3 up(0.0f, 1.0f, 0.0f);
 
-				auto mesh2 = std::make_unique<Fox::Graphics::Geometry::Vulkan::Mesh>(device, physicalDevice, queue, queueFamily);
-				mesh2->LoadFromGLTF("Models/box.glb");
-				
-				glm::mat4 offset = glm::rotate(glm::mat4(1.0f), glm::radians(25.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-			//    offset = glm::translate(offset, glm::vec3(50.0f, 0.0f, 0.0f));
-				AddMesh(mesh2, offset, false);
+				// The meshes are only needed while the scene is assembled: AddMesh copies their
+				// geometry, and the textures are owned by the TextureManager.
+				Mesh cabin(device, physicalDevice, queue, queueFamily);
+				cabin.LoadFromGLTF("Models/cabin.glb");
 
-				auto mesh3 = std::make_unique<Fox::Graphics::Geometry::Vulkan::Mesh>(device, physicalDevice, queue, queueFamily);
-				mesh3->LoadFromGLTF("Models/cabin.glb");
+				Mesh box(device, physicalDevice, queue, queueFamily);
+				box.LoadFromGLTF("Models/box.glb");
 
+				glm::mat4 cabinTransform = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
+				cabinTransform = glm::rotate(cabinTransform, glm::radians(90.0f), up);
+				AddMesh(cabin, cabinTransform);
 
-				glm::mat4 offset2 = glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-				    offset2 = glm::translate(offset2, glm::vec3(50.0f, 0.0f, 50.0f));
-				AddMesh(mesh3, offset2, true);
+				AddMesh(box, glm::rotate(glm::mat4(1.0f), glm::radians(25.0f), up));
 
+				// Second cabin: the same mesh instanced with another transform
+				glm::mat4 secondCabinTransform = glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), up);
+				secondCabinTransform = glm::translate(secondCabinTransform, glm::vec3(50.0f, 0.0f, 50.0f));
+				AddMesh(cabin, secondCabinTransform);
 
 				Build();
-			
 			}
 
 			void MainRayTracingScene::Update(float dt) {
-
-
 			}
-		
 		}
-	
 	}
-
 }

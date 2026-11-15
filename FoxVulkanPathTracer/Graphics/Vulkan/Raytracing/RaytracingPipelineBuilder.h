@@ -28,7 +28,7 @@ namespace Fox
 					}
 
 
-                    Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline* Build() const;
+                    std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> Build() const;
 
                     void DestroyShaderModules() {
                         for (VkShaderModule module : shaderModules) {

@@ -1,59 +1,38 @@
-namespace Fox 
+#pragma once
+
+namespace Fox
 {
     namespace Graphics {
 
         namespace Vulkan {
 
+            // Everything that must exist once per frame in flight, so the CPU can record
+            // frame N+1 while the GPU is still working on frame N.
             struct FrameResource
             {
-				FrameResource() = default; 
+                FrameResource() = default;
 
-                int32_t CreateGraphicsCommandResources(VkDevice device, uint32_t queueFamily);
-                int32_t CreateSynchronizationObjects(VkDevice device, bool createFenceAsSignaled);
+                void CreateGraphicsCommandResources(VkDevice device, uint32_t queueFamily);
+                void CreateSynchronizationObjects(VkDevice device, bool createFenceAsSignaled);
+                void CreateConstantBuffers(VkDevice device, VkPhysicalDevice physicalDevice);
                 void Destroy(VkDevice device);
 
-                int32_t CreateConstantBuffers(VkDevice device, VkPhysicalDevice physicalDevice) {
-                    oldPerFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::OldFrame>>(device, physicalDevice, "Old Per Frame UBO");
-                    perFrameUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::PerFrame>>(device, physicalDevice, "Per Frame UBO");
-                    camUBO = std::make_unique<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::CameraUBO>>(device, physicalDevice, "Camera UBO");
-
-                    meshTransformsUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicConstantBuffer<glm::mat4>>(device, physicalDevice, "Mesh Transforms UBO");
-                    meshInfosUBO = std::make_unique<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::MeshInfo>>(device, physicalDevice, "Mesh Infos UBO");
-
-                    return 1;
-				}
-
                 // --- Synchronization ---
-                std::unique_ptr<Fox::Graphics::Vulkan::Fence> renderFence; // Fence: signals when frame is done rendering
-                std::unique_ptr<Fox::Graphics::Vulkan::Semaphore> imageAvailableSemaphore;// Signals when swapchain image is ready
-                std::unique_ptr<Fox::Graphics::Vulkan::Semaphore>  renderFinishedSemaphore;// Signals when rendering is finished
-                std::unique_ptr<Fox::Graphics::Vulkan::Semaphore> offscreenFinishedSemaphore;
+                std::unique_ptr<Fox::Graphics::Vulkan::Fence> renderFence;                  // Signaled when the GPU finished this frame
+                std::unique_ptr<Fox::Graphics::Vulkan::Semaphore> imageAvailableSemaphore;  // Signaled when the swapchain image is ready
 
                 // --- Command recording ---
-                std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool;         // Per-frame command pool
-                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> commandList;      // Main primary command buffer
-                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> offscreenCommandList;
+                std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool;
+                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> commandList;
 
-                // --- Descriptor management ---
-                std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet> offscreenDescriptorSet;
-                std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet> perFrameDescriptorSet;
+                // --- Descriptors ---
+                std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet> perFrameDescriptorSet; // Ray tracing set 0
 
-                // --- Per-frame uniform/constant data ---
-                std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::OldFrame>> oldPerFrameUBO;
-                std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::PerFrame>> perFrameUBO;
+                // --- Per-frame uniform data ---
                 std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::CameraUBO>> camUBO;
-                
-                std::unique_ptr<Fox::Graphics::Vulkan::DynamicConstantBuffer<glm::mat4>> meshTransformsUBO;
-				std::unique_ptr<Fox::Graphics::Vulkan::DynamicBuffer<Fox::Graphics::Vulkan::MeshInfo>> meshInfosUBO;
 
-                std::unique_ptr<Fox::Graphics::Vulkan::StorageTexture> storageTexture;
-
-                std::unique_ptr<Fox::Graphics::Vulkan::Framebuffer> frameBuffer;
-
-                // --- Frame index tracking ---
-                uint32_t frameIndex;
+                uint32_t frameIndex = 0;
             };
         }
     }
 }
-

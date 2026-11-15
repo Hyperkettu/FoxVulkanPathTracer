@@ -83,6 +83,26 @@ namespace Fox {
 					writes.push_back(descriptorWrites);
 				}
 
+				// Binds an arbitrary view + sampler pair, for images that are not wrapped in a sampled Texture
+				// (for example a storage image that is read back by a later pass).
+				void SetCombinedImageSampler(uint32_t slotIndex, VkImageView view, VkSampler sampler, VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+					VkDescriptorImageInfo imageInfo{};
+					imageInfo.imageLayout = layout;
+					imageInfo.imageView = view;
+					imageInfo.sampler = sampler;
+					imageInfos.push_back(imageInfo);
+
+					VkWriteDescriptorSet descriptorWrite{};
+					descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+					descriptorWrite.dstSet = set;
+					descriptorWrite.dstBinding = slotIndex;
+					descriptorWrite.dstArrayElement = 0;
+					descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+					descriptorWrite.descriptorCount = 1;
+					descriptorWrite.pImageInfo = &imageInfos.back();
+					writes.push_back(descriptorWrite);
+				}
+
 				void ClearWrites() {
 					writes.clear();
                     bufferInfos.clear();

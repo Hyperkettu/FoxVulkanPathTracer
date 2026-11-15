@@ -1,22 +1,20 @@
-#pragma once 
+#pragma once
 
 namespace Fox {
 
 	namespace Platform {
-	
+
 		class IApplication {
 
-		public: 
+		public:
 			IApplication() = default;
-			IApplication(const std::string& title, uint32_t width, uint32_t height) {};
-
 			virtual ~IApplication() {}
 
-			virtual int32_t Initialize() = 0;
+			// Returns false if the application could not be started; the error is logged.
+			virtual bool Initialize() = 0;
+
+			// Runs the main loop until the user quits.
 			virtual void Run() = 0;
-
-		protected:
-
 		};
 
 	}

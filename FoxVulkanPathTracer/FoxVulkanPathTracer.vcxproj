@@ -106,14 +106,14 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>SDL2d.lib;SDL2maind.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -134,7 +134,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(VULKAN_SDK)\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -275,25 +275,48 @@
     <ClInclude Include="Scene\Scene.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shaders\basic.frag" />
-    <None Include="Shaders\basic_color.frag" />
-    <None Include="Shaders\closest_hit.rchit" />
-    <None Include="Shaders\closest_hit.slang" />
-    <None Include="Shaders\cube.mesh" />
-    <None Include="Shaders\generic_mesh.mesh" />
-    <None Include="Shaders\miss.rmiss" />
-    <None Include="Shaders\miss.slang" />
-    <None Include="Shaders\multi_generic_mesh.mesh" />
-    <None Include="Shaders\raygen.rgen" />
-    <None Include="Shaders\raygen.slang" />
-    <None Include="Shaders\shadowmiss.slang" />
-    <None Include="Shaders\textured.frag" />
-    <None Include="Shaders\texturedCube.mesh" />
-    <None Include="Shaders\textured_icosahedron.frag" />
-    <None Include="Shaders\textured_multi_generic_mesh.frag" />
-    <None Include="Shaders\triangle.mesh" />
+    <!-- Slang shaders. Each one is compiled to Shaders\<name>.spv by the CompileSlangShaders target below. -->
+    <SlangShader Include="Shaders\raygen.slang">
+      <Stage>raygeneration</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\miss.slang">
+      <Stage>miss</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\shadowmiss.slang">
+      <Stage>miss</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\closest_hit.slang">
+      <Stage>closesthit</Stage>
+      <Profile>spirv_1_5+spvRayQueryKHR</Profile>
+    </SlangShader>
+    <SlangShader Include="Shaders\tonemapping_mesh.slang">
+      <Stage>mesh</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\tonemapping_frag.slang">
+      <Stage>fragment</Stage>
+    </SlangShader>
   </ItemGroup>
+  <ItemGroup>
+    <!-- Shared include and shader experiments that are not part of the build -->
+    <None Include="Shaders\common.slang" />
+    <None Include="Shaders\closest_hit_orig.slang" />
+    <None Include="Shaders\closest_hit_reflection_mirror.slang" />
+    <None Include="Shaders\visualize_normals.slang" />
+    <None Include="Shaders\compile_shaders_slang.bat" />
+  </ItemGroup>
+  <ItemDefinitionGroup>
+    <SlangShader>
+      <Profile>spirv_1_5</Profile>
+    </SlangShader>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <!-- Compiles the Slang shaders with the Vulkan SDK's slangc. Incremental: a shader is only
+       rebuilt when it, or the shared common.slang include, is newer than its .spv output. -->
+  <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);$(ProjectDir)Shaders\common.slang" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename).spv')">
+    <Error Condition="'$(VULKAN_SDK)' == ''" Text="The VULKAN_SDK environment variable is not set. Install the Vulkan SDK (it provides the headers, SDL2, glm and the slangc shader compiler)." />
+    <Message Importance="high" Text="slangc %(SlangShader.Identity)" />
+    <Exec Command="&quot;$(VULKAN_SDK)\Bin\slangc.exe&quot; &quot;%(SlangShader.FullPath)&quot; -stage %(SlangShader.Stage) -entry main -profile %(SlangShader.Profile) -target spirv -o &quot;$(ProjectDir)Shaders\%(SlangShader.Filename).spv&quot;" />
+  </Target>
 </Project>
