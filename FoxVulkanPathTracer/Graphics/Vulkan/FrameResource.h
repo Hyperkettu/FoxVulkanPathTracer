@@ -48,6 +48,8 @@ namespace Fox
 
                 std::unique_ptr<Fox::Graphics::Vulkan::StorageTexture> storageTexture;
 
+                std::unique_ptr<Fox::Graphics::Vulkan::Framebuffer> frameBuffer;
+
                 // --- Frame index tracking ---
                 uint32_t frameIndex;
             };

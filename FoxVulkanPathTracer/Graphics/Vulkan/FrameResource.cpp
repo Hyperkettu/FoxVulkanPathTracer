@@ -37,6 +37,7 @@ namespace Fox {
                 offscreenFinishedSemaphore = nullptr;
 				renderFence = nullptr;
 				storageTexture = nullptr;
+                frameBuffer = nullptr;
             }
         }
     }

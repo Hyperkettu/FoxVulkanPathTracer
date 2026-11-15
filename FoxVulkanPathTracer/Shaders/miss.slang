@@ -2,7 +2,7 @@ static float PI = 3.14159265358f;
 
 struct RayPayload
 {
-    float3 hitColor;
+    half3 hitColor;
     int depth;
     uint rngState;
 };
@@ -18,15 +18,15 @@ struct Environment {
 [[vk::binding(1, 1)]] Sampler2D gTextures[];
 
 
-float3 SampleHDRIEnvironmentMap(float3 direction) {
+half3 SampleHDRIEnvironmentMap(float3 direction) {
     direction = normalize(direction);
     float u = atan2(direction.z, direction.x) / (2.0f * PI) + 0.5f;
     float v = acos(clamp(direction.y, 0.0f, 1.0f)) / PI;
-    return gTextures[environment.environmentMapTextureIndex].SampleLevel(float2(u, v), 0.0f).xyz;
+    return half3(gTextures[environment.environmentMapTextureIndex].SampleLevel(float2(u, v), 0.0f).xyz);
 }
 
 [shader("miss")]
 void main(inout RayPayload payload)
 {
-    payload.hitColor = SampleHDRIEnvironmentMap(WorldRayDirection()) * environment.environmentMapIntensity;
+    payload.hitColor = SampleHDRIEnvironmentMap(WorldRayDirection()) * half(environment.environmentMapIntensity);
 }

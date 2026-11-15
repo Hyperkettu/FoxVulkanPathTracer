@@ -1,12 +1,12 @@
 struct RayPayload
 {
-    float3 hitColor;
+    half3 hitColor;
     int depth;
     uint rngState;
 };
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
-[[vk::binding(1, 0)]] RWTexture2D<float4>             image;
+[[vk::binding(1, 0)]] RWTexture2D<half4>             image;
 
 struct Camera
 {
@@ -60,7 +60,7 @@ void main()
     // Better initial scrambling seed using LCG values
     uint seed = InitializePixelSeed(pixel, frameIndex);
 
-    float3 color = float3(0, 0, 0);
+    half3 color = half3(0.0h, 0.0h, 0.0h);
     float aspectRatio = camera.resolution.x / camera.resolution.y;
 
     uint MONTE_CARLO_SAMPLES_PER_PIXEL = 4;
@@ -76,7 +76,7 @@ void main()
         float3 dir = normalize(camera.camForward + d.x * camera.camRight + d.y * camera.camUp);
                             
         RayPayload payload;
-        payload.hitColor = float3(0.0f);
+        payload.hitColor = half3(0.0f);
         payload.depth = 0;
         payload.rngState = seed; // Pass the active seed state into the ray
 
@@ -99,8 +99,8 @@ void main()
         seed = payload.rngState; 
     }
 
-    color /= float(MONTE_CARLO_SAMPLES_PER_PIXEL);
+    color /= half(MONTE_CARLO_SAMPLES_PER_PIXEL);
 
 
-    image[pixel] = float4(color, 1.0f);
+    image[pixel] = half4(color, 1.0h);
 }

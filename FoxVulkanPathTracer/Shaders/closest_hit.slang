@@ -74,7 +74,7 @@ struct Light {
 
 struct RayPayload
 {
-    float3 hitColor;
+    half3 hitColor;
     int depth;
     uint rngState;
 };
@@ -214,8 +214,8 @@ void main(
     float3 V = normalize(-WorldRayDirection());
 
     float3 F0 = lerp(float3(0.04f), albedo, metallic);
-    float3 emission = material.emissiveColor.xyz; 
-    float3 directColor = float3(0.0);
+    half3 emission = half3(material.emissiveColor.xyz); 
+    half3 directColor = half3(0.0h);
 
     uint seed = payload.rngState;
 
@@ -245,7 +245,7 @@ void main(
         
                 float3 emmitedRadiance = light.color; 
 
-                directColor += BRDF * emmitedRadiance * NdotL;
+                directColor += half3(BRDF * emmitedRadiance * NdotL);
             }
             
         
@@ -292,14 +292,14 @@ void main(
 
                         // 3. Final Integration: BRDF * Radiance * NdotL / PDF
                         // Because PDF = 1.0 / light.area, dividing by PDF means multiplying by light.area
-                        directColor += BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area;
+                        directColor += half3(BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area);
                     }
                 }
               
 
                 
             }
-            directColor /= 4.0f;
+            directColor /= 4.0h;
         }
     }
     
@@ -309,7 +309,7 @@ void main(
 
 
     // INDIRECT LIGHT
-    float3 indirectColor = float3(0.0f, 0.0f, 0.0f);
+    half3 indirectColor = half3(0.0h, 0.0h, 0.0h);
     const int MAX_BOUNCES = 4;
 
     if (payload.depth <= MAX_BOUNCES) {
@@ -357,7 +357,7 @@ void main(
          
         if (NdotL_ind > 0.0f) {
             RayPayload secondaryPayload;
-            secondaryPayload.hitColor = float3(0.0f, 0.0f, 0.0f);
+            secondaryPayload.hitColor = half3(0.0h, 0.0h, 0.0h);
             secondaryPayload.depth = payload.depth + 1;
             secondaryPayload.rngState = payload.rngState; 
 
@@ -375,12 +375,12 @@ void main(
 
             if (isSpecularBounce) {
                 // PDF for picking specular is specularChance
-                indirectColor = secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f);
+                indirectColor = half3(secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f));
             } else {
                 // PDF for picking diffuse is (1.0 - specularChance)
                 float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
                 // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
-                indirectColor = secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f);
+                indirectColor = half3(secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f));
             }
         }
                

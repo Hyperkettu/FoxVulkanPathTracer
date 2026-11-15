@@ -68,10 +68,32 @@ namespace Fox {
 							device,
 							physicalDevice,
 							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
-							surfaceFormat.format,
+							VK_FORMAT_R16G16B16A16_SFLOAT,
 							VK_IMAGE_ASPECT_COLOR_BIT);
 
-						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_RENDER_TARGET] = std::move(renderTargetTexture);
+						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET] = std::move(renderTargetTexture);
+					}
+
+					{
+						auto renderTargetTexture = std::make_unique<Fox::Graphics::Vulkan::RenderTargetTexture>(
+							device,
+							physicalDevice,
+							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
+							VK_FORMAT_R16G16B16A16_SFLOAT,
+							VK_IMAGE_ASPECT_COLOR_BIT);
+
+						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_2] = std::move(renderTargetTexture);
+					}
+
+					{
+						auto renderTargetTexture = std::make_unique<Fox::Graphics::Vulkan::RenderTargetTexture>(
+							device,
+							physicalDevice,
+							VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
+							VK_FORMAT_R16G16B16A16_SFLOAT,
+							VK_IMAGE_ASPECT_COLOR_BIT);
+
+						renderTargetTextures[Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_3] = std::move(renderTargetTexture); 
 					}
 
 

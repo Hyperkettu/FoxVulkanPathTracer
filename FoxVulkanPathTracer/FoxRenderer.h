@@ -84,6 +84,11 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Pipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/PipelineBuilder.h"
 
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/Denoiser.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/SpatiotemporalVarianceGuidedFilter.h"
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/PostProcess.h"
+
 #include "FoxVulkanPathTracer/Graphics/Geometry/GeometryGenerator.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/DescriptorManager.h"

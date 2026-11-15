@@ -122,12 +122,12 @@ namespace Fox {
 
 				raytracingScene = std::make_unique <Fox::Scene::RayTracing::MainRayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
 
-				for (auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) {
+				for (auto i = 0; i < config.MAX_FRAMES_IN_FLIGHT; i++) { 
 
 					auto frameResource = frameResources[i].get();
 
 					frameResource->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
-						VK_FORMAT_R8G8B8A8_UNORM,
+						VK_FORMAT_R16G16B16A16_SFLOAT,
 						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
 
 					VkImageMemoryBarrier barrier{
@@ -175,11 +175,6 @@ namespace Fox {
 					return 0;
 				}
 
-				std::vector<VkImageView> attachments = {
-					Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_RENDER_TARGET)->GetView(),
-					Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL)->GetView()
-				};
-
 				Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().Initialize(
 					device,
 					capabilities,
@@ -187,16 +182,19 @@ namespace Fox {
 					depthFormat
 				);
 
-
-				/*offscreenTarget = std::make_unique<Fox::Graphics::Vulkan::Framebuffer>(
-					device,
-					Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::OFFSCREEN)->Get(),
-					attachments,
-					capabilities.currentExtent.width,
-					capabilities.currentExtent.height
-				);*/
-
+				postProcessor = std::make_unique<Fox::Graphics::Vulkan::PostProcessor>(device, physicalDevice);
 				
+				uint32_t index = 0u;
+				for (auto& fr : frameResources) {
+
+					std::vector<VkImageView> attachments = {
+							Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
+							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + index))->GetView(), 
+							Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetDepthTexture(Fox::Graphics::Managers::Vulkan::DepthTexture::DEFAULT_DEPTH_STENCIL)->GetView()
+					};
+					fr->frameBuffer = std::make_unique<Fox::Graphics::Vulkan::Framebuffer>(device, Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT, attachments, capabilities.currentExtent.width, capabilities.currentExtent.height); 
+					index++;
+				}
 
 				std::cout << "Vulkan instance created successfully.\n";
 				return 1;
@@ -508,36 +506,26 @@ namespace Fox {
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 
 					.TransitionImageLayout(
-						swapchain->GetImage(imageIndex),
+						//swapchain->GetImage(imageIndex),
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
+							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + imageIndex))->GetImage(), 
 						VkImageLayout::VK_IMAGE_LAYOUT_UNDEFINED, 
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
 						subresourceRange,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT)
 
 					.CopyImage(
 						frameResource->storageTexture->GetImage(),
-						swapchain->GetImage(imageIndex),
+					//	swapchain->GetImage(imageIndex),
+						Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetRenderTargetTexture(
+							static_cast<Fox::Graphics::Managers::Vulkan::RenderTargetTexture>(static_cast<uint32_t>(Fox::Graphics::Managers::Vulkan::RenderTargetTexture::DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET) + imageIndex))->GetImage(),
 						capabilities.currentExtent.width,
-						capabilities.currentExtent.height)
-
-					.TransitionImageLayout(
-						swapchain->GetImage(imageIndex),
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-
-					.TransitionImageLayout(
-						frameResource->storageTexture->GetImage(),
-						VkImageLayout::VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-						VkImageLayout::VK_IMAGE_LAYOUT_GENERAL,
-						subresourceRange,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_TRANSFER_BIT,
-						VkPipelineStageFlagBits::VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+						capabilities.currentExtent.height) 
 					.End()
 					.Submit(graphicsQueue, frameResource->imageAvailableSemaphore->Get(), frameResource->renderFinishedSemaphore->Get(), frameResource->renderFence->Get());
+
+				postProcessor->Process(*frameResource->commandList.get(), capabilities, graphicsQueue, frameResource->renderFinishedSemaphore->Get(), swapchain, imageIndex);
 
 				Present(swapchain, imageIndex, frameResource->renderFinishedSemaphore);
 
@@ -854,7 +842,7 @@ namespace Fox {
 					fr->storageTexture = nullptr;
 
 					fr->storageTexture = std::make_unique<Fox::Graphics::Vulkan::StorageTexture>(device, physicalDevice, VkExtent3D{ .width = capabilities.currentExtent.width, .height = capabilities.currentExtent.height, .depth = 1 },
-						VK_FORMAT_R8G8B8A8_UNORM,
+						VK_FORMAT_R16G16B16A16_SFLOAT,
 						VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
 
 					VkImageMemoryBarrier barrier{

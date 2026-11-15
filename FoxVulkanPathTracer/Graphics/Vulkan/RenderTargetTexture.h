@@ -14,7 +14,7 @@ namespace Fox {
                         	VkFormat format,
                         	VkImageAspectFlags aspectFlags)
         			: Fox::Graphics::Vulkan::Texture(device, physicalDevice, extent, format,
-                  			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                  			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
                   			aspectFlags)
     				{
                     

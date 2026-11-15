@@ -20,7 +20,10 @@ namespace Fox {
 				};
 
 				enum class RenderTargetTexture : int32_t {
-					 DEFAULT_RENDER_TARGET = 0,
+					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET = 0,
+					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_2 = 1,
+					 DEFAULT_HALF_FLOATING_POINT_RENDER_TARGET_3 = 2,
+
 				};
 
 				class TextureManager : public Fox::Core::Singleton<TextureManager> {

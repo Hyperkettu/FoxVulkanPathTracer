@@ -35,6 +35,28 @@ namespace Fox {
 						builder->DestroyShaderModules();
 
 					}
+
+					{
+				//		VkDescriptorSetLayout descriptorSetLayouts = Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::POST_PROCESSOR)->GetLayout().Get();
+
+						std::unique_ptr<Fox::Graphics::Vulkan::PipelineLayout> postProcessorPipelineLayout = std::make_unique<Fox::Graphics::Vulkan::PipelineLayout>(device,
+							std::vector<VkDescriptorSetLayout>{ },
+							std::vector<VkPushConstantRange>{});
+
+						std::unique_ptr<Fox::Graphics::Vulkan::Pipeline> postProcessorPipeline = std::make_unique<Fox::Graphics::Vulkan::Pipeline>(Fox::Graphics::Vulkan::PipelineBuilder(device)
+							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::MESH_SHADER, "Shaders/post_processor.spv")
+							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::FRAGMENT_SHADER, "Shaders/post_processor_frag.spv")
+							.WithViewport(0.0f, 0.0f, static_cast<float>(capabilities.currentExtent.width), static_cast<float>(capabilities.currentExtent.height), 0.0f, 1.0f)
+							.WithScissor(0, 0, capabilities.currentExtent.width, capabilities.currentExtent.height)
+							.SetLayout(postProcessorPipelineLayout->Get())
+							.SetRenderPass(Fox::Graphics::Managers::Vulkan::RenderPassManager::Get().GetPass(Fox::Graphics::Managers::Vulkan::RenderPass::DEFAULT)->Get())
+							.Build());
+
+						pipelines[Fox::Graphics::Managers::Vulkan::PipelineCategory::POST_PROCESSOR] = std::move(postProcessorPipeline);
+						pipelineLayouts[Fox::Graphics::Managers::Vulkan::PipelineCategory::POST_PROCESSOR] = std::move(postProcessorPipelineLayout);
+
+					}
+
 						return true;
 					
 					}

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -106,13 +106,13 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer;C:\VulkanSDK\1.4.328.1\Include;D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.328.1\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\VulkanSDK\1.4.313.2\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>SDL2.lib;SDL2main.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer;C:\VulkanSDK\1.4.328.1\Include;D:\Olli\Ohjelmointi\Cpp\Visual_Studio\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Olli\Ohjelmointi\Cpp\Visual_Studio\2022\FoxVulkanPathTracer;C:\VulkanSDK\1.4.313.2\Include;C:\Olli\Ohjelmointi\Cpp\Visual_Studio\\2022\FoxVulkanPathTracer\FoxVulkanPathTracer;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -175,8 +175,10 @@
     <ClCompile Include="Graphics\Vulkan\Pipeline.cpp" />
     <ClCompile Include="Graphics\Vulkan\PipelineBuilder.cpp" />
     <ClCompile Include="Graphics\Vulkan\PipelineLayout.cpp" />
+    <ClCompile Include="Graphics\Vulkan\PostProcess.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\SpatiotemporalVarianceGuidedFilter.cpp" />
     <ClCompile Include="Graphics\Vulkan\RenderPass.cpp" />
     <ClCompile Include="Graphics\Vulkan\RenderPassBuilder.cpp" />
     <ClCompile Include="Graphics\Vulkan\RenderTargetTexture.cpp" />
@@ -209,6 +211,7 @@
     <ClInclude Include="Core\TinyGLTF\stb_image_write.h" />
     <ClInclude Include="Core\TinyGLTF\tinygltf.h" />
     <ClInclude Include="FoxRenderer.h" />
+    <ClInclude Include="Graphics\Enums\PipelineShaderStage.h" />
     <ClInclude Include="Graphics\Geometry\GeometryGenerator.h" />
     <ClInclude Include="Graphics\Geometry\Submesh.h" />
     <ClInclude Include="Graphics\Geometry\Vulkan\Mesh.h" />
@@ -242,10 +245,13 @@
     <ClInclude Include="Graphics\Vulkan\Pipeline.h" />
     <ClInclude Include="Graphics\Vulkan\PipelineBuilder.h" />
     <ClInclude Include="Graphics\Vulkan\PipelineLayout.h" />
+    <ClInclude Include="Graphics\Vulkan\PostProcess.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccelerationStructure.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\Denoiser.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingInstance.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\SpatiotemporalVarianceGuidedFilter.h" />
     <ClInclude Include="Graphics\Vulkan\RenderPass.h" />
     <ClInclude Include="Graphics\Vulkan\RenderPassBuilder.h" />
     <ClInclude Include="Graphics\Vulkan\RenderTargetTexture.h" />
