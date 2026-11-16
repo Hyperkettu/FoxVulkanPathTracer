@@ -1,13 +1,14 @@
 #include "FoxRenderer.h"
 
 #include <map>
+#include <chrono>
 
 namespace Fox {
     namespace Graphics {
         namespace Geometry {
             namespace Vulkan {
 
-                void Mesh::LoadFromGLTF(const std::string& filePath) {  
+                void Mesh::LoadFromGLTF(const std::string& filePath, const Fox::Graphics::Geometry::DisplacementSettings& displacement) {
                     std::vector<Fox::Core::Loaders::GLTF::VertexData> vertices;
                     std::vector<uint32_t> indices;
                     std::vector<Fox::Core::Loaders::GLTF::MaterialData> materials;
@@ -19,6 +20,17 @@ namespace Fox {
 
                     if (!Fox::Core::Loaders::GLTF::GLTFLoader::LoadGLTFBinaryFile(filePath, vertices, indices, materials, textures, lights, cameras, instances, submeshes)) {
                         throw std::runtime_error("Failed to load model: " + filePath);
+                    }
+
+                    if (displacement.enabled) {
+                        const auto start = std::chrono::steady_clock::now();
+                        const Fox::Graphics::Geometry::DisplacementStats stats =
+                            Fox::Graphics::Geometry::ApplyDisplacement(displacement, vertices, indices, submeshes, instances, materials, textures);
+                        const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+
+                        std::cout << "Displacement (" << filePath << "): " << stats.displacedMaterials << " materials, "
+                            << stats.trianglesBefore << " -> " << stats.trianglesAfter << " triangles, edge length "
+                            << stats.edgeLength << ", " << seconds << " s\n";
                     }
 
                     this->vertices.clear();

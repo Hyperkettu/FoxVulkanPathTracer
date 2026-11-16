@@ -41,6 +41,7 @@ namespace Fox {
                 };
 
                 struct MaterialData {
+                    std::string name;
                     float baseColorFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
                     int baseColorTextureIndex = -1;
                     float emissiveFactor[3] = { 0.0f, 0.0f, 0.0f };

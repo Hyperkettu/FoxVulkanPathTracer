@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FoxVulkanPathTracer/Core/Loaders/GLTFLoader.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/Displacement.h"
 
 namespace Fox {
 
@@ -33,7 +34,9 @@ namespace Fox {
 						: vertices(vertices), indices(indices) {
 					} 
 
-					void LoadFromGLTF(const std::string& filePath);
+					// Loads a .glb / .gltf file. With displacement enabled, surfaces that have a height source are
+					// tessellated and displaced while loading (see Displacement.h).
+					void LoadFromGLTF(const std::string& filePath, const Fox::Graphics::Geometry::DisplacementSettings& displacement = {});
 
 
 					void AddTriangle(const Fox::Graphics::Vulkan::Vertex& v0, const Fox::Graphics::Vulkan::Vertex& v1, const Fox::Graphics::Vulkan::Vertex& v2)

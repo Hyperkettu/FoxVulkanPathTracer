@@ -27,7 +27,15 @@ namespace Fox {
 				// The meshes are only needed while the scene is assembled: AddMesh copies their
 				// geometry, and the textures are owned by the TextureManager.
 				Mesh cabin(device, physicalDevice, queue, queueFamily);
-				cabin.LoadFromGLTF("Models/cabin.glb");
+
+				// Displacement: the cabin file has no height maps (glTF cannot carry them), so the relief of
+				// its stones, logs and shingles is reconstructed from the normal maps. To use real height maps
+				// instead, assign them per material name:
+				//   cabinDisplacement.heightMaps["concrete_pebbles.001"] = { "Textures/pebbles_height.png", 0.05f };
+				Fox::Graphics::Geometry::DisplacementSettings cabinDisplacement;
+				cabinDisplacement.enabled = true;
+
+				cabin.LoadFromGLTF("Models/cabin.glb", cabinDisplacement);
 
 				Mesh box(device, physicalDevice, queue, queueFamily);
 				box.LoadFromGLTF("Models/box.glb");

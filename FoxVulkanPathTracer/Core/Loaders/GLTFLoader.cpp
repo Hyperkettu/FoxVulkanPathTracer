@@ -328,6 +328,8 @@ namespace Fox {
                             const auto& mat = model.materials[primitive.material];
                             const auto& pbr = mat.pbrMetallicRoughness;
 
+                            currentMaterial.name = mat.name;
+
                             for (int c = 0; c < 4; c++) {
                                 currentMaterial.baseColorFactor[c] = static_cast<float>(pbr.baseColorFactor[c]);
                             }

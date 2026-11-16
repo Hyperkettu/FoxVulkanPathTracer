@@ -148,6 +148,16 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="Graphics\Geometry\Displacement.cpp">
+      <!-- Optimized even in Debug: unoptimized, the tessellation makes loading take half a minute.
+           Needs its own compile without the precompiled header, which carries the Debug options. -->
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">MaxSpeed</Optimization>
+      <BasicRuntimeChecks Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Default</BasicRuntimeChecks>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <DebugInformationFormat Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">ProgramDatabase</DebugInformationFormat>
+      <SupportJustMyCode Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</SupportJustMyCode>
+      <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">AnySuitable</InlineFunctionExpansion>
+    </ClCompile>
     <ClCompile Include="Graphics\Geometry\GeometryGenerator.cpp" />
     <ClCompile Include="Graphics\Geometry\Vulkan\Mesh.cpp" />
     <ClCompile Include="Graphics\Managers\Vulkan\DescriptorManager.cpp" />
@@ -217,6 +227,7 @@
     <ClInclude Include="Core\TinyGLTF\tinygltf.h" />
     <ClInclude Include="FoxRenderer.h" />
     <ClInclude Include="Graphics\Enums\PipelineShaderStage.h" />
+    <ClInclude Include="Graphics\Geometry\Displacement.h" />
     <ClInclude Include="Graphics\Geometry\GeometryGenerator.h" />
     <ClInclude Include="Graphics\Geometry\Submesh.h" />
     <ClInclude Include="Graphics\Geometry\Vulkan\Mesh.h" />

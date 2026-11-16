@@ -24,6 +24,9 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   Supports base colour, metallic-roughness, normal and emissive textures and `KHR_texture_transform`,
   `KHR_materials_transmission`, `KHR_materials_specular`, `KHR_materials_emissive_strength`.
 * **Lighting** Importance-sampled HDR environment map, emissive quads as area lights and a sun with soft shadows.
+* **Displacement Mapping** Surfaces are tessellated and displaced when a model loads, so the relief is real geometry
+  (silhouettes, shadows, reflections). Height maps can be assigned per material; models without them (glTF has no slot
+  for displacement) get heights reconstructed from their normal maps.
 * **Denoising** Pluggable denoisers, switchable at runtime:
   * **DLSS Ray Reconstruction** (NVIDIA, optional): neural denoising + anti-aliasing with the newest transformer model.
   * **SVGF** (Spatiotemporal Variance-Guided Filtering): temporal reprojection + variance-guided a-trous wavelet filter, in compute shaders.
@@ -63,6 +66,30 @@ The SDK is not part of this repository (it is listed in `.gitignore`) and is cov
 The build copies `nvngx_dlssd.dll` next to the executable. At runtime it needs an RTX GPU and a current driver;
 if DLSS is unavailable the renderer says so on the console and starts with SVGF instead.
 
+### Displacement mapping
+
+Displacement is applied while a model loads (`Graphics/Geometry/Displacement.h`) and is configured per model, see
+`MainRayTracingScene.cpp`. The glTF format has no displacement map slot, so the height source of each material is:
+
+1. **A height map file**, assigned by glTF material name:
+   ```cpp
+   settings.heightMaps["stone_walls.003"] = { "Textures/stone_walls_height.png", 0.05f /* depth in meters */, 0.5f /* midlevel */ };
+   ```
+2. **Otherwise its normal map**: the relief the normal map describes is reconstructed by integrating its slopes
+   (Frankot–Chellappa, in the frequency domain). This is what the cabin uses, as its file ships without height maps.
+
+Main settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `targetEdgeLength` | 0.03 | Finest triangle edge length in meters |
+| `maxTriangles` | 4 000 000 | Budget for the displaced surfaces of one model. It goes where it buys the most visible relief |
+| `derivedStrength` | 1.0 | Multiplier for reconstructed heights (1 = what the normal map describes) |
+| `derivedMaxHeight` | 0.06 | Cap for reconstructed heights in meters |
+
+More triangles give finer relief but cost frame rate and load time. Heights are prefiltered to the triangle size, so a
+coarse tessellation shows smooth large-scale relief instead of noise.
+
 ### Adding a denoiser
 
 Derive from `Denoiser` (`Graphics/Vulkan/Raytracing/Denoiser.h`), implement `Resize` / `Denoise` / `GetOutputView`, and register the class in
@@ -97,7 +124,7 @@ Below is the active development checklist for the renderer.
 - [ ] Refraction and Fresnel effects
 - [x] Recursive BRDF evaluation / ray depth handling
 - [x] Normal mapping
-- [ ] Displacement mapping
+- [x] Displacement mapping
 - [x] Denoiser integration (SVGF & DLSS Ray Reconstruction)
 
 ### ⛰️ Procedural & Special Effects
