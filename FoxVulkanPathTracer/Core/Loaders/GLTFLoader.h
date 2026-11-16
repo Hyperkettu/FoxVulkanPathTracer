@@ -21,6 +21,7 @@ namespace Fox {
                     float position[3];
                     float normal[3];
                     float texCoord[2];
+                    float tangent[4] = { 0.0f, 0.0f, 0.0f, 0.0f }; // xyz + handedness; all zero if the file has none
                 };
 
                 struct SubmeshData {
@@ -44,10 +45,22 @@ namespace Fox {
                     int baseColorTextureIndex = -1;
                     float emissiveFactor[3] = { 0.0f, 0.0f, 0.0f };
                     int emissiveTextureIndex = -1;
-                    float emissiveStrength = 1.0f; 
+                    float emissiveStrength = 1.0f;
                     float roughnessFactor = 1.0f;
                     float metallicFactor = 1.0f;
                     int metallicRoughnessTextureIndex = -1;
+
+                    int normalTextureIndex = -1;
+                    float normalScale = 1.0f;
+
+                    float transmissionFactor = 0.0f; // KHR_materials_transmission
+                    float specularFactor = 1.0f;     // KHR_materials_specular
+
+                    // KHR_texture_transform of the base colour texture, applied to all textures of the material
+                    float uvScale[2] = { 1.0f, 1.0f };
+                    float uvRotation = 0.0f;
+
+                    int lightIndex = -1; // Index into the light list if this surface is also sampled as a light
                 };
 
                 enum class LightType { Directional, Point, Spot, QuadAreaLight };

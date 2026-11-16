@@ -6,15 +6,29 @@
 
 static const float PI = 3.14159265359f;
 
-// Number of indirect bounces after the primary hit. The ray tracing pipeline is created with
-// maxPipelineRayRecursionDepth = MAX_BOUNCES + 1 (see PipelineManager.cpp) - keep them in sync.
-static const int MAX_BOUNCES = 4;
+// Instance visibility bits, must match RayTracingScene::INSTANCE_MASK_* (RaytracingScene.h)
+static const uint INSTANCE_MASK_OPAQUE = 0x01;
+static const uint INSTANCE_MASK_GLASS = 0x02;
+static const uint INSTANCE_MASK_ALL = 0xFF;
 
-struct RayPayload
+// What the closest hit shader reports back to the path tracer in raygen.slang: a description
+// of the surface at the hit point. All shading happens in the ray generation shader, so rays
+// never recurse (the pipeline is created with a recursion depth of 1).
+struct HitPayload
 {
-    half3 hitColor;
-    int depth;
-    uint rngState;
+    float hitT;              // Distance along the ray, negative if the ray left the scene
+
+    float3 geometricNormal;  // World space normal of the triangle
+    float3 shadingNormal;    // World space normal after interpolation and normal mapping
+
+    float3 baseColor;
+    float metallic;
+    float roughness;         // Perceptual roughness as authored (0 = mirror, 1 = fully rough)
+    float transmission;      // 1 = thin clear glass
+    float specularWeight;    // Scales the dielectric specular reflection
+
+    float3 emission;         // Emitted radiance
+    int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1
 };
 
 // Mirrors Fox::Graphics::Vulkan::CameraUBO (ConstantBuffers.h).
@@ -24,10 +38,21 @@ struct Camera
     float3 camForward;
     float3 camRight;
     float3 camUp;
+
+    // The same vectors for the previous frame, used to compute motion vectors
+    float3 prevCamPos;
+    float3 prevCamForward;
+    float3 prevCamRight;
+    float3 prevCamUp;
+
     float2 resolution;
+    float2 jitter;          // Sub-pixel offset of the primary ray from the pixel center, in pixels
     uint frameIndex;        // Monotonic frame counter, used to decorrelate the RNG between frames
     uint lightCount;        // Number of valid entries in the light buffer
-    uint accumulatedFrames; // Frames already blended into the accumulation image (0 = restart)
+    float tanHalfFov;       // tan(vertical field of view / 2)
+    uint samplesPerPixel;   // Paths traced per pixel and frame
+    uint jitterAllSamples;  // 1: every path uses `jitter`, 0: paths after the first are spread over the pixel
+    uint gbufferFollowsReflections; // 1: the G-buffer describes what is seen in a mirror instead of the mirror
 };
 
 // Core PCG hash function (transforms a 32-bit state)
@@ -51,6 +76,13 @@ float NextRandomFloat(inout uint state)
     return float(NextRandomUInt(state) >> 8u) * (1.0f / 16777216.0f);
 }
 
+float2 NextRandomFloat2(inout uint state)
+{
+    float a = NextRandomFloat(state);
+    float b = NextRandomFloat(state);
+    return float2(a, b);
+}
+
 // Hashes the pixel coordinate and frame index into an initial RNG state
 uint InitializePixelSeed(uint2 pixel, uint frameIndex)
 {
@@ -59,6 +91,34 @@ uint InitializePixelSeed(uint2 pixel, uint frameIndex)
     seed = (seed ^ (seed >> 16u)) * 747796405u;
     seed = (seed ^ (seed >> 16u)) * 747796405u;
     return seed ^ (seed >> 16u);
+}
+
+float Luminance(float3 color)
+{
+    return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+}
+
+float MaxComponent(float3 v)
+{
+    return max(v.x, max(v.y, v.z));
+}
+
+// Builds an orthonormal basis around a unit vector (Duff et al., "Building an Orthonormal Basis, Revisited")
+void BuildBasis(float3 n, out float3 tangent, out float3 bitangent)
+{
+    float s = n.z >= 0.0f ? 1.0f : -1.0f;
+    float a = -1.0f / (s + n.z);
+    float b = n.x * n.y * a;
+    tangent = float3(1.0f + s * n.x * n.x * a, s * b, -s * n.x);
+    bitangent = float3(b, s + n.y * n.y * a, -n.y);
+}
+
+// Balance between two sampling strategies for multiple importance sampling
+float PowerHeuristic(float pdfA, float pdfB)
+{
+    float a = pdfA * pdfA;
+    float b = pdfB * pdfB;
+    return a / max(a + b, 1e-12f);
 }
 
 #endif

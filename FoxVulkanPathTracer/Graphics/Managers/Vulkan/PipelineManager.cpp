@@ -43,7 +43,7 @@ namespace Fox {
 
 						std::unique_ptr<Fox::Graphics::Vulkan::PipelineLayout> postProcessorPipelineLayout = std::make_unique<Fox::Graphics::Vulkan::PipelineLayout>(device,
 							std::vector<VkDescriptorSetLayout>{ toneMappingLayout },
-							std::vector<VkPushConstantRange>{});
+							std::vector<VkPushConstantRange>{ { VK_SHADER_STAGE_FRAGMENT_BIT, 0, Fox::Graphics::Vulkan::PostProcessor::PUSH_CONSTANT_SIZE } });
 
 						std::unique_ptr<Fox::Graphics::Vulkan::Pipeline> postProcessorPipeline = std::make_unique<Fox::Graphics::Vulkan::Pipeline>(Fox::Graphics::Vulkan::PipelineBuilder(device)
 							.WithShader(Fox::Graphics::Enums::PipelineShaderStage::MESH_SHADER, "Shaders/tonemapping_mesh.spv")

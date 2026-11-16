@@ -21,6 +21,7 @@
 #include <glm/glm.hpp>
 #include<glm/gtx/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include "STB_image/stb_image.h"
 
@@ -84,8 +85,14 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Pipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/PipelineBuilder.h"
 
+#include "FoxVulkanPathTracer/Graphics/Vulkan/DeviceContext.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/ComputePass.h"
+
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/GBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/Denoiser.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccumulationDenoiser.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/SpatiotemporalVarianceGuidedFilter.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/DlssRayReconstruction.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/PostProcess.h"
 

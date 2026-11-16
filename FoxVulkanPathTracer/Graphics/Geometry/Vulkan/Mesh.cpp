@@ -24,7 +24,7 @@ namespace Fox {
                     this->vertices.clear();
                     this->vertices.reserve(vertices.size());
                     for (const auto& v : vertices) {
-                        Fox::Graphics::Vulkan::Vertex vertex;
+                        Fox::Graphics::Vulkan::Vertex vertex{};
                         vertex.position[0] = v.position[0];
                         vertex.position[1] = v.position[1];
                         vertex.position[2] = v.position[2];
@@ -33,6 +33,7 @@ namespace Fox {
                         vertex.normal[0] = v.normal[0];
                         vertex.normal[1] = v.normal[1];
                         vertex.normal[2] = v.normal[2];
+                        std::memcpy(vertex.tangent, v.tangent, sizeof(vertex.tangent));
                         this->vertices.push_back(vertex);
                     }
 
@@ -62,23 +63,13 @@ namespace Fox {
                         textureMap[textureSlot++] = static_cast<int>(Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(std::move(texture)));
                     }
 
-                    for (auto i = 0; i < materials.size(); i++) {
-                        Fox::Graphics::Vulkan::Material mat;
-                        mat.albedo = glm::vec4(materials[i].baseColorFactor[0], materials[i].baseColorFactor[1], materials[i].baseColorFactor[2], materials[i].baseColorFactor[3]);
-                        mat.roughnessMetallic = glm::vec2(materials[i].roughnessFactor, materials[i].metallicFactor);
+                    // Lights first: materials refer to them by index, and unsupported lights are dropped.
+                    std::map<int, int> lightMap;
+                    lightMap[-1] = -1;
 
-                        mat.albedoTextureIndex = textureMap[materials[i].baseColorTextureIndex];
-                        mat.roughnessMetallicTextureIndex = textureMap[materials[i].metallicRoughnessTextureIndex];
-
-                        mat.emissiveColor = glm::vec3(materials[i].emissiveFactor[0], materials[i].emissiveFactor[1], materials[i].emissiveFactor[2]);
-                        mat.emissiveTextureIndex = textureMap[materials[i].emissiveTextureIndex];
-                        mat.intensity = materials[i].emissiveStrength;
-
-                        this->materials.push_back(mat);
-                    }
-
-                    for (auto i = 0; i < lights.size(); i++) {
-                        auto light = lights[i];
+                    for (size_t i = 0; i < lights.size(); i++) {
+                        const auto& light = lights[i];
+                        lightMap[static_cast<int>(i)] = -1;
 
                         Fox::Graphics::Vulkan::Light l{};
                         l.type = static_cast<int>(light.type);
@@ -96,15 +87,42 @@ namespace Fox {
                             l.normal = -glm::normalize(glm::vec3(light.direction[0], light.direction[1], light.direction[2]));
                         }
                         else {
-                            // Point and spot lights are parsed but not shaded yet (see closest_hit.slang).
+                            // Point and spot lights are parsed but not shaded yet (see lights.slang).
                             continue;
                         }
 
+                        lightMap[static_cast<int>(i)] = static_cast<int>(this->lights.size());
                         this->lights.push_back(l);
                     }
 
+                    for (const auto& source : materials) {
+                        Fox::Graphics::Vulkan::Material mat;
 
-               
+                        std::memcpy(mat.baseColor, source.baseColorFactor, sizeof(mat.baseColor));
+
+                        for (int c = 0; c < 3; c++) {
+                            mat.emissive[c] = source.emissiveFactor[c] * source.emissiveStrength;
+                        }
+
+                        mat.roughness = source.roughnessFactor;
+                        mat.metallic = source.metallicFactor;
+                        mat.transmission = source.transmissionFactor;
+                        mat.specularWeight = source.specularFactor;
+                        mat.normalScale = source.normalScale;
+
+                        mat.baseColorTexture = textureMap[source.baseColorTextureIndex];
+                        mat.metallicRoughnessTexture = textureMap[source.metallicRoughnessTextureIndex];
+                        mat.normalTexture = textureMap[source.normalTextureIndex];
+                        mat.emissiveTexture = textureMap[source.emissiveTextureIndex];
+
+                        mat.uvScale[0] = source.uvScale[0];
+                        mat.uvScale[1] = source.uvScale[1];
+                        mat.uvRotation = source.uvRotation;
+
+                        mat.lightIndex = lightMap[source.lightIndex];
+
+                        this->materials.push_back(mat);
+                    }
                 }
 
             }

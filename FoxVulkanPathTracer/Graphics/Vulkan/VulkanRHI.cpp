@@ -18,19 +18,36 @@ namespace Fox {
 					// Ray tracing
 					VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
 					VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-					VK_KHR_RAY_QUERY_EXTENSION_NAME,
 					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
 				};
 
-				const VkFormat ACCUMULATION_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // Must match raygen.slang
+				// Van der Corput radical inverse, the building block of the Halton sequence
+				float RadicalInverse(uint32_t index, uint32_t base) {
+					float result = 0.0f;
+					float fraction = 1.0f / static_cast<float>(base);
+					while (index > 0) {
+						result += static_cast<float>(index % base) * fraction;
+						index /= base;
+						fraction /= static_cast<float>(base);
+					}
+					return result;
+				}
 
-				const VkImageSubresourceRange COLOR_SUBRESOURCE_RANGE = {
-					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-					.baseMipLevel = 0,
-					.levelCount = 1,
-					.baseArrayLayer = 0,
-					.layerCount = 1
-				};
+				// Adds the optional extensions that exist (and are not listed yet) to enabled.
+				// The strings in optional must outlive the use of enabled.
+				void AppendSupportedExtensions(std::vector<const char*>& enabled, const std::vector<std::string>& optional, const std::vector<VkExtensionProperties>& available) {
+					for (const std::string& name : optional) {
+						const bool isAvailable = std::any_of(available.begin(), available.end(),
+							[&name](const VkExtensionProperties& extension) { return name == extension.extensionName; });
+
+						const bool isEnabled = std::any_of(enabled.begin(), enabled.end(),
+							[&name](const char* extension) { return name == extension; });
+
+						if (isAvailable && !isEnabled) {
+							enabled.push_back(name.c_str());
+						}
+					}
+				}
 
 				bool SupportsExtensions(VkPhysicalDevice physicalDevice, const std::vector<const char*>& required) {
 					uint32_t count = 0;
@@ -55,6 +72,12 @@ namespace Fox {
 					VkDebugUtilsMessageTypeFlagsEXT type,
 					const VkDebugUtilsMessengerCallbackDataEXT* callbackData,
 					void* userData) {
+
+					// NVIDIA NGX (DLSS) uses some of its own internal images before giving them a layout, right
+					// after a feature is created. The images are named by NGX; nothing the renderer can change.
+					if (strstr(callbackData->pMessage, "[nv.ngx.") != nullptr) {
+						return VK_FALSE;
+					}
 
 					const char* severityName = (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) ? "ERROR" : "WARNING";
 
@@ -146,7 +169,15 @@ namespace Fox {
 
 				raytracingScene = std::make_unique<Fox::Scene::RayTracing::MainRayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
 
-				CreateAccumulationTexture();
+				deviceContext.instance = instance;
+				deviceContext.physicalDevice = physicalDevice;
+				deviceContext.device = device;
+				deviceContext.graphicsQueue = graphicsQueue;
+				deviceContext.graphicsQueueFamily = graphicsQueueFamily;
+				deviceContext.setupCommandPool = setupCommandPool;
+
+				CreateGBuffer();
+				denoisers = RayTracing::CreateDenoisers(deviceContext);
 
 				Managers::DescriptorManager::Get().Initialize(device, config);
 				CreateFrameDescriptors();
@@ -154,7 +185,7 @@ namespace Fox {
 				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities);
 
 				postProcessor = std::make_unique<PostProcessor>(device);
-				BindAccumulationTexture();
+				BindGBuffer();
 
 				std::cout << "Vulkan renderer initialized (" << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ").\n";
 				return true;
@@ -174,7 +205,8 @@ namespace Fox {
 
 					postProcessor = nullptr;
 					renderFinishedSemaphores.clear();
-					accumulationTexture = nullptr;
+					denoisers.clear();
+					gbuffer = nullptr;
 					swapchain = nullptr;
 					raytracingScene = nullptr;
 
@@ -214,8 +246,19 @@ namespace Fox {
 				VkInstanceCreateInfo instanceCreateInfo{};
 				instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 				instanceCreateInfo.pApplicationInfo = &appInfo;
-				instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(config.instanceExtensions.size());
-				instanceCreateInfo.ppEnabledExtensionNames = config.instanceExtensions.data();
+				// Extensions the window system needs, plus whatever the denoisers can make use of
+				std::vector<const char*> extensions = config.instanceExtensions;
+
+				uint32_t availableCount = 0;
+				vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, nullptr);
+				std::vector<VkExtensionProperties> available(availableCount);
+				vkEnumerateInstanceExtensionProperties(nullptr, &availableCount, available.data());
+
+				optionalInstanceExtensions = RayTracing::GetDenoiserInstanceExtensions();
+				AppendSupportedExtensions(extensions, optionalInstanceExtensions, available);
+
+				instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+				instanceCreateInfo.ppEnabledExtensionNames = extensions.data();
 				instanceCreateInfo.enabledLayerCount = static_cast<uint32_t>(config.layers.size());
 				instanceCreateInfo.ppEnabledLayerNames = config.layers.data();
 
@@ -288,13 +331,8 @@ namespace Fox {
 				// Feature chain. Everything here is used by the shaders or the acceleration structure code.
 				// Features that were promoted to core are enabled through the Vulkan 1.x feature structs,
 				// which is why the matching extensions are not listed in REQUIRED_DEVICE_EXTENSIONS.
-				VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
-				rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-				rayQueryFeatures.rayQuery = VK_TRUE; // Inline shadow rays in closest_hit.slang
-
 				VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingFeatures{};
 				raytracingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-				raytracingFeatures.pNext = &rayQueryFeatures;
 				raytracingFeatures.rayTracingPipeline = VK_TRUE;
 
 				VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{};
@@ -329,8 +367,19 @@ namespace Fox {
 				deviceCreateInfo.pNext = &vulkan12Features;
 				deviceCreateInfo.queueCreateInfoCount = 1;
 				deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-				deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size());
-				deviceCreateInfo.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data();
+				// Required extensions, plus whatever the denoisers can make use of
+				std::vector<const char*> extensions = REQUIRED_DEVICE_EXTENSIONS;
+
+				uint32_t availableCount = 0;
+				vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableCount, nullptr);
+				std::vector<VkExtensionProperties> available(availableCount);
+				vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableCount, available.data());
+
+				optionalDeviceExtensions = RayTracing::GetDenoiserDeviceExtensions(instance, physicalDevice);
+				AppendSupportedExtensions(extensions, optionalDeviceExtensions, available);
+
+				deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+				deviceCreateInfo.ppEnabledExtensionNames = extensions.data();
 
 				return vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) == VK_SUCCESS;
 			}
@@ -438,27 +487,9 @@ namespace Fox {
 				}
 			}
 
-			void VulkanRHI::CreateAccumulationTexture() {
-				accumulationTexture = std::make_unique<StorageTexture>(
-					device,
-					physicalDevice,
-					VkExtent3D{ capabilities.currentExtent.width, capabilities.currentExtent.height, 1 },
-					ACCUMULATION_FORMAT,
-					VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-					VK_IMAGE_ASPECT_COLOR_BIT);
-
-				// The image stays in GENERAL for its whole life: it is written as a storage image by the
-				// ray generation shader and sampled by the tone mapping pass within the same frame.
-				CommandList commandList(device, frameResources[0]->commandPool->Get());
-				commandList.Begin()
-					.ImageBarrier(accumulationTexture->GetImage(), COLOR_SUBRESOURCE_RANGE,
-						VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-						0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-						VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
-					.End()
-					.SubmitAndWait(graphicsQueue);
-
-				ResetAccumulation();
+			void VulkanRHI::CreateGBuffer() {
+				gbuffer = std::make_unique<RayTracing::GBuffer>(deviceContext, capabilities.currentExtent);
+				ResetHistory();
 			}
 
 			void VulkanRHI::CreateFrameDescriptors() {
@@ -473,9 +504,14 @@ namespace Fox {
 						descriptorManager.GetDescriptorSet(Managers::Descriptor::RAY_TRACING)->AllocateSet());
 
 					auto& set = frameResource->perFrameDescriptorSet;
-					set->Reserve(8);
+					set->Reserve(13);
 					set->SetAccelerationStructure(0, tlas);
-					set->SetStorageImage(1, accumulationTexture->GetView());
+					set->SetStorageImage(1, gbuffer->radiance->GetView());
+					set->SetStorageImage(8, gbuffer->albedo->GetView());
+					set->SetStorageImage(9, gbuffer->normalDepth->GetView());
+					set->SetStorageImage(10, gbuffer->motion->GetView());
+					set->SetStorageImage(11, gbuffer->specular->GetView());
+					set->SetStorageBuffer(12, textureManager.environmentSamplingTable->GetBufferUnique());
 					set->SetConstantBuffer(2, frameResource->camUBO);
 					set->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
 					set->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
@@ -502,15 +538,72 @@ namespace Fox {
 				textureManager.UpdateEnvironment();
 			}
 
-			void VulkanRHI::BindAccumulationTexture() {
+			void VulkanRHI::BindGBuffer() {
 				for (auto& frameResource : frameResources) {
 					auto& set = frameResource->perFrameDescriptorSet;
 					set->ClearWrites();
-					set->SetStorageImage(1, accumulationTexture->GetView());
+					set->Reserve(5);
+					set->SetStorageImage(1, gbuffer->radiance->GetView());
+					set->SetStorageImage(8, gbuffer->albedo->GetView());
+					set->SetStorageImage(9, gbuffer->normalDepth->GetView());
+					set->SetStorageImage(10, gbuffer->motion->GetView());
+					set->SetStorageImage(11, gbuffer->specular->GetView());
 					set->Update();
 				}
 
-				postProcessor->SetInput(accumulationTexture->GetView(), VK_IMAGE_LAYOUT_GENERAL);
+				for (auto& denoiser : denoisers) {
+					denoiser->Resize(*gbuffer);
+				}
+
+				SelectDenoiser(activeDenoiser);
+			}
+
+			void VulkanRHI::SelectDenoiser(size_t index) {
+				// The tone mapping descriptor set is about to change, no frame may still be using it
+				vkDeviceWaitIdle(device);
+
+				activeDenoiser = index % denoisers.size();
+				RayTracing::Denoiser& denoiser = *denoisers[activeDenoiser];
+
+				postProcessor->SetInput(denoiser.GetOutputView(), VK_IMAGE_LAYOUT_GENERAL);
+				ResetHistory();
+
+				std::cout << "Denoiser: " << denoiser.GetName() << "\n";
+				UpdateWindowTitle(0.0f);
+			}
+
+			void VulkanRHI::UpdateWindowTitle(float deltaTime) {
+				// Average the frame rate over half a second so the number is readable
+				titleTimer += deltaTime;
+				titleFrames++;
+
+				if (deltaTime > 0.0f && titleTimer < 0.5f) {
+					return;
+				}
+
+				std::ostringstream title;
+				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << samplesPerPixel << " spp";
+				if (titleTimer > 0.0f) {
+					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps";
+				}
+
+				SDL_SetWindowTitle(static_cast<SDL_Window*>(config.windowHandle), title.str().c_str());
+
+				titleTimer = 0.0f;
+				titleFrames = 0;
+			}
+
+			glm::vec2 VulkanRHI::NextJitter() const {
+				switch (denoisers[activeDenoiser]->GetJitterMode()) {
+				case RayTracing::JitterMode::Random:
+					// Scrambled Halton: effectively random, but covers the pixel evenly over time
+					return glm::vec2(RadicalInverse(frameCounter + 1, 2), RadicalInverse(frameCounter + 1, 3)) - 0.5f;
+				case RayTracing::JitterMode::Halton:
+					// Short repeating sequence, as temporal upscalers expect
+					return glm::vec2(RadicalInverse(frameCounter % 32 + 1, 2), RadicalInverse(frameCounter % 32 + 1, 3)) - 0.5f;
+				default:
+					return glm::vec2(0.0f);
+				}
 			}
 
 			// ------------------------------------------------------------------------------------
@@ -524,6 +617,7 @@ namespace Fox {
 				}
 
 				HandleCameraInput(deltaTime);
+				UpdateWindowTitle(deltaTime);
 
 				FrameResource& frameResource = *frameResources[currentFrame];
 
@@ -541,7 +635,7 @@ namespace Fox {
 				frameResource.renderFence->Reset();
 				frameResource.commandPool->Reset();
 
-				UpdateCameraUniforms(frameResource);
+				UpdateCameraUniforms(frameResource, deltaTime);
 				RecordFrame(frameResource, imageIndex);
 
 				const VkSemaphore renderFinished = renderFinishedSemaphores[imageIndex]->Get();
@@ -578,29 +672,58 @@ namespace Fox {
 				if (inputManager->IsKeyDown(SDL_SCANCODE_F)) camera->MoveDown(distance);
 			}
 
-			void VulkanRHI::UpdateCameraUniforms(FrameResource& frameResource) {
+			void VulkanRHI::UpdateCameraUniforms(FrameResource& frameResource, float deltaTime) {
 				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
 
-				// The accumulated image is only valid for a static view: start over as soon as the camera moves
-				if (camera->GetPosition() != lastCameraPosition || camera->GetForward() != lastCameraForward) {
-					ResetAccumulation();
-					lastCameraPosition = camera->GetPosition();
-					lastCameraForward = camera->GetForward();
-				}
+				CameraState current{};
+				current.position = camera->GetPosition();
+				current.forward = camera->GetForward();
+				current.right = camera->GetRight();
+				current.up = camera->GetUp();
+
+				// Without usable history the previous camera is the current one: zero motion
+				const CameraState previous = resetHistory ? current : previousCamera;
+
+				const VkExtent2D extent = capabilities.currentExtent;
+				const glm::vec2 jitter = NextJitter();
 
 				CameraUBO cam{};
-				cam.camPos = camera->GetPosition();
-				cam.camForward = camera->GetForward();
-				cam.camRight = camera->GetRight();
-				cam.camUp = camera->GetUp();
-				cam.resolution = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
+				cam.camPos = current.position;
+				cam.camForward = current.forward;
+				cam.camRight = current.right;
+				cam.camUp = current.up;
+				cam.prevCamPos = previous.position;
+				cam.prevCamForward = previous.forward;
+				cam.prevCamRight = previous.right;
+				cam.prevCamUp = previous.up;
+				cam.resolution = glm::vec2(extent.width, extent.height);
+				cam.jitter = jitter;
 				cam.frameIndex = frameCounter;
 				cam.lightCount = raytracingScene->GetLightCount();
-				cam.accumulatedFrames = accumulatedFrames;
+				cam.tanHalfFov = std::tan(camera->GetFov() * 0.5f);
+				cam.samplesPerPixel = samplesPerPixel;
+				// Temporal upscalers need every path of a pixel at the reported sub-pixel position
+				cam.jitterAllSamples = denoisers[activeDenoiser]->GetJitterMode() == RayTracing::JitterMode::Halton ? 1u : 0u;
+				cam.gbufferFollowsReflections = denoisers[activeDenoiser]->WantsReflectedSurfaces() ? 1u : 0u;
 
 				frameResource.camUBO->Update(cam);
 
-				accumulatedFrames++;
+				// What the denoiser needs to know about this frame
+				denoiserFrame = RayTracing::DenoiserFrameInfo{};
+				denoiserFrame.frameIndex = frameCounter;
+				denoiserFrame.resetHistory = resetHistory;
+				denoiserFrame.cameraMoved = current.position != previous.position || current.forward != previous.forward;
+				denoiserFrame.jitter = jitter;
+				denoiserFrame.verticalFov = camera->GetFov();
+				denoiserFrame.nearPlane = camera->GetNearPlane();
+				denoiserFrame.farPlane = camera->GetFarPlane();
+				denoiserFrame.view = glm::lookAt(current.position, current.position + current.forward, current.up);
+				denoiserFrame.projection = glm::perspective(camera->GetFov(), static_cast<float>(extent.width) / static_cast<float>(extent.height), camera->GetNearPlane(), camera->GetFarPlane());
+				denoiserFrame.aspectRatio = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+				denoiserFrame.deltaTime = deltaTime;
+
+				previousCamera = current;
+				resetHistory = false;
 			}
 
 			void VulkanRHI::RecordFrame(FrameResource& frameResource, uint32_t imageIndex) {
@@ -609,17 +732,18 @@ namespace Fox {
 				VkPipelineLayout raytracingPipelineLayout = pipelineManager.GetRayTracingPipelineLayout(Managers::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
 
 				const VkExtent2D extent = capabilities.currentExtent;
-				const VkImage accumulationImage = accumulationTexture->GetImage();
 				const VkPipelineBindPoint rayTracing = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
+				const VkAccessFlags readWrite = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
+				// The G-buffer and all denoiser images stay in VK_IMAGE_LAYOUT_GENERAL, so the stages
+				// of the frame only need to be ordered with memory barriers.
 				CommandList& commandList = *frameResource.commandList;
 
 				commandList.Begin()
-					// 1. Path trace. The previous frame's tone mapping pass may still be reading the image.
-					.ImageBarrier(accumulationImage, COLOR_SUBRESOURCE_RANGE,
-						VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-						VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-						VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR)
+					// 1. Path trace into the G-buffer. The previous frame may still be reading these images.
+					.MemoryBarrier(
+						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+						readWrite, VK_ACCESS_SHADER_WRITE_BIT)
 					.BindPipeline(raytracingPipeline->GetPipeline(), rayTracing)
 					.BindDescriptorSets(raytracingPipelineLayout, 0,
 						{ frameResource.perFrameDescriptorSet->Get(), Managers::TextureManager::Get().bindlessTextureDescriptorSet->Get() },
@@ -631,11 +755,17 @@ namespace Fox {
 						raytracingPipeline->GetCallableRegion(),
 						extent.width, extent.height)
 
-					// 2. Tone map the accumulated HDR image into the swapchain image
-					.ImageBarrier(accumulationImage, COLOR_SUBRESOURCE_RANGE,
-						VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-						VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-						VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+					// 2. Denoise
+					.MemoryBarrier(
+						VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						VK_ACCESS_SHADER_WRITE_BIT, readWrite);
+
+				denoisers[activeDenoiser]->Denoise(commandList, denoiserFrame);
+
+				// 3. Tone map the denoised HDR image into the swapchain image
+				commandList.MemoryBarrier(
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 
 				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), extent);
 
@@ -671,8 +801,8 @@ namespace Fox {
 				Managers::TextureManager::Get().Resize(extent);
 				CreateSwapchain();
 
-				CreateAccumulationTexture();
-				BindAccumulationTexture();
+				CreateGBuffer();
+				BindGBuffer();
 
 				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
 				camera->SetAspectRatio(static_cast<float>(extent.width) / static_cast<float>(extent.height));
@@ -697,35 +827,37 @@ namespace Fox {
 				keyInputBind = input.OnKeyReleased.Connect([this](SDL_Scancode key) {
 					using Managers::TextureManager;
 
-					const uint32_t textureCount = static_cast<uint32_t>(TextureManager::Get().GetBindlessTextureArray().size());
-
 					switch (key) {
+					case SDL_SCANCODE_N:
+						SelectDenoiser(activeDenoiser + 1);
+						break;
+
+					// Exposure, in thirds of a stop like a camera dial
+					case SDL_SCANCODE_1:
+					case SDL_SCANCODE_2:
+						postProcessor->SetExposure(postProcessor->GetExposure() + (key == SDL_SCANCODE_2 ? 1.0f : -1.0f) / 3.0f);
+						std::cout << "Exposure: " << postProcessor->GetExposure() << " EV\n";
+						break;
+
+					// Paths per pixel: quality against frame rate
+					case SDL_SCANCODE_3:
+					case SDL_SCANCODE_4:
+						samplesPerPixel = static_cast<uint32_t>(std::clamp(static_cast<int>(samplesPerPixel) + (key == SDL_SCANCODE_4 ? 1 : -1), 1, 16));
+						std::cout << "Samples per pixel: " << samplesPerPixel << "\n";
+						break;
+
 					case SDL_SCANCODE_9:
-						TextureManager::ENVIRONMENT_MAP_INTENSITY = std::max(0.0f, TextureManager::ENVIRONMENT_MAP_INTENSITY - 0.05f);
-						break;
 					case SDL_SCANCODE_0:
-						TextureManager::ENVIRONMENT_MAP_INTENSITY += 0.05f;
+						TextureManager::ENVIRONMENT_MAP_INTENSITY = std::max(0.0f, TextureManager::ENVIRONMENT_MAP_INTENSITY + (key == SDL_SCANCODE_0 ? 0.1f : -0.1f));
+						TextureManager::Get().UpdateEnvironment();
+						std::cout << "Environment map intensity: " << TextureManager::ENVIRONMENT_MAP_INTENSITY << "\n";
+						// The lighting changed: accumulated frames are stale
+						ResetHistory();
 						break;
-					case SDL_SCANCODE_7:
-						// Debug aid: cycle which bindless texture is used as the environment map
-						if (TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX + 1 < textureCount) {
-							TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX++;
-						}
-						break;
-					case SDL_SCANCODE_8:
-						if (TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX > 0) {
-							TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX--;
-						}
-						break;
+
 					default:
-						return;
+						break;
 					}
-
-					std::cout << "Environment map intensity: " << TextureManager::ENVIRONMENT_MAP_INTENSITY
-						<< ", texture index: " << TextureManager::ENVIRONMENT_MAP_TEXTURE_INDEX << "\n";
-
-					TextureManager::Get().UpdateEnvironment();
-					ResetAccumulation();
 				});
 			}
 

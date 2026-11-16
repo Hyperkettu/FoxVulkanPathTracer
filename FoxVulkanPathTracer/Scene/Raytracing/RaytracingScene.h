@@ -30,11 +30,25 @@ namespace Fox {
                 // with different transforms; its textures are shared between the copies.
                 void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform);
 
+                // Adds a large horizontal quad at the given height, e.g. as the ground.
+                void AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material);
+
+                // Adds a sun: a distant light with soft shadows.
+                //   directionToSun: where the sun is in the sky (does not need to be normalized)
+                //   irradiance:     light arriving at a surface facing the sun
+                //   angularRadius:  apparent radius of the disc in degrees (the real sun: 0.27). Larger = softer shadows
+                void AddSun(const glm::vec3& directionToSun, const glm::vec3& irradiance, float angularRadius);
+
                 // Uploads the geometry added so far and builds the acceleration structures.
                 // Call once, after the last AddMesh.
                 void Build();
 
-                uint32_t GetLightCount() const { return static_cast<uint32_t>(lights.size()); }
+                // Number of analytic lights (emissive quads, directional lights). Can be zero.
+                uint32_t GetLightCount() const { return lightCount; }
+
+                // Instance visibility bits, must match the masks in Shaders/common.slang
+                static constexpr uint32_t INSTANCE_MASK_OPAQUE = 0x01;
+                static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;
@@ -146,8 +160,7 @@ namespace Fox {
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::VertexBuffer>> vertexBuffers;
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer>> indexBuffers;
 
-                // Radiance of the directional light used when a scene defines no lights of its own
-                static constexpr float DEFAULT_SUN_RADIANCE = 4.0f;
+                uint32_t lightCount = 0;
 
                 // Running offsets into the scene-wide arrays, advanced by AddMesh
                 uint32_t vertexOffset = 0u;

@@ -100,6 +100,11 @@ namespace Fox {
                 const glm::mat4& GetProjectionMatrix() const { return projection; }
                 const glm::vec3& GetPosition() const { return position; }
 
+                // Vertical field of view in radians
+                float GetFov() const { return fov; }
+                float GetNearPlane() const { return near; }
+                float GetFarPlane() const { return far; }
+
                 glm::vec3 GetForward() {
                     return front;
                 }

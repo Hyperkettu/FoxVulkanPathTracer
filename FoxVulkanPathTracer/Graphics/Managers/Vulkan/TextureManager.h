@@ -42,6 +42,7 @@ namespace Fox {
 						depthTextures.clear();
 						bindlessTextureArray.clear();
 						environmentUBO = nullptr;
+						environmentSamplingTable = nullptr;
 					}
 
 					// Takes ownership and returns the index the shaders use to address the texture.
@@ -68,10 +69,19 @@ namespace Fox {
 					std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet > bindlessTextureDescriptorSet;
 					std::unique_ptr<Fox::Graphics::Vulkan::ConstantBuffer<Fox::Graphics::Vulkan::Environment>> environmentUBO;
 
+					// Lets the path tracer pick directions towards the bright parts of the environment map (sun, sky)
+					std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::EnvironmentCell>> environmentSamplingTable;
+
 					static uint32_t ENVIRONMENT_MAP_TEXTURE_INDEX;
 					static float ENVIRONMENT_MAP_INTENSITY;
 
 				private:
+					// Builds environmentSamplingTable from the HDR image at path
+					void BuildEnvironmentSamplingTable(const std::string& path);
+
+					uint32_t environmentTableWidth = 0;
+					uint32_t environmentTableHeight = 0;
+
 					VkDevice device = VK_NULL_HANDLE;
 					VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 					VkFormat depthFormat = VK_FORMAT_UNDEFINED;

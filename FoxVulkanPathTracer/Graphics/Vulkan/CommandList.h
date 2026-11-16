@@ -456,6 +456,41 @@ namespace Fox {
                         return *this;
                     }
 
+                    // --- Global memory barrier ---
+                    // Orders all accesses of the given kinds between two pipeline stages, without naming resources.
+                    CommandList& MemoryBarrier(VkPipelineStageFlags srcStageMask,
+                        VkPipelineStageFlags dstStageMask,
+                        VkAccessFlags srcAccessMask,
+                        VkAccessFlags dstAccessMask)
+                    {
+                        VkMemoryBarrier barrier{};
+                        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                        barrier.srcAccessMask = srcAccessMask;
+                        barrier.dstAccessMask = dstAccessMask;
+
+                        vkCmdPipelineBarrier(cmd, srcStageMask, dstStageMask, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+                        return *this;
+                    }
+
+                    // --- Compute ---
+                    CommandList& Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ = 1)
+                    {
+                        vkCmdDispatch(cmd, groupCountX, groupCountY, groupCountZ);
+                        return *this;
+                    }
+
+                    CommandList& PushConstants(VkPipelineLayout layout, VkShaderStageFlags stages, uint32_t size, const void* data, uint32_t offset = 0)
+                    {
+                        vkCmdPushConstants(cmd, layout, stages, offset, size, data);
+                        return *this;
+                    }
+
+                    CommandList& ClearColorImage(VkImage image, VkImageLayout layout, const VkClearColorValue& color, const VkImageSubresourceRange& range)
+                    {
+                        vkCmdClearColorImage(cmd, image, layout, &color, 1, &range);
+                        return *this;
+                    }
+
                     // --- Buffer memory barrier helper ---
                     CommandList& BufferMemoryBarrier(VkBuffer buffer,
                         VkDeviceSize offset,

@@ -1,371 +1,187 @@
+// Closest hit: looks up the geometry and material at the hit point and hands a description of
+// the surface back to the path tracer (raygen.slang). No lighting is computed here.
+
 #include "common.slang"
 
-enum class LightType
-{ 
-    Directional = 0, 
-    Point, 
-    Spot, 
-    QuadAreaLight
-};
-
+// Mirrors Fox::Graphics::Vulkan::Vertex (Vertex.h)
 struct Vertex
 {
     float4 position;
     float4 normal;
     float2 uv;
     float2 padding;
+    float4 tangent; // xyz + handedness, all zero if the mesh has no tangents
 };
 
+// Mirrors Fox::Graphics::Vulkan::Submesh (Vertex.h)
 struct Submesh
 {
-    uint vertexOffset;   // Optional for global indices
+    uint vertexOffset;
     uint indexOffset;
     uint vertexCount;
     uint indexCount;
     uint materialIndex;
-    uint pa0;
+    uint pad0;
     uint pad1;
     uint pad2;
 };
 
-struct Material {
-    float4 albedo;                         // Offset: 0   (16 bytes)
-    float2 roughnessMetallic;              // Offset: 16  (8 bytes)
-    int albedoTextureIndex;               // Offset: 24  (4 bytes)
-    int roughnessMetallicTextureIndex;    // Offset: 28  (4 bytes)
-    float3 emissiveColor;                  // Offset: 32  (12 bytes)
-    int emissiveTextureIndex;              // Offset: 44  (4 bytes)
-    float intensity;                       // Offset: 48  (4 bytes)
-    float padding;                         // Offset: 52  (4 bytes)
-};
+// Mirrors Fox::Graphics::Vulkan::Material (Material.h)
+struct Material
+{
+    float4 baseColor;
 
-struct Light {
-    float3 position;  
-    float  _pad0;      // Fills the rest of the 16-byte boundary for position
-    
-    float3 normal;    
-    float  _pad1;      // Fills the rest of the 16-byte boundary for normal
-    
-    float3 tangentX;  
-    float  _pad2;      // Fills the rest of the 16-byte boundary for tangentX
-    
-    float3 tangentY;  
-    float  _pad3;      // Fills the rest of the 16-byte boundary for tangentY
-    
-    float3 color;     
-    float  _pad4;      // Fills the rest of the 16-byte boundary for color
-    
-    float  area;       // 4 bytes (alignas(4) in C++)
-    int    type;       // 4 bytes (alignas(4) in C++)
-    
-    int2   _pad5;      // Pads the end of the entire struct to a multiple of 16 bytes 
-                       // (Ensures safe array indexing in StructuredBuffers)
-};
+    float3 emissive;
+    float normalScale;
 
-[[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
-[[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
+    float roughness;
+    float metallic;
+    float transmission;
+    float specularWeight;
+
+    int baseColorTexture;
+    int metallicRoughnessTexture;
+    int normalTexture;
+    int emissiveTexture;
+
+    float2 uvScale;
+    float uvRotation;
+    int lightIndex;
+};
 
 [[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
 [[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
 [[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
 [[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
-[[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
 
 [[vk::binding(1, 1)]] Sampler2D gTextures[];
 
-float DistributionGGX(float3 N, float3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    return a2 / (PI * pow(NdotH * NdotH * (a2 - 1.0) + 1.0, 2.0) + 0.000001);
+float4 SampleTexture(int index, float2 uv)
+{
+    return gTextures[NonUniformResourceIndex(index)].SampleLevel(uv, 0.0f);
 }
 
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float k = pow(roughness + 1.0, 2.0) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k + 0.000001);
+// KHR_texture_transform: scale, then rotate (no offset)
+float2 TransformUV(float2 uv, Material material)
+{
+    uv *= material.uvScale;
+
+    if (material.uvRotation != 0.0f)
+    {
+        float s = sin(material.uvRotation);
+        float c = cos(material.uvRotation);
+        uv = float2(c * uv.x + s * uv.y, -s * uv.x + c * uv.y);
+    }
+
+    return uv;
 }
-
-float GeometrySmith(float3 N, float3 V, float3 L, float roughness) {
-    return GeometrySchlickGGX(max(dot(N, V), 0.0), roughness) * GeometrySchlickGGX(max(dot(N, L), 0.0), roughness);
-}
-
-float3 FresnelSchlick(float cosTheta, float3 F0) {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float3 SafeOffsetRayOrigin(float3 p, float3 n) {
-    const float origin = 1.0f / 32.0f;
-    const float float_scale = 1.0f / 65536.0f;
-    const float int_scale = 256.0f;
-
-    float3 of_i = float3(int_scale * n.x, int_scale * n.y, int_scale * n.z);
-    float3 p_i = float3(
-        asfloat(asint(p.x) + (p.x < 0 ? -of_i.x : of_i.x)),
-        asfloat(asint(p.y) + (p.y < 0 ? -of_i.y : of_i.y)),
-        asfloat(asint(p.z) + (p.z < 0 ? -of_i.z : of_i.z))
-    );
-
-    return float3(abs(p.x) < origin ? p.x + float_scale * n.x : p_i.x,
-                  abs(p.y) < origin ? p.y + float_scale * n.y : p_i.y,
-                  abs(p.z) < origin ? p.z + float_scale * n.z : p_i.z);
-}
-
-bool IsShadowed(float3 position, float3 normal, float3 lightDirection, float distance) {
-    RayDesc shadowRayDesc;
-    shadowRayDesc.Origin = position + 0.001f * normal;
-    shadowRayDesc.Direction = lightDirection;
-    shadowRayDesc.TMin = 0.001f;
-    shadowRayDesc.TMax = distance - 0.002f;
-
-    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-    let rayFlags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH;
-
-    query.TraceRayInline(tlas, rayFlags, 0xFF, shadowRayDesc);
-
-    query.Proceed();
-                
-    bool isShadowed = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
-
-    return isShadowed;
-}
-
-static const uint AREA_LIGHT_SAMPLES = 4;
 
 [shader("closesthit")]
-void main(
-    inout RayPayload payload,
-    BuiltInTriangleIntersectionAttributes attribs)
+void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    uint submeshID = InstanceID();
-    uint primitiveID = PrimitiveIndex();
-
-    Submesh submesh = gAllSubmeshes[submeshID];
+    // The instance's custom index is the submesh index (see RayTracingScene::UploadGeometry)
+    Submesh submesh = gAllSubmeshes[InstanceID()];
     Material material = gAllMaterials[submesh.materialIndex];
 
-    // Triangle indices
-    uint baseIndex = submesh.indexOffset + primitiveID * 3;
+    uint baseIndex = submesh.indexOffset + PrimitiveIndex() * 3;
 
-    uint i0 = gAllIndices[baseIndex + 0];
-    uint i1 = gAllIndices[baseIndex + 1];
-    uint i2 = gAllIndices[baseIndex + 2];
-
-    Vertex v0 = gAllVertices[i0];
-    Vertex v1 = gAllVertices[i1];
-    Vertex v2 = gAllVertices[i2];
+    Vertex v0 = gAllVertices[gAllIndices[baseIndex + 0]];
+    Vertex v1 = gAllVertices[gAllIndices[baseIndex + 1]];
+    Vertex v2 = gAllVertices[gAllIndices[baseIndex + 2]];
 
     float3 barycentrics = float3(
-        1.0 - attribs.barycentrics.x - attribs.barycentrics.y,
+        1.0f - attribs.barycentrics.x - attribs.barycentrics.y,
         attribs.barycentrics.x,
         attribs.barycentrics.y);
 
-    float3 localNormal =
-        normalize(
-            v0.normal.xyz * barycentrics.x +
-            v1.normal.xyz * barycentrics.y +
-            v2.normal.xyz * barycentrics.z);
+    float3x3 objectToWorld = (float3x3)ObjectToWorld3x4();
+    float3x3 worldToObject = (float3x3)WorldToObject3x4();
 
-    float2 uv = v0.uv.xy * barycentrics.x + 
-                 v1.uv.xy * barycentrics.y + 
-                 v2.uv.xy * barycentrics.z;
+    // --- Geometry ---
+    float3 edge1 = v1.position.xyz - v0.position.xyz;
+    float3 edge2 = v2.position.xyz - v0.position.xyz;
 
-    float3x3 normalMatrix = ((float3x3)ObjectToWorld3x4());
+    // Normals transform with the inverse transpose, which keeps them perpendicular under non-uniform scale
+    float3 geometricNormal = normalize(mul(cross(edge1, edge2), worldToObject));
 
-    float3 N = normalize(mul(normalMatrix, localNormal));
-    float3 worldPos = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    
-    float3 albedo = material.albedo.xyz;
+    float3 localNormal = v0.normal.xyz * barycentrics.x + v1.normal.xyz * barycentrics.y + v2.normal.xyz * barycentrics.z;
+    float3 N = dot(localNormal, localNormal) > 0.0f ? normalize(mul(localNormal, worldToObject)) : geometricNormal;
 
-    if(material.albedoTextureIndex >= 0) {
-        albedo = gTextures[NonUniformResourceIndex(material.albedoTextureIndex)].SampleLevel(uv, 0.0f).xyz;
-    }
+    float2 uv0 = TransformUV(v0.uv, material);
+    float2 uv1 = TransformUV(v1.uv, material);
+    float2 uv2 = TransformUV(v2.uv, material);
+    float2 uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
 
-    float roughness = max(material.roughnessMetallic.x, 0.0f);
-    float metallic = material.roughnessMetallic.y;
+    // --- Normal mapping ---
+    if (material.normalTexture >= 0)
+    {
+        float4 localTangent = v0.tangent * barycentrics.x + v1.tangent * barycentrics.y + v2.tangent * barycentrics.z;
 
-    if(material.roughnessMetallicTextureIndex >= 0) {
-        float3 values = gTextures[NonUniformResourceIndex(material.roughnessMetallicTextureIndex)].SampleLevel(uv, 0.0f).rgb;
-        roughness = values.g;
-        metallic = values.b;
-    }
+        float3 tangent;
+        float handedness;
 
-    float3 V = normalize(-WorldRayDirection());
+        if (dot(localTangent.xyz, localTangent.xyz) > 1e-8f)
+        {
+            tangent = mul(objectToWorld, localTangent.xyz);
+            handedness = localTangent.w < 0.0f ? -1.0f : 1.0f;
+        }
+        else
+        {
+            // No tangents in the mesh: derive the direction of increasing U from the triangle itself
+            float2 duv1 = uv1 - uv0;
+            float2 duv2 = uv2 - uv0;
+            float det = duv1.x * duv2.y - duv2.x * duv1.y;
 
-    float3 F0 = lerp(float3(0.04f), albedo, metallic);
-    half3 emission = half3(material.emissiveColor.xyz); 
-    half3 directColor = half3(0.0h);
+            tangent = mul(objectToWorld, (edge1 * duv2.y - edge2 * duv1.y) * (abs(det) > 1e-12f ? 1.0f / det : 1.0f));
+            handedness = det < 0.0f ? -1.0f : 1.0f;
+        }
 
-    uint seed = payload.rngState;
+        // Gram-Schmidt: make the tangent perpendicular to the normal
+        tangent = tangent - N * dot(N, tangent);
 
-    for(uint i = 0; i < camera.lightCount; i++) {
-        Light light = gAllLights[i];
+        if (dot(tangent, tangent) > 1e-12f)
+        {
+            tangent = normalize(tangent);
+            float3 bitangent = cross(N, tangent) * handedness;
 
-        if(light.type == (int)LightType::Directional) {
-            float3 L = normalize(light.normal);
-            float NdotL = max(dot(N, L), 0.0f);
+            float3 mapped = SampleTexture(material.normalTexture, uv).xyz * 2.0f - 1.0f;
+            mapped.xy *= material.normalScale;
 
-            if(!IsShadowed(worldPos, N, L, 10000.0f)) {
-                // 1. Evaluate standard BRDF terms f(l, v)
-                float3 H = normalize(V + L);
-                float  D = DistributionGGX(N, H, roughness);
-                float  G = GeometrySmith(N, V, L, roughness);
-                float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
-
-                float3 numerator = D * G * F;
-                // Standard BRDF denominator includes NdotV and NdotL
-                float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
-                float3 specular = numerator / max(denominator, 0.000001f);
-
-                float3 kS = F;
-                float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
-        
-                float3 BRDF = (kD * albedo / PI) + specular;
-        
-                float3 emmitedRadiance = light.color; 
-
-                directColor += half3(BRDF * emmitedRadiance * NdotL);
-            }
-            
-        
-        } else if(light.type == (int)LightType::QuadAreaLight) {
-
-            // Accumulate this light separately so the sample average below does not
-            // also scale down the contribution of the lights evaluated before it.
-            half3 areaLightColor = half3(0.0h);
-
-            for(uint j = 0; j < AREA_LIGHT_SAMPLES; j++) {
-                // Fix 3: Keep updating the seed state sequentially so sample positions are random
-                float u1 = NextRandomFloat(seed) * 2.0f - 1.0f;
-                float u2 = NextRandomFloat(seed) * 2.0f - 1.0f;
-                float3 samplePos = light.position + (light.tangentX * u1) + (light.tangentY * u2);
-
-                float3 L = samplePos - worldPos;
-                float dist = length(L);
-                L = normalize(L);
-
-                float lightNdotL = max(dot(light.normal, -L), 0.0f);
-                float NdotL = max(dot(N, L), 0.0f);
-
-                if (NdotL > 0.0f && lightNdotL > 0.0f) {
-                    if(!IsShadowed(worldPos, N, L, dist)) {
-        
-                        // 1. Evaluate standard BRDF terms f(l, v)
-                        float3 H = normalize(V + L);
-                        float  D = DistributionGGX(N, H, roughness);
-                        float  G = GeometrySmith(N, V, L, roughness);
-                        float3 F = FresnelSchlick(max(dot(H, V), 0.0f), F0);
-
-                        float3 numerator = D * G * F;
-                        // Standard BRDF denominator includes NdotV and NdotL
-                        float denominator = 4.0f * max(dot(N, V), 0.0f) * NdotL;
-                        float3 specular = numerator / max(denominator, 0.000001f);
-
-                        float3 kS = F;
-                        float3 kD = (float3(1.0f) - kS) * (1.0f - metallic);
-        
-                        float3 BRDF = (kD * albedo / PI) + specular;
-
-                        // 2. Correct Monte Carlo Weighting for Area Sampling
-                        // Solid Angle conversion factor: (lightNdotL) / (dist * dist)
-                        float solidAngleConversion = lightNdotL / (dist * dist + 0.0001f);
-        
-                        // Target Radiance from the emitter
-                        float3 emmitedRadiance = light.color; 
-
-                        // 3. Final Integration: BRDF * Radiance * NdotL / PDF
-                        // Because PDF = 1.0 / light.area, dividing by PDF means multiplying by light.area
-                        areaLightColor += half3(BRDF * emmitedRadiance * NdotL * solidAngleConversion * light.area);
-                    }
-                }
-              
-
-                
-            }
-            directColor += areaLightColor / half(AREA_LIGHT_SAMPLES);
+            N = normalize(tangent * mapped.x + bitangent * mapped.y + N * mapped.z);
         }
     }
-    
-    // Pass updated seed back to payload
-    payload.rngState = seed;
 
-
-
-    // INDIRECT LIGHT
-    half3 indirectColor = half3(0.0h, 0.0h, 0.0h);
-
-    // payload.depth counts the bounces already taken, so the deepest TraceRay call sits at
-    // recursion level MAX_BOUNCES + 1 - exactly what the pipeline was created with.
-    if (payload.depth < MAX_BOUNCES) {
-        float r1 = NextRandomFloat(seed);
-        float r2 = NextRandomFloat(seed);
-
-        float3 F_ind = FresnelSchlick(max(dot(N, V), 0.0f), F0);
-        float specularChance = max(max(F_ind.x, F_ind.y), F_ind.z);
-        
-        float3 L_ind;
-        bool isSpecularBounce = false;
-
-        if (NextRandomFloat(seed) < specularChance) {
-            // 1. SPECULAR BOUNCE (Mirror Direction)
-            L_ind = reflect(-V, N);
-            isSpecularBounce = true;
-        } else {
-            // 2. DIFFUSE BOUNCE (Proper Cosine-Weighted Hemisphere Sampling)
-            float phi = 2.0f * PI * r1;
-            float cosTheta = sqrt(r2);
-            float sinTheta = sqrt(1.0f - r2);
-
-            // Construct local space coordinates
-            float3 localDir = float3(
-                cos(phi) * sinTheta,
-                sin(phi) * sinTheta,
-                cosTheta
-            );
-
-            // Build a stable coordinate system around the Normal vector
-            float3 up = abs(N.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-            float3 tangent = normalize(cross(up, N));
-            float3 bitangent = cross(N, tangent);
-
-            // Transform local hemisphere sample back to world space
-            L_ind = tangent * localDir.x + bitangent * localDir.y + N * localDir.z;
-            L_ind = normalize(L_ind);
-        }
-        
-        payload.rngState = seed;
-
-        float NdotL_ind = max(dot(N, L_ind), 0.0f);
-         
-        if (NdotL_ind > 0.0f) {
-            RayPayload secondaryPayload;
-            secondaryPayload.hitColor = half3(0.0h, 0.0h, 0.0h);
-            secondaryPayload.depth = payload.depth + 1;
-            secondaryPayload.rngState = payload.rngState; 
-
-            float3 rayOrigin = worldPos + 0.001 * N;
-
-            RayDesc ray;
-            ray.Origin    = rayOrigin;
-            ray.Direction = L_ind;
-            ray.TMin      = 0.001f;
-            ray.TMax      = 10000.0f;
-
-            TraceRay(tlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, secondaryPayload);
-            
-            payload.rngState = secondaryPayload.rngState;
-
-            if (isSpecularBounce) {
-                // PDF for picking specular is specularChance
-                indirectColor = half3(secondaryPayload.hitColor * F_ind / max(specularChance, 0.001f));
-            } else {
-                // PDF for picking diffuse is (1.0 - specularChance)
-                float3 kD_ind = (float3(1.0f) - F_ind) * (1.0f - metallic);
-                // Note: The cosine weight (NdotL_ind) cancels out perfectly with the cosine PDF allocation!
-                indirectColor = half3(secondaryPayload.hitColor * albedo * kD_ind / max(1.0f - specularChance, 0.001f));
-            }
-        }
-               
+    // --- Material ---
+    float3 baseColor = material.baseColor.rgb;
+    if (material.baseColorTexture >= 0)
+    {
+        baseColor *= SampleTexture(material.baseColorTexture, uv).rgb;
     }
 
-    payload.hitColor = emission + directColor + indirectColor;
+    float roughness = material.roughness;
+    float metallic = material.metallic;
+    if (material.metallicRoughnessTexture >= 0)
+    {
+        // glTF packing: G = roughness, B = metallic
+        float3 roughnessMetallic = SampleTexture(material.metallicRoughnessTexture, uv).rgb;
+        roughness *= roughnessMetallic.g;
+        metallic *= roughnessMetallic.b;
+    }
 
+    float3 emission = material.emissive;
+    if (material.emissiveTexture >= 0)
+    {
+        emission *= SampleTexture(material.emissiveTexture, uv).rgb;
+    }
+
+    payload.hitT = RayTCurrent();
+    payload.geometricNormal = geometricNormal;
+    payload.shadingNormal = N;
+    payload.baseColor = baseColor;
+    payload.metallic = metallic;
+    payload.roughness = roughness;
+    payload.transmission = material.transmission;
+    payload.specularWeight = material.specularWeight;
+    payload.emission = emission;
+    payload.lightIndex = material.lightIndex;
 }

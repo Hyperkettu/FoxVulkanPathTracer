@@ -8,6 +8,15 @@ namespace Fox {
 
 			namespace Managers = Fox::Graphics::Managers::Vulkan;
 
+			namespace {
+				// Must match ToneMappingConstants in Shaders/tonemapping_frag.slang
+				struct ToneMappingConstants {
+					float exposure; // Linear scale
+				};
+
+				static_assert(sizeof(ToneMappingConstants) == PostProcessor::PUSH_CONSTANT_SIZE, "Push constant size mismatch");
+			}
+
 			PostProcessor::PostProcessor(VkDevice device) : device(device) {
 				// The HDR image always matches the swapchain resolution, so a nearest/clamped lookup is exact.
 				VkSamplerCreateInfo samplerInfo{};
@@ -51,12 +60,15 @@ namespace Fox {
 				VkPipelineLayout pipelineLayout = pipelineManager.GetPipelineLayout(Managers::PipelineCategory::POST_PROCESSOR)->Get();
 				VkRenderPass renderPass = Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get();
 
+				const ToneMappingConstants constants{ std::pow(2.0f, exposureStops) };
+
 				commandList
 					.BeginRenderPass(renderPass, framebuffer, extent, clearValues.data(), static_cast<uint32_t>(clearValues.size()))
 					.SetViewport(0, 0, extent.width, extent.height)
 					.SetScissor(0, 0, extent.width, extent.height)
 					.BindPipeline(pipeline)
 					.BindDescriptorSets(pipelineLayout, 0, { descriptorSet->Get() })
+					.PushConstants(pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(constants), &constants)
 					.RenderMeshShader(1, 1, 1)
 					.EndRenderPass();
 			}

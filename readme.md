@@ -18,10 +18,17 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 
 * **Pipeline:** Engineered from the ground up to utilize hardware-accelerated ray tracing and modern memory management.
 * **glTF 2.0 Asset Loading:** Built-in parser supporting both binary (`.glb`) and text-based (`.gltf`) scenes.
-* **Physically Based Shading** Implements a Cook-Torrance BRDF to realistically compute diffuse, specular, reflection light paths based on surface roughness and metallicity.
-* **Shadows** Implements ray query shadows. 
-* **Progressive Accumulation** Frames are averaged into an HDR buffer while the camera is still, so the image converges over time.
-* **HDR Pipeline** Radiance HDR environment maps, a floating point render target and an ACES tone mapping pass.
+* **Path Tracing** Iterative, unbiased path tracer with multiple importance sampling, Russian roulette and soft shadows.
+* **Physically Based Shading** Layered glTF metallic-roughness BSDF: GGX microfacet specular (visible-normal importance sampling,
+  height-correlated Smith, multiple-scattering energy compensation) over an energy-conserving diffuse layer, plus thin glass.
+  Supports base colour, metallic-roughness, normal and emissive textures and `KHR_texture_transform`,
+  `KHR_materials_transmission`, `KHR_materials_specular`, `KHR_materials_emissive_strength`.
+* **Lighting** Importance-sampled HDR environment map, emissive quads as area lights and a sun with soft shadows.
+* **Denoising** Pluggable denoisers, switchable at runtime:
+  * **DLSS Ray Reconstruction** (NVIDIA, optional): neural denoising + anti-aliasing with the newest transformer model.
+  * **SVGF** (Spatiotemporal Variance-Guided Filtering): temporal reprojection + variance-guided a-trous wavelet filter, in compute shaders.
+  * **Accumulation**: plain averaging while the camera is still, as the ground-truth reference.
+* **HDR Pipeline** Floating point rendering and an AgX tone mapping pass with exposure control.
 
 ---
 
@@ -32,7 +39,7 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * Windows, Visual Studio 2022 (v143 toolset, C++20)
 * [Vulkan SDK](https://vulkan.lunarg.com/) 1.4+ installed with the **SDL2** and **GLM** components. The project locates
   everything (headers, libraries and the `slangc` shader compiler) through the `VULKAN_SDK` environment variable that the installer sets.
-* A GPU with hardware ray tracing (`VK_KHR_ray_tracing_pipeline`, `VK_KHR_ray_query`) and mesh shader (`VK_EXT_mesh_shader`) support.
+* A GPU with hardware ray tracing (`VK_KHR_ray_tracing_pipeline`) and mesh shader (`VK_EXT_mesh_shader`) support.
 
 **Steps**
 
@@ -44,6 +51,24 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 
 `Debug` builds enable the Vulkan validation layers and print warnings and errors to the console.
 
+**Optional: DLSS Ray Reconstruction**
+
+The DLSS denoiser is compiled in automatically when NVIDIA's DLSS SDK is found in `ThirdParty/DLSS` next to the solution:
+
+```bash
+git clone --depth 1 --branch v310.9.16 https://github.com/NVIDIA/DLSS.git ThirdParty/DLSS
+```
+
+The SDK is not part of this repository (it is listed in `.gitignore`) and is covered by NVIDIA's own license (`ThirdParty/DLSS/LICENSE.txt`).
+The build copies `nvngx_dlssd.dll` next to the executable. At runtime it needs an RTX GPU and a current driver;
+if DLSS is unavailable the renderer says so on the console and starts with SVGF instead.
+
+### Adding a denoiser
+
+Derive from `Denoiser` (`Graphics/Vulkan/Raytracing/Denoiser.h`), implement `Resize` / `Denoise` / `GetOutputView`, and register the class in
+`CreateDenoisers()` (`Denoiser.cpp`). The path tracer hands every denoiser the same G-buffer (`GBuffer.h`): noisy radiance, diffuse and
+specular albedo, normal, roughness, depth, motion vectors and specular hit distance. `ComputePass` wraps a full-screen compute shader.
+
 ## 🎮 Controls
 
 | Input | Action |
@@ -51,10 +76,14 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 | Mouse | Look around |
 | `W` `A` `S` `D` | Move |
 | `R` / `F` | Move up / down |
+| `N` | Next denoiser (DLSS Ray Reconstruction → SVGF → Accumulation) |
+| `1` / `2` | Exposure down / up (1/3 stop) |
+| `3` / `4` | Fewer / more paths per pixel |
 | `9` / `0` | Decrease / increase environment map intensity |
-| `7` / `8` | Cycle the texture used as environment map (debug) |
 | `T` | Toggle fullscreen |
 | `Esc` | Quit |
+
+The window title shows the active denoiser, the paths per pixel and the frame rate.
 
 ---
 
@@ -64,11 +93,12 @@ Below is the active development checklist for the renderer.
 
 ### 💡 Rendering & Lighting
 
-- [ ] Multiple Importance Sampling (MIS) lighting
+- [x] Multiple Importance Sampling (MIS) lighting
 - [ ] Refraction and Fresnel effects
-- [ ] Recursive BRDF evaluation / ray depth handling
-- [ ] Normal mapping and displacement mapping
-- [ ] Denoiser integration (SVGF & DLSS 4.5/Ray Reconstruction)
+- [x] Recursive BRDF evaluation / ray depth handling
+- [x] Normal mapping
+- [ ] Displacement mapping
+- [x] Denoiser integration (SVGF & DLSS Ray Reconstruction)
 
 ### ⛰️ Procedural & Special Effects
 - [ ] Procedural terrain generation

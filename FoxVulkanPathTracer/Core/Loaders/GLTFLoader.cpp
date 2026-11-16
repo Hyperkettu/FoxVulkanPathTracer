@@ -297,91 +297,71 @@ namespace Fox {
 
                         // --- Material Extraction ---
                         MaterialData currentMaterial;
+
+                        // Registers the image behind a glTF texture (once) and returns its index in outTextures.
+                        // srgb tells how the pixels must be interpreted: colours are sRGB, data (normals, roughness) is linear.
+                        auto resolveTexture = [&](int textureIndex, bool srgb) -> int {
+                            if (textureIndex < 0 || textureIndex >= static_cast<int>(model.textures.size())) return -1;
+
+                            int srcImg = model.textures[textureIndex].source;
+                            if (srcImg < 0 || srcImg >= static_cast<int>(model.images.size())) return -1;
+
+                            if (gltfImageMap[srcImg] == -1) {
+                                const auto& img = model.images[srcImg];
+                                TextureData tex{ img.image, img.width, img.height, img.component };
+                                tex.srgb = srgb;
+                                outTextures.push_back(tex);
+                                gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
+                            }
+
+                            return gltfImageMap[srcImg];
+                        };
+
+                        // Reads a numeric member of a material extension, or returns fallback.
+                        auto extensionNumber = [](const tinygltf::ExtensionMap& extensions, const char* extension, const char* member, float fallback) -> float {
+                            auto it = extensions.find(extension);
+                            if (it == extensions.end() || !it->second.IsObject() || !it->second.Has(member)) return fallback;
+                            return static_cast<float>(it->second.Get(member).GetNumberAsDouble());
+                        };
+
                         if (primitive.material >= 0 && primitive.material < model.materials.size()) {
                             const auto& mat = model.materials[primitive.material];
                             const auto& pbr = mat.pbrMetallicRoughness;
 
-                            // 1. Base Color Factors
-                            currentMaterial.baseColorFactor[0] = static_cast<float>(pbr.baseColorFactor[0]);
-                            currentMaterial.baseColorFactor[1] = static_cast<float>(pbr.baseColorFactor[1]);
-                            currentMaterial.baseColorFactor[2] = static_cast<float>(pbr.baseColorFactor[2]);
-                            currentMaterial.baseColorFactor[3] = static_cast<float>(pbr.baseColorFactor[3]);
-
-                            // 2. Metallic and Roughness Factors
+                            for (int c = 0; c < 4; c++) {
+                                currentMaterial.baseColorFactor[c] = static_cast<float>(pbr.baseColorFactor[c]);
+                            }
                             currentMaterial.metallicFactor = static_cast<float>(pbr.metallicFactor);
                             currentMaterial.roughnessFactor = static_cast<float>(pbr.roughnessFactor);
 
-                            // 3. Base Color Texture Index
-                            if (pbr.baseColorTexture.index >= 0) {
-                                int srcImg = model.textures[pbr.baseColorTexture.index].source;
-                                if (srcImg >= 0 && srcImg < model.images.size()) {
-                                    if (gltfImageMap[srcImg] != -1) {
-                                        currentMaterial.baseColorTextureIndex = gltfImageMap[srcImg];
-                                    } else {
-                                        const auto& img = model.images[srcImg];
-                                        TextureData tex{ img.image, img.width, img.height, img.component };
-                                        outTextures.push_back(tex);
-                                        gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
-                                        currentMaterial.baseColorTextureIndex = gltfImageMap[srcImg];
-                                    }
-                                }
-                            }
+                            currentMaterial.baseColorTextureIndex = resolveTexture(pbr.baseColorTexture.index, true);
+                            // Packed texture: G = roughness, B = metallic
+                            currentMaterial.metallicRoughnessTextureIndex = resolveTexture(pbr.metallicRoughnessTexture.index, false);
+                            currentMaterial.emissiveTextureIndex = resolveTexture(mat.emissiveTexture.index, true);
+                            currentMaterial.normalTextureIndex = resolveTexture(mat.normalTexture.index, false);
+                            currentMaterial.normalScale = static_cast<float>(mat.normalTexture.scale);
 
-                            // 4. Metallic/Roughness Texture Index (Packed texture: G = Roughness, B = Metallic)
-                            if (pbr.metallicRoughnessTexture.index >= 0) {
-                                int srcImg = model.textures[pbr.metallicRoughnessTexture.index].source;
-                                if (srcImg >= 0 && srcImg < model.images.size()) {
-                                    if (gltfImageMap[srcImg] != -1) {
-                                        currentMaterial.metallicRoughnessTextureIndex = gltfImageMap[srcImg];
-                                    } else {
-                                        const auto& img = model.images[srcImg];
-                                        TextureData tex{ img.image, img.width, img.height, img.component };
-                                        tex.srgb = false; // Roughness/metallic are linear values, not colours
-                                        outTextures.push_back(tex);
-                                        gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
-                                        currentMaterial.metallicRoughnessTextureIndex = gltfImageMap[srcImg];
-                                    }
-                                }
-                            } else {
-                                currentMaterial.metallicRoughnessTextureIndex = -1;
-                            }
-
-                            // 5. Emissive Factors
                             if (mat.emissiveFactor.size() >= 3) {
-                                currentMaterial.emissiveFactor[0] = static_cast<float>(mat.emissiveFactor[0]);
-                                currentMaterial.emissiveFactor[1] = static_cast<float>(mat.emissiveFactor[1]);
-                                currentMaterial.emissiveFactor[2] = static_cast<float>(mat.emissiveFactor[2]);
-                            } else {
-                                currentMaterial.emissiveFactor[0] = 0.0f;
-                                currentMaterial.emissiveFactor[1] = 0.0f;
-                                currentMaterial.emissiveFactor[2] = 0.0f;
-                            }
-
-                            // 6. KHR_materials_emissive_strength Extension Parsing
-                            currentMaterial.emissiveStrength = 1.0f;
-                            if (mat.extensions.find("KHR_materials_emissive_strength") != mat.extensions.end()) {
-                                const auto& ext = mat.extensions.at("KHR_materials_emissive_strength");
-                                if (ext.IsObject() && ext.Has("emissiveStrength")) {
-                                    currentMaterial.emissiveStrength = static_cast<float>(ext.Get("emissiveStrength").GetNumberAsDouble());
+                                for (int c = 0; c < 3; c++) {
+                                    currentMaterial.emissiveFactor[c] = static_cast<float>(mat.emissiveFactor[c]);
                                 }
                             }
 
-                            // 7. Emissive Texture Index
-                            if (mat.emissiveTexture.index >= 0) {
-                                int srcImg = model.textures[mat.emissiveTexture.index].source;
-                                if (srcImg >= 0 && srcImg < model.images.size()) {
-                                    if (gltfImageMap[srcImg] != -1) {
-                                        currentMaterial.emissiveTextureIndex = gltfImageMap[srcImg];
-                                    } else {
-                                        const auto& img = model.images[srcImg];
-                                        TextureData tex{ img.image, img.width, img.height, img.component };
-                                        outTextures.push_back(tex);
-                                        gltfImageMap[srcImg] = static_cast<int>(outTextures.size() - 1);
-                                        currentMaterial.emissiveTextureIndex = gltfImageMap[srcImg];
-                                    }
+                            currentMaterial.emissiveStrength = extensionNumber(mat.extensions, "KHR_materials_emissive_strength", "emissiveStrength", 1.0f);
+                            currentMaterial.transmissionFactor = extensionNumber(mat.extensions, "KHR_materials_transmission", "transmissionFactor", 0.0f);
+                            currentMaterial.specularFactor = extensionNumber(mat.extensions, "KHR_materials_specular", "specularFactor", 1.0f);
+
+                            // KHR_texture_transform (tiling). Exporters write the same transform on every texture of a material.
+                            auto transformIt = pbr.baseColorTexture.extensions.find("KHR_texture_transform");
+                            if (transformIt != pbr.baseColorTexture.extensions.end() && transformIt->second.IsObject()) {
+                                const auto& transform = transformIt->second;
+                                if (transform.Has("scale") && transform.Get("scale").ArrayLen() == 2) {
+                                    currentMaterial.uvScale[0] = static_cast<float>(transform.Get("scale").Get(0).GetNumberAsDouble());
+                                    currentMaterial.uvScale[1] = static_cast<float>(transform.Get("scale").Get(1).GetNumberAsDouble());
                                 }
-                            } else {
-                                currentMaterial.emissiveTextureIndex = -1;
+                                if (transform.Has("rotation")) {
+                                    currentMaterial.uvRotation = static_cast<float>(transform.Get("rotation").GetNumberAsDouble());
+                                }
                             }
                         }
 
@@ -403,6 +383,18 @@ namespace Fox {
                             normBufferBytes = &model.buffers[normView.buffer].data[normView.byteOffset];
                             normByteStride = normView.byteStride ? normView.byteStride : 3 * sizeof(float);
                             normAccessorByteOffset = normAccessor.byteOffset;
+                        }
+
+                        const unsigned char* tangentBufferBytes = nullptr;
+                        size_t tangentByteStride = 4 * sizeof(float);
+                        size_t tangentAccessorByteOffset = 0;
+
+                        if (primitive.attributes.find("TANGENT") != primitive.attributes.end()) {
+                            const auto& tangentAccessor = model.accessors[primitive.attributes.at("TANGENT")];
+                            const auto& tangentView = model.bufferViews[tangentAccessor.bufferView];
+                            tangentBufferBytes = &model.buffers[tangentView.buffer].data[tangentView.byteOffset];
+                            tangentByteStride = tangentView.byteStride ? tangentView.byteStride : 4 * sizeof(float);
+                            tangentAccessorByteOffset = tangentAccessor.byteOffset;
                         }
 
                         const unsigned char* texBufferBytes = nullptr;
@@ -436,6 +428,14 @@ namespace Fox {
                                 v.texCoord[0] = pTex[0];
                                 v.texCoord[1] = pTex[1];
                             }
+                            if (tangentBufferBytes) {
+                                const float* pTangent = reinterpret_cast<const float*>(tangentBufferBytes + tangentAccessorByteOffset + (i * tangentByteStride));
+                                v.tangent[0] = pTangent[0];
+                                v.tangent[1] = pTangent[1];
+                                v.tangent[2] = pTangent[2];
+                                v.tangent[3] = pTangent[3];
+                            }
+
                             outVertices.push_back(v);
                         }
 
@@ -476,6 +476,9 @@ namespace Fox {
 
                             Fox::Core::Loaders::GLTF::LightData quadLight = CreateQuadAreaLightFromGLTF(quadVertices, currentMaterial, worldMatrix);
                             outLights.push_back(quadLight);
+
+                            // Lets the path tracer recognise the surface as this light when a ray hits it directly
+                            outMaterials[materialIdx].lightIndex = static_cast<int>(outLights.size() - 1);
                         }
 
                         // --- Record Ray Tracing Instance Info & Submesh Configuration ---

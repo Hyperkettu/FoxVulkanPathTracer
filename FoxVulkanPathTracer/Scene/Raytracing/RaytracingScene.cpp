@@ -548,7 +548,13 @@ namespace Fox {
                     transforms.push_back(transform);
                 }
 
-                materials.insert(materials.end(), meshMaterials.begin(), meshMaterials.end());
+                const int lightOffset = static_cast<int>(lights.size());
+                for (Fox::Graphics::Vulkan::Material material : meshMaterials) {
+                    if (material.lightIndex >= 0) {
+                        material.lightIndex += lightOffset;
+                    }
+                    materials.push_back(material);
+                }
 
                 // Lights are stored in world space
                 const glm::mat3 linearTransform(transform);
@@ -557,6 +563,8 @@ namespace Fox {
                         light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
                         light.tangentX = linearTransform * light.tangentX;
                         light.tangentY = linearTransform * light.tangentY;
+                        // The tangents are half extents
+                        light.area = glm::length(glm::cross(2.0f * light.tangentX, 2.0f * light.tangentY));
                     }
 
                     light.normal = glm::normalize(linearTransform * light.normal);
@@ -572,14 +580,66 @@ namespace Fox {
                 materialOffset += static_cast<uint32_t>(meshMaterials.size());
             }
 
+            void RayTracingScene::AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material) {
+                const float corners[4][2] = { { -1.0f, -1.0f }, { -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f } };
+
+                for (const auto& corner : corners) {
+                    Fox::Graphics::Vulkan::Vertex vertex{};
+                    vertex.position[0] = corner[0] * halfSize;
+                    vertex.position[1] = height;
+                    vertex.position[2] = corner[1] * halfSize;
+                    vertex.normal[1] = 1.0f;
+                    vertex.uv[0] = corner[0] * 0.5f + 0.5f;
+                    vertex.uv[1] = corner[1] * 0.5f + 0.5f;
+                    vertices.push_back(vertex);
+                }
+
+                for (uint32_t index : { 0u, 1u, 2u, 0u, 2u, 3u }) {
+                    indices.push_back(vertexOffset + index);
+                }
+
+                Fox::Graphics::Vulkan::Submesh submesh{};
+                submesh.vertexOffset = vertexOffset;
+                submesh.indexOffset = indexOffset;
+                submesh.vertexCount = 4;
+                submesh.indexCount = 6;
+                submesh.materialIndex = materialOffset;
+                submeshes.push_back(submesh);
+                transforms.push_back(glm::mat4(1.0f));
+
+                Fox::Graphics::Vulkan::RayTracing::RayTracingInstance instance{};
+                instance.firstIndex = indexOffset;
+                instance.indexCount = 6;
+                instance.materialIndex = materialOffset;
+                instance.transform = glm::mat4(1.0f);
+                rayTracingInstances.push_back(instance);
+
+                Fox::Graphics::Vulkan::Material groundMaterial = material;
+                groundMaterial.lightIndex = -1;
+                materials.push_back(groundMaterial);
+
+                vertexOffset += 4;
+                indexOffset += 6;
+                materialOffset += 1;
+            }
+
+            void RayTracingScene::AddSun(const glm::vec3& directionToSun, const glm::vec3& irradiance, float angularRadius) {
+                Fox::Graphics::Vulkan::Light sun{};
+                sun.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::Directional);
+                sun.normal = glm::normalize(directionToSun);
+                sun.color = irradiance;
+                // Directional lights have no area; the field holds the angular radius of the disc in radians
+                sun.area = glm::radians(angularRadius);
+                lights.push_back(sun);
+            }
+
             void RayTracingScene::UploadGeometry() {
-                // The light buffer must never be empty: fall back to a default sun.
+                // The scene is always lit by the environment map; analytic lights are optional.
+                lightCount = static_cast<uint32_t>(lights.size());
+
+                // A storage buffer cannot be empty, so keep one unused entry around.
                 if (lights.empty()) {
-                    Fox::Graphics::Vulkan::Light sun{};
-                    sun.color = glm::vec3(DEFAULT_SUN_RADIANCE);
-                    sun.normal = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f)); // Direction towards the light
-                    sun.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::Directional);
-                    lights.push_back(sun);
+                    lights.push_back(Fox::Graphics::Vulkan::Light{});
                 }
 
                 // Acceleration structure build inputs
@@ -627,7 +687,9 @@ namespace Fox {
                         subMesh.vertexOffset
                     );
 
-                    AddInstance(blasIndex, matrix, static_cast<uint32_t>(i), 0xFF);
+                    // Glass gets its own visibility bit so shadow rays can pass through windows
+                    const bool isGlass = materials[subMesh.materialIndex].transmission > 0.5f;
+                    AddInstance(blasIndex, matrix, static_cast<uint32_t>(i), isGlass ? INSTANCE_MASK_GLASS : INSTANCE_MASK_OPAQUE);
                 }
             }
 

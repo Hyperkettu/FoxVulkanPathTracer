@@ -6,8 +6,8 @@ namespace Fox {
 
 		namespace Vulkan {
 
-			// Vulkan backend. Each frame it path traces the scene into an HDR accumulation image
-			// and then tone maps that image into the swapchain.
+			// Vulkan backend. Each frame it path traces the scene into a G-buffer, runs the active
+			// denoiser over it and tone maps the result into the swapchain.
 			class VulkanRHI : public Fox::Graphics::RHI {
 			public:
 				VulkanRHI() = default;
@@ -35,18 +35,21 @@ namespace Fox {
 
 				// --- Resources ---
 				void CreateSwapchain();
-				void CreateAccumulationTexture();
+				void CreateGBuffer();
 				void CreateFrameDescriptors();
-				void BindAccumulationTexture();
+				void BindGBuffer();
+				void SelectDenoiser(size_t index);
+				void UpdateWindowTitle(float deltaTime);
 
 				// --- Per frame ---
 				void HandleCameraInput(float deltaTime);
-				void UpdateCameraUniforms(FrameResource& frameResource);
+				void UpdateCameraUniforms(FrameResource& frameResource, float deltaTime);
+				glm::vec2 NextJitter() const;
 				void RecordFrame(FrameResource& frameResource, uint32_t imageIndex);
 				VkResult Present(uint32_t imageIndex, VkSemaphore waitSemaphore);
 
-				// Discards the accumulated samples; the next frame starts a fresh average.
-				void ResetAccumulation() { accumulatedFrames = 0; }
+				// Tells the denoiser that the previous frame must not be reused (resize, lighting change...).
+				void ResetHistory() { resetHistory = true; }
 
 			private:
 				Fox::Graphics::RendererConfig config;
@@ -73,8 +76,16 @@ namespace Fox {
 
 				std::vector<std::unique_ptr<Fox::Graphics::Vulkan::FrameResource>> frameResources;
 
-				// Linear HDR running average written by the ray generation shader and read by the tone mapper.
-				std::unique_ptr<Fox::Graphics::Vulkan::StorageTexture> accumulationTexture;
+				// Path tracer outputs of the current frame and the denoisers that can turn them into the final image.
+				DeviceContext deviceContext;
+				std::unique_ptr<RayTracing::GBuffer> gbuffer;
+				std::vector<std::unique_ptr<RayTracing::Denoiser>> denoisers;
+				size_t activeDenoiser = 0;
+				RayTracing::DenoiserFrameInfo denoiserFrame;
+
+				// Extensions requested by the denoisers; kept alive because Vulkan is handed pointers into them
+				std::vector<std::string> optionalInstanceExtensions;
+				std::vector<std::string> optionalDeviceExtensions;
 				std::unique_ptr<Fox::Graphics::Vulkan::PostProcessor> postProcessor;
 
 				std::unique_ptr<Fox::Scene::RayTracing::MainRayTracingScene> raytracingScene;
@@ -82,10 +93,21 @@ namespace Fox {
 				// --- Frame state ---
 				uint32_t currentFrame = 0;      // Index into frameResources
 				uint32_t frameCounter = 0;      // Monotonic, seeds the per-frame RNG
-				uint32_t accumulatedFrames = 0; // Frames blended into accumulationTexture so far
+				bool resetHistory = true;       // The next frame must not reuse temporal history
 
-				glm::vec3 lastCameraPosition{ 0.0f };
-				glm::vec3 lastCameraForward{ 0.0f };
+				struct CameraState {
+					glm::vec3 position{ 0.0f };
+					glm::vec3 forward{ 0.0f };
+					glm::vec3 right{ 0.0f };
+					glm::vec3 up{ 0.0f };
+				};
+				CameraState previousCamera; // For motion vectors
+
+				uint32_t samplesPerPixel = 2; // Paths traced per pixel and frame
+
+				// Frame rate shown in the window title
+				float titleTimer = 0.0f;
+				uint32_t titleFrames = 0;
 
 				// --- Input ---
 				float cameraSpeed = 10.0f;

@@ -176,6 +176,11 @@
     <ClCompile Include="Graphics\Vulkan\PipelineBuilder.cpp" />
     <ClCompile Include="Graphics\Vulkan\PipelineLayout.cpp" />
     <ClCompile Include="Graphics\Vulkan\PostProcess.cpp" />
+    <ClCompile Include="Graphics\Vulkan\ComputePass.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\GBuffer.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\Denoiser.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\DlssRayReconstruction.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipeline.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\RaytracingPipelineBuilder.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\SpatiotemporalVarianceGuidedFilter.cpp" />
@@ -246,6 +251,11 @@
     <ClInclude Include="Graphics\Vulkan\PipelineBuilder.h" />
     <ClInclude Include="Graphics\Vulkan\PipelineLayout.h" />
     <ClInclude Include="Graphics\Vulkan\PostProcess.h" />
+    <ClInclude Include="Graphics\Vulkan\ComputePass.h" />
+    <ClInclude Include="Graphics\Vulkan\DeviceContext.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\GBuffer.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\DlssRayReconstruction.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccelerationStructure.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\Denoiser.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\RaytracingInstance.h" />
@@ -287,7 +297,6 @@
     </SlangShader>
     <SlangShader Include="Shaders\closest_hit.slang">
       <Stage>closesthit</Stage>
-      <Profile>spirv_1_5+spvRayQueryKHR</Profile>
     </SlangShader>
     <SlangShader Include="Shaders\tonemapping_mesh.slang">
       <Stage>mesh</Stage>
@@ -295,10 +304,31 @@
     <SlangShader Include="Shaders\tonemapping_frag.slang">
       <Stage>fragment</Stage>
     </SlangShader>
+    <SlangShader Include="Shaders\accumulate.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\svgf_temporal.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\svgf_variance.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\svgf_atrous.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\svgf_modulate.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\dlss_prepare.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
   </ItemGroup>
   <ItemGroup>
-    <!-- Shared include and shader experiments that are not part of the build -->
-    <None Include="Shaders\common.slang" />
+    <!-- Shared includes (SlangInclude: editing one rebuilds every shader) and shader experiments that are not part of the build -->
+    <SlangInclude Include="Shaders\common.slang" />
+    <SlangInclude Include="Shaders\denoise_common.slang" />
+    <SlangInclude Include="Shaders\bsdf.slang" />
+    <SlangInclude Include="Shaders\lighting.slang" />
     <None Include="Shaders\closest_hit_orig.slang" />
     <None Include="Shaders\closest_hit_reflection_mirror.slang" />
     <None Include="Shaders\visualize_normals.slang" />
@@ -309,14 +339,38 @@
       <Profile>spirv_1_5</Profile>
     </SlangShader>
   </ItemDefinitionGroup>
+  <!-- Optional: NVIDIA DLSS Ray Reconstruction. Enabled automatically when the DLSS SDK has been
+       cloned into ThirdParty\DLSS next to the solution (see the readme); without it the project
+       builds as usual and the DLSS denoiser is simply not compiled in. -->
+  <PropertyGroup>
+    <DlssSdkDir>$(SolutionDir)ThirdParty\DLSS\</DlssSdkDir>
+    <FoxEnableDlss Condition="'$(Platform)'=='x64' And Exists('$(DlssSdkDir)include\nvsdk_ngx.h')">true</FoxEnableDlss>
+    <!-- NGX import library built against the dynamic CRT; the _dbg variant matches Debug (/MDd) -->
+    <DlssNgxLib>nvsdk_ngx_d.lib</DlssNgxLib>
+    <DlssNgxLib Condition="'$(Configuration)'=='Debug'">nvsdk_ngx_d_dbg.lib</DlssNgxLib>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(FoxEnableDlss)'=='true'">
+    <ClCompile>
+      <PreprocessorDefinitions>FOX_ENABLE_DLSS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(DlssSdkDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(DlssSdkDir)lib\Windows_x86_64\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(DlssNgxLib);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <!-- Compiles the Slang shaders with the Vulkan SDK's slangc. Incremental: a shader is only
-       rebuilt when it, or the shared common.slang include, is newer than its .spv output. -->
-  <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);$(ProjectDir)Shaders\common.slang" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename).spv')">
+       rebuilt when it, or one of the shared SlangInclude files, is newer than its .spv output. -->
+  <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);@(SlangInclude)" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename).spv')">
     <Error Condition="'$(VULKAN_SDK)' == ''" Text="The VULKAN_SDK environment variable is not set. Install the Vulkan SDK (it provides the headers, SDL2, glm and the slangc shader compiler)." />
     <Message Importance="high" Text="slangc %(SlangShader.Identity)" />
     <Exec Command="&quot;$(VULKAN_SDK)\Bin\slangc.exe&quot; &quot;%(SlangShader.FullPath)&quot; -stage %(SlangShader.Stage) -entry main -profile %(SlangShader.Profile) -target spirv -o &quot;$(ProjectDir)Shaders\%(SlangShader.Filename).spv&quot;" />
+  </Target>
+  <!-- NGX loads the Ray Reconstruction model from the executable's folder -->
+  <Target Name="CopyDlssRuntime" AfterTargets="Build" Condition="'$(FoxEnableDlss)'=='true'">
+    <Copy SourceFiles="$(DlssSdkDir)lib\Windows_x86_64\rel\nvngx_dlssd.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

@@ -5,13 +5,22 @@ rem Requires the Vulkan SDK, which provides slangc.
 setlocal
 cd /d "%~dp0"
 set SLANGC="%VULKAN_SDK%\Bin\slangc.exe"
+set OPTIONS=-entry main -profile spirv_1_5 -target spirv
 
-%SLANGC% raygen.slang -stage raygeneration -entry main -profile spirv_1_5 -target spirv -o raygen.spv || goto :error
-%SLANGC% miss.slang -stage miss -entry main -profile spirv_1_5 -target spirv -o miss.spv || goto :error
-%SLANGC% shadowmiss.slang -stage miss -entry main -profile spirv_1_5 -target spirv -o shadowmiss.spv || goto :error
-%SLANGC% closest_hit.slang -stage closesthit -entry main -profile spirv_1_5+spvRayQueryKHR -target spirv -o closest_hit.spv || goto :error
-%SLANGC% tonemapping_mesh.slang -stage mesh -entry main -profile spirv_1_5 -target spirv -o tonemapping_mesh.spv || goto :error
-%SLANGC% tonemapping_frag.slang -stage fragment -entry main -profile spirv_1_5 -target spirv -o tonemapping_frag.spv || goto :error
+rem Ray tracing pipeline
+%SLANGC% raygen.slang -stage raygeneration %OPTIONS% -o raygen.spv || goto :error
+%SLANGC% miss.slang -stage miss %OPTIONS% -o miss.spv || goto :error
+%SLANGC% shadowmiss.slang -stage miss %OPTIONS% -o shadowmiss.spv || goto :error
+%SLANGC% closest_hit.slang -stage closesthit %OPTIONS% -o closest_hit.spv || goto :error
+
+rem Tone mapping
+%SLANGC% tonemapping_mesh.slang -stage mesh %OPTIONS% -o tonemapping_mesh.spv || goto :error
+%SLANGC% tonemapping_frag.slang -stage fragment %OPTIONS% -o tonemapping_frag.spv || goto :error
+
+rem Denoisers
+for %%S in (accumulate svgf_temporal svgf_variance svgf_atrous svgf_modulate dlss_prepare) do (
+    %SLANGC% %%S.slang -stage compute %OPTIONS% -o %%S.spv || goto :error
+)
 
 echo All shaders compiled.
 exit /b 0
