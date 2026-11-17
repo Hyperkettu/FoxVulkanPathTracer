@@ -322,6 +322,7 @@ Press `E` for edit mode: the mouse pointer appears and the window title shows th
 | Right mouse + drag | Look around (`W` `A` `S` `D` `R` `F` still move) |
 | `Delete` | Remove the selected object |
 | `K` | Add a camera path key from the view |
+| `B` | Terrain brush on / off (left mouse on the terrain sculpts or paints, `Ctrl` inverts, `[` `]` radius) |
 | `E` | Leave edit mode |
 
 Each object rotates and scales about its origin. `RayTracingScene::SetObjectTransform` moves objects from code too.
@@ -368,6 +369,46 @@ Rotations are Euler angles in degrees. A tree's `shape`, `look` and `wind` hold 
 (saved in full, so a file shows every parameter). Adding, removing or loading rebuilds the scene's acceleration
 structures; models already loaded once are kept in memory, so this takes about half a second with two displaced
 cabins (the first load of a displaced model takes a few seconds).
+
+### Terrain
+
+In place of the flat ground plane the scene can have a terrain: **Terrain instead of the ground plane** in the
+**Terrain** window (edit mode). It starts flat at the ground height, all grass, 400 m across with a height every
+0.78 m (513 x 513) and a 1024 x 1024 blend map; **Size** changes those (the existing shape and paint are resampled).
+`Scenes/terrain.json` is a small example.
+
+**Brush** (left mouse on the terrain while *Brush on* is ticked, `B`): a round dab with a smooth edge, applied for as
+long as the button is held. *Raise* / *Lower* (meters per second at the center, `Ctrl` swaps them), *Smooth*,
+*Flatten* (to the height where the stroke started) and *Paint* (one of the four layers). *Hardness* keeps full
+strength further out before the soft edge; `[` and `]` change the radius. Clicks off the terrain still select
+objects.
+
+**Layers**: four ground types, one per channel of the blend map. By default the sets in `Textures/terrain` (grass,
+rocky, badland, bumpy). Each layer has a texture set (any folder with `albedo.png`, `normal.png`, `roughness.png`,
+`metallic.png`, `ao.png`, `displacement.png`, or single files), a tiling in meters, a tint, a roughness factor and a
+normal strength; changes apply at once, without rebuilding the scene.
+
+How it looks right: the layer textures are not mapped with the mesh's texture coordinates but projected from the
+position along the three axes (triplanar mapping, weighted by the surface normal), so steep slopes and cliffs keep
+the texture's proportions instead of stretching it; normal maps are projected the same way ("whiteout" blend). Where
+layers mix, each layer's height map decides which one shows (*blend softness*): rocks poke out between grass instead
+of the two fading into each other. All of it is in `Shaders/terrain.slang`.
+
+How editing stays fast: the terrain is one mesh whose vertices are rewritten in place (only the rows a dab touched),
+its acceleration structure refitted every frame of a stroke and built anew when the button is released; only the
+changed texels of the blend map are uploaded (`RayTracingScene::AddEditableSurface`, `UpdateSurfaceVertices`,
+`UpdateTextureRegion`, recorded with the frame in `RecordEdits`).
+
+Saved with the scene: the settings and layers in the scene file, the heights in `<scene>.terrain-heights.bin` (32 bit
+floats) and the blend map in `<scene>.terrain-blend.png` (RGBA = the four layers' weights; it can be painted in any
+image editor too).
+
+```json
+"environment": { "terrain": true, ... },
+"terrain": { "size": 400, "resolution": 513, "blendResolution": 1024, "position": [0, -3.73, 0], "blendSoftness": 0.15,
+             "layers": [ { "name": "Grass", "albedo": "Textures/terrain/grasss/albedo.png", "tiling": 2.5, ... }, ... ],
+             "heights": "Scenes/terrain.terrain-heights.bin", "blend": "Scenes/terrain.terrain-blend.png" }
+```
 
 ### Camera paths
 
@@ -443,6 +484,7 @@ Below is the active development checklist for the renderer.
 - [x] Denoiser integration (SVGF & DLSS Ray Reconstruction)
 
 ### ⛰️ Procedural & Special Effects
+- [x] Terrain: sculpted and painted in the editor (triplanar, height blended layers)
 - [ ] Procedural terrain generation
 - [x] Procedural tree generation
 - [ ] Particle systems and GPU-driven effects

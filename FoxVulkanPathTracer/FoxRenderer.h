@@ -122,11 +122,13 @@
 #include "FoxVulkanPathTracer/Scene/MainScene.h"
 #include "FoxVulkanPathTracer/Scene/TextureLibrary.h"
 #include "FoxVulkanPathTracer/Scene/CameraManager.h"
+#include "FoxVulkanPathTracer/Scene/Terrain.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 #include "FoxVulkanPathTracer/Editor/TreeEditor.h"
 #include "FoxVulkanPathTracer/Editor/SceneEditor.h"
 #include "FoxVulkanPathTracer/Editor/CameraEditor.h"
+#include "FoxVulkanPathTracer/Editor/TerrainEditor.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 

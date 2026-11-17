@@ -120,6 +120,32 @@ namespace Fox {
                 // Throws std::runtime_error (scene unchanged) when the meshes do not fit the reserved room
                 std::vector<DynamicMeshHandle> RebuildDynamicMeshes(const std::vector<DynamicMesh>& meshes);
 
+                // --- Editable surfaces: generated geometry whose vertices change while the scene renders (terrain) ---
+                //
+                // Not movable. Its material comes first in the material buffer, then extraMaterials (a terrain's
+                // layers: the surface material's layerMaterial is set to point at them). Returns the surface.
+                size_t AddEditableSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                    const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material,
+                    const std::vector<Fox::Graphics::Vulkan::Material>& extraMaterials, const glm::mat4& transform, const std::string& name);
+
+                // New vertices [first, first + count) of a surface, uploaded with the next RecordFrameUpdate. Its
+                // acceleration structure is refitted then (fast, but the tree gets looser as the shape changes);
+                // RebuildSurface builds it anew instead, best once a stroke of edits is done.
+                void UpdateSurfaceVertices(size_t surface, uint32_t first, const Fox::Graphics::Vulkan::Vertex* data, uint32_t count);
+                void RebuildSurface(size_t surface);
+
+                // The surface's material index (its extra materials follow it)
+                uint32_t GetSurfaceMaterial(size_t surface) const { return editableSurfaces[surface].material; }
+                // The surface's object (for its name; it cannot be moved)
+                size_t GetSurfaceObject(size_t surface) const { return editableSurfaces[surface].object; }
+
+                // Replaces a material in the scene's material buffer, uploaded with the next RecordFrameUpdate
+                void SetMaterial(uint32_t index, const Fox::Graphics::Vulkan::Material& material);
+
+                // Replaces texels of a texture (bindless index; 8 bit RGBA, tightly packed rows), uploaded with the
+                // next RecordFrameUpdate
+                void UpdateTextureRegion(int texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t> rgba);
+
                 // Room reserved for dynamic meshes, and how much of it is in use
                 static constexpr uint32_t DYNAMIC_VERTEX_CAPACITY = 2'500'000;
                 static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 12'000'000;
@@ -330,6 +356,32 @@ namespace Fox {
                     uint32_t joints = 0;
                 };
                 StaticCounts staticCounts;
+
+                // Editable surfaces and their pending uploads (RecordEdits)
+                struct EditableSurface {
+                    size_t record = 0;
+                    size_t object = 0;
+                    uint32_t firstVertex = 0; // In the scene's vertex buffers
+                    uint32_t vertexCount = 0;
+                    uint32_t material = 0;
+                    uint32_t dirtyBegin = UINT32_MAX, dirtyEnd = 0; // Vertices to upload, surface relative
+                    bool refit = false;
+                    bool rebuild = false;
+                };
+                std::vector<EditableSurface> editableSurfaces;
+                struct TextureUpdate {
+                    int texture = -1;
+                    uint32_t x = 0, y = 0, width = 0, height = 0;
+                    std::vector<uint8_t> rgba;
+                };
+                std::vector<TextureUpdate> textureUpdates;
+                std::vector<uint32_t> dirtyMaterials;
+                std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Buffer>> editStaging; // Per frame in flight
+                std::vector<VkDeviceSize> editStagingSize;
+                VkBuffer editScratchBuffer = VK_NULL_HANDLE;
+                VkDeviceMemory editScratchMemory = VK_NULL_HANDLE;
+                VkDeviceSize editScratchSize = 0;
+                void RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot);
 
                 // Builds the bottom level structures from index first on (with their own scratch memory)
                 void BuildDynamicBLAS(size_t first);

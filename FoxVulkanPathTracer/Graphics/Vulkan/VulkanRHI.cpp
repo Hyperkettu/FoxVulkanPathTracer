@@ -799,6 +799,10 @@ namespace Fox {
 				BuildUserInterface();
 				ApplySceneChanges();
 
+				// Terrain brush strokes, and what they changed on its way to the GPU
+				terrainEditor.Update(*raytracingScene, GizmoView(), MouseInDisplayPixels(), deltaTime,
+					inputManager && (inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL)));
+
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				raytracingScene->Update(deltaTime);
 
@@ -1122,6 +1126,7 @@ namespace Fox {
 					if (cameraEditor.Draw(raytracingScene->GetCameraManager(), *camera, GizmoView(), uiScale)) {
 						ResetHistory(); // The camera jumped
 					}
+					terrainEditor.Draw(*raytracingScene, GizmoView(), MouseInDisplayPixels(), ImGui::GetIO().WantCaptureMouse, uiScale);
 				}
 
 				ImGui::Render();
@@ -1227,6 +1232,7 @@ namespace Fox {
 			void VulkanRHI::SetEditMode(bool enabled) {
 				editMode = enabled;
 				gizmo.MouseUp();
+				terrainEditor.MouseUp();
 
 				// Edit mode frees the mouse pointer for clicking; otherwise the mouse looks around
 				if (inputManager) {
@@ -1312,6 +1318,9 @@ namespace Fox {
 
 					// Grab a handle of the gizmo, or select what is under the mouse (answered a frame or two later)
 					const glm::vec2 mouse = MouseInDisplayPixels();
+					if (terrainEditor.MouseDown(*raytracingScene, GizmoView(), mouse)) {
+						return; // Sculpting or painting
+					}
 					if (!gizmo.MouseDown(mouse, GizmoView(), *raytracingScene)) {
 						pickRequested = true;
 						pickMouse = mouse;
@@ -1321,6 +1330,7 @@ namespace Fox {
 				mouseButtonReleaseBind = input.OnMouseButtonReleased.Connect([this](Uint8 button) {
 					if (button == SDL_BUTTON_LEFT) {
 						gizmo.MouseUp();
+						terrainEditor.MouseUp();
 					}
 				});
 
@@ -1356,6 +1366,19 @@ namespace Fox {
 						UpdateWindowTitle(0.0f);
 						break;
 					}
+
+					// Terrain brush on / off, and its size
+					case SDL_SCANCODE_B:
+						if (editMode) {
+							terrainEditor.ToggleBrush();
+						}
+						break;
+					case SDL_SCANCODE_LEFTBRACKET:
+					case SDL_SCANCODE_RIGHTBRACKET:
+						if (editMode) {
+							terrainEditor.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
+						}
+						break;
 
 					// A camera path key where the camera is
 					case SDL_SCANCODE_K:

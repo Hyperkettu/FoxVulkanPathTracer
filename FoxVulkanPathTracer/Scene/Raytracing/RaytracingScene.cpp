@@ -100,6 +100,8 @@ namespace Fox {
                 indexOffset = 0;
                 materialOffset = 0;
                 opacityGeometries.clear();
+                editableSurfaces.clear();
+                dirtyMaterials.clear();
                 staticCounts = StaticCounts{};
                 tlasDirty = false;
                 lightsDirty = false;
@@ -129,6 +131,13 @@ namespace Fox {
                 if (dynamicScratchBuffer != VK_NULL_HANDLE) {
                     vkDestroyBuffer(device, dynamicScratchBuffer, nullptr);
                     vkFreeMemory(device, dynamicScratchMemory, nullptr);
+                }
+                if (editScratchBuffer != VK_NULL_HANDLE) {
+                    vkDestroyBuffer(device, editScratchBuffer, nullptr);
+                    vkFreeMemory(device, editScratchMemory, nullptr);
+                    editScratchBuffer = VK_NULL_HANDLE;
+                    editScratchMemory = VK_NULL_HANDLE;
+                    editScratchSize = 0;
                 }
 
                 // Destroy BLASes
@@ -1003,6 +1012,9 @@ namespace Fox {
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                     0, 1, &afterWrite, 0, nullptr, 0, nullptr);
 
+                // Edited surfaces (terrain), materials and textures
+                RecordEdits(cmd, frameSlot);
+
                 // Deform the skinned meshes every frame (also when their joints did not change: the previous
                 // positions must catch up, or a mesh that stopped would keep its last motion vectors)
                 if (skinningPass) {
@@ -1604,6 +1616,251 @@ namespace Fox {
                     .BuildAccelerationStructures(*this)
                     .End()
                     .SubmitAndWait(queue);
+            }
+
+            // --- Editable surfaces (terrain) ---
+
+            size_t RayTracingScene::AddEditableSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material,
+                const std::vector<Fox::Graphics::Vulkan::Material>& extraMaterials, const glm::mat4& transform, const std::string& name) {
+                EditableSurface surface;
+                surface.firstVertex = vertexOffset;
+                surface.vertexCount = static_cast<uint32_t>(surfaceVertices.size());
+                surface.material = materialOffset;
+
+                Fox::Graphics::Vulkan::Material surfaceMaterial = material;
+                surfaceMaterial.layerMaterial = extraMaterials.empty() ? -1 : static_cast<int>(materialOffset + 1);
+                AddGeneratedSurface(surfaceVertices, surfaceIndices, surfaceMaterial, transform, name, false);
+                meshRecords.back().dynamic = true; // Its acceleration structure can be refitted
+                surface.record = meshRecords.size() - 1;
+                surface.object = placements.size() - 1;
+
+                for (const Fox::Graphics::Vulkan::Material& extra : extraMaterials) {
+                    materials.push_back(extra);
+                    materialOffset++;
+                }
+
+                editableSurfaces.push_back(surface);
+                return editableSurfaces.size() - 1;
+            }
+
+            void RayTracingScene::UpdateSurfaceVertices(size_t surfaceIndex, uint32_t first, const Fox::Graphics::Vulkan::Vertex* data, uint32_t count) {
+                EditableSurface& surface = editableSurfaces[surfaceIndex];
+                if (first >= surface.vertexCount) {
+                    return;
+                }
+                count = std::min(count, surface.vertexCount - first);
+                std::copy(data, data + count, vertices.begin() + surface.firstVertex + first);
+                surface.dirtyBegin = std::min(surface.dirtyBegin, first);
+                surface.dirtyEnd = std::max(surface.dirtyEnd, first + count);
+                surface.refit = true;
+            }
+
+            void RayTracingScene::RebuildSurface(size_t surface) {
+                editableSurfaces[surface].rebuild = true;
+            }
+
+            void RayTracingScene::SetMaterial(uint32_t index, const Fox::Graphics::Vulkan::Material& material) {
+                if (index >= materials.size()) {
+                    return;
+                }
+                materials[index] = material;
+                if (std::find(dirtyMaterials.begin(), dirtyMaterials.end(), index) == dirtyMaterials.end()) {
+                    dirtyMaterials.push_back(index);
+                }
+            }
+
+            void RayTracingScene::UpdateTextureRegion(int texture, uint32_t x, uint32_t y, uint32_t width, uint32_t height, std::vector<uint8_t> rgba) {
+                if (texture < 0 || width == 0 || height == 0 || rgba.size() < static_cast<size_t>(width) * height * 4) {
+                    return;
+                }
+                textureUpdates.push_back({ texture, x, y, width, height, std::move(rgba) });
+            }
+
+            void RayTracingScene::RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot) {
+                using Fox::Graphics::Vulkan::Vertex;
+
+                VkDeviceSize stagingBytes = 0;
+                bool structures = false;
+                for (const EditableSurface& surface : editableSurfaces) {
+                    if (surface.dirtyBegin < surface.dirtyEnd) {
+                        stagingBytes += sizeof(Vertex) * (surface.dirtyEnd - surface.dirtyBegin);
+                    }
+                    structures = structures || surface.refit || surface.rebuild;
+                }
+                for (const TextureUpdate& update : textureUpdates) {
+                    stagingBytes += update.rgba.size();
+                }
+                if (stagingBytes == 0 && dirtyMaterials.empty() && !structures) {
+                    return;
+                }
+
+                // --- Uploads: vertices and texels through this frame slot's staging buffer, materials inline ---
+                if (stagingBytes > 0 || !dirtyMaterials.empty()) {
+                    if (editStaging.size() <= frameSlot) {
+                        editStaging.resize(frameSlot + 1);
+                        editStagingSize.resize(frameSlot + 1, 0);
+                    }
+                    if (editStagingSize[frameSlot] < stagingBytes) {
+                        const VkDeviceSize size = std::max<VkDeviceSize>(stagingBytes, 4ull << 20);
+                        editStaging[frameSlot] = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, size,
+                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                        editStagingSize[frameSlot] = size;
+                    }
+
+                    // The previous frame may still be tracing against these vertices and sampling these textures
+                    VkMemoryBarrier beforeCopy{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_ACCESS_TRANSFER_WRITE_BIT };
+                    vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR
+                            | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &beforeCopy, 0, nullptr, 0, nullptr);
+
+                    uint8_t* mapped = stagingBytes > 0 ? static_cast<uint8_t*>(editStaging[frameSlot]->Map()) : nullptr;
+                    VkDeviceSize at = 0;
+
+                    for (EditableSurface& surface : editableSurfaces) {
+                        if (surface.dirtyBegin >= surface.dirtyEnd) {
+                            continue;
+                        }
+                        const VkDeviceSize size = sizeof(Vertex) * (surface.dirtyEnd - surface.dirtyBegin);
+                        const VkDeviceSize offset = sizeof(Vertex) * (surface.firstVertex + surface.dirtyBegin);
+                        std::memcpy(mapped + at, vertices.data() + surface.firstVertex + surface.dirtyBegin, size);
+                        const VkBufferCopy region{ at, offset, size };
+                        vkCmdCopyBuffer(cmd, editStaging[frameSlot]->Get(), vertexSSBO->GetBuffer().Get(), 1, &region);
+                        vkCmdCopyBuffer(cmd, editStaging[frameSlot]->Get(), vertexBuffers.back()->Get(), 1, &region);
+                        at += size;
+                        surface.dirtyBegin = UINT32_MAX;
+                        surface.dirtyEnd = 0;
+                    }
+
+                    for (uint32_t index : dirtyMaterials) {
+                        vkCmdUpdateBuffer(cmd, materialsSSBO->GetBuffer().Get(), sizeof(Fox::Graphics::Vulkan::Material) * index,
+                            sizeof(Fox::Graphics::Vulkan::Material), &materials[index]);
+                    }
+                    dirtyMaterials.clear();
+
+                    const auto& textures = Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray();
+                    for (const TextureUpdate& update : textureUpdates) {
+                        if (update.texture >= static_cast<int>(textures.size())) {
+                            continue;
+                        }
+                        std::memcpy(mapped + at, update.rgba.data(), update.rgba.size());
+                        const VkImage image = textures[update.texture]->GetImage();
+
+                        VkImageMemoryBarrier toTransfer{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                        toTransfer.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                        toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                        toTransfer.image = image;
+                        toTransfer.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
+
+                        VkBufferImageCopy region{};
+                        region.bufferOffset = at;
+                        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                        region.imageOffset = { static_cast<int32_t>(update.x), static_cast<int32_t>(update.y), 0 };
+                        region.imageExtent = { update.width, update.height, 1 };
+                        vkCmdCopyBufferToImage(cmd, editStaging[frameSlot]->Get(), image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+                        VkImageMemoryBarrier toShader = toTransfer;
+                        toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                        toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                        toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toShader);
+                        at += update.rgba.size();
+                    }
+                    textureUpdates.clear();
+
+                    if (mapped) {
+                        editStaging[frameSlot]->Unmap();
+                    }
+
+                    // Structure builds and the ray tracing shaders read what was written
+                    VkMemoryBarrier afterCopy{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT,
+                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0, 1, &afterCopy, 0, nullptr, 0, nullptr);
+                }
+
+                // --- Bottom level structures of the edited surfaces: refitted, or built anew ---
+                for (EditableSurface& surface : editableSurfaces) {
+                    if (!surface.refit && !surface.rebuild) {
+                        continue;
+                    }
+                    const bool rebuild = surface.rebuild;
+                    surface.refit = false;
+                    surface.rebuild = false;
+
+                    for (int blasIndex : meshRecords[surface.record].blas) {
+                        if (blasIndex < 0) {
+                            continue;
+                        }
+                        BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[blasIndex];
+                        const VkBuildAccelerationStructureFlagsKHR flags = BlasBuildFlags(blas);
+
+                        // Scratch memory of its own, for the larger of building and refitting
+                        VkAccelerationStructureBuildGeometryInfoKHR sizeQuery{
+                            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                            .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                            .flags = flags,
+                            .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                            .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
+                            .pGeometries = blas.geometries.data()
+                        };
+                        VkAccelerationStructureBuildSizesInfoKHR sizes{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+                        vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &sizeQuery, blas.primitiveCounts.data(), &sizes);
+                        const VkDeviceSize scratchSize = std::max(sizes.buildScratchSize, sizes.updateScratchSize);
+                        if (scratchSize > editScratchSize) {
+                            // Grows on the first edit after a rebuild of the scene, before anything has used it
+                            if (editScratchBuffer != VK_NULL_HANDLE) {
+                                vkDestroyBuffer(device, editScratchBuffer, nullptr);
+                                vkFreeMemory(device, editScratchMemory, nullptr);
+                            }
+                            CreateScratchBuffer(device, physicalDevice, scratchSize, editScratchBuffer, editScratchMemory, "Edit BLAS Scratch");
+                            editScratchSize = scratchSize;
+                        }
+
+                        // The previous frame's rays and builds must be done with the structure and the scratch memory
+                        VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
+
+                        VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                            .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                            .flags = flags,
+                            .mode = rebuild ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR,
+                            .srcAccelerationStructure = rebuild ? VK_NULL_HANDLE : blas.handle,
+                            .dstAccelerationStructure = blas.handle,
+                            .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
+                            .pGeometries = blas.geometries.data(),
+                            .scratchData = {.deviceAddress = GetBufferAddress(editScratchBuffer) }
+                        };
+                        const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { blas.ranges.data() };
+                        vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
+
+                        VkMemoryBarrier afterBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            0, 1, &afterBuild, 0, nullptr, 0, nullptr);
+                    }
+
+                    // The top level structure stores the bounds of the bottom level ones
+                    tlasDirty = true;
+                }
             }
 		}
 	}

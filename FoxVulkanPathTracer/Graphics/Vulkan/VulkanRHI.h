@@ -150,6 +150,7 @@ namespace Fox {
 				Fox::Editor::TreeEditor treeEditor;
 				Fox::Editor::SceneEditor sceneEditor;
 				Fox::Editor::CameraEditor cameraEditor;
+				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written
 				bool editMode = false;
 				Fox::Editor::TransformGizmo gizmo;

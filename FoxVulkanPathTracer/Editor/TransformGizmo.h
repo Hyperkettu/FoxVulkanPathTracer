@@ -57,6 +57,8 @@ namespace Fox {
 
 			// Where a world point appears in the image (pixels); false behind the camera
 			static bool Project(const View& view, const glm::vec3& point, glm::vec2& pixel);
+			// The ray through a pixel (world space)
+			static void MouseRay(const View& view, glm::vec2 mouse, glm::vec3& origin, glm::vec3& direction);
 
 		private:
 			enum class Handle { None = -1, X = 0, Y = 1, Z = 2, Center = 3 };
@@ -72,7 +74,6 @@ namespace Fox {
 			Handle HandleAt(glm::vec2 mouse, const View& view, const Frame& frame) const;
 			std::vector<glm::vec3> RingPoints(const Frame& frame, int axis) const;
 
-			static void MouseRay(const View& view, glm::vec2 mouse, glm::vec3& origin, glm::vec3& direction);
 			static bool AxisParameter(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const glm::vec3& point, const glm::vec3& axis, float& parameter);
 
 			Mode mode = Mode::Translate;

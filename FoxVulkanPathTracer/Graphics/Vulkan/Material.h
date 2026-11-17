@@ -55,7 +55,9 @@ namespace Fox {
 				// Alpha testing (leaves): where base colour alpha is below this the surface is a hole. 0 = opaque.
 				// Alpha tested geometry gets opacity micromaps (see RayTracingScene::SetAlphaMask).
 				float alphaCutoff = 0.0f;
-				float padding = 0.0f;
+				// Terrain: the index of the first of its TERRAIN_LAYERS layer materials in the scene's material buffer,
+				// blended by the weights of the blend map in baseColorTexture (see Shaders/terrain.slang). -1 = not terrain.
+				int layerMaterial = -1;
 
 				bool IsAlphaTested() const { return alphaCutoff > 0.0f; }
 				bool IsSolidGlass() const { return transmission > 0.5f && ior > 0.0f; }

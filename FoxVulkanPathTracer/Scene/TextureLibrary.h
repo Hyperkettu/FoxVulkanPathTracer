@@ -38,6 +38,9 @@ namespace Fox {
 			// Bindless texture index of an image file; -1 for an empty name
 			int Texture(const std::string& file, bool srgb);
 
+			// A new texture from 8 bit RGBA pixels (linear), e.g. one that is then edited (a terrain's blend map)
+			int CreateTexture(const std::vector<uint8_t>& rgba, int width, int height);
+
 			// Occlusion (R), roughness (G) and metallic (B) packed into one texture, the glTF way. Missing files
 			// count as no occlusion (1), roughness 1 and metallic 0. Files of other sizes are resampled.
 			int PackedOcclusionRoughnessMetallic(const std::string& occlusion, const std::string& roughness, const std::string& metallic);

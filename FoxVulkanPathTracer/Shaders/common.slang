@@ -82,7 +82,7 @@ struct Material
     int occlusionTexture;     // Red channel
     float occlusionStrength;
     float alphaCutoff;        // > 0: alpha tested (leaves), surfaces where base colour alpha < this are holes
-    float padding1;
+    int layerMaterial;        // >= 0: terrain, its first layer material (see terrain.slang)
 };
 
 // Mirrors Fox::Graphics::Vulkan::Vertex (Vertex.h)

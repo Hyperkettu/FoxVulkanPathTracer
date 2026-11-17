@@ -66,6 +66,7 @@ namespace Fox {
 
                 struct Environment {
                     bool ground = true;
+                    bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
                     float groundHeight = -3.73f;
                     SurfaceMaterial groundMaterial{ glm::vec3(0.07f, 0.07f, 0.08f), 0.12f };
                     bool sun = true;
@@ -87,6 +88,18 @@ namespace Fox {
                 Environment& GetEnvironment() { return environment; }
                 // Camera paths (saved with the scene) and the camera's flight
                 Fox::Scene::CameraManager& GetCameraManager() { return cameraManager; }
+
+                // --- Terrain: in place of the ground plane while environment.terrain is on (see Editor/TerrainEditor) ---
+                Fox::Scene::Terrain& GetTerrain() { return terrain; }
+                bool IsTerrainPlaced() const { return terrainPlaced; }
+                // The layers changed (textures, tiling, tint, ...) or the blend softness: their materials are replaced
+                // in place, without a rebuild
+                void ApplyTerrainLayers();
+                // Sends what the brushes changed to the GPU; once per frame. strokeEnded: the terrain's acceleration
+                // structure is built anew (during a stroke it is only refitted)
+                void ApplyTerrainEdits(bool strokeEnded);
+                // Height of the ground under a point: the terrain where there is terrain, otherwise the ground plane
+                float GetGroundHeightAt(float x, float z) const;
 
                 size_t AddModel(const std::string& file, bool displacement, const glm::vec3& position);
                 size_t AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material);
@@ -181,6 +194,13 @@ namespace Fox {
                 std::vector<Sphere> spheres;
                 Environment environment;
                 Fox::Scene::CameraManager cameraManager;
+                Fox::Scene::Terrain terrain;
+                size_t terrainSurface = 0;
+                bool terrainPlaced = false;
+                void PlaceTerrain();
+                void ResetTerrain();
+                Fox::Graphics::Vulkan::Material TerrainSurfaceMaterial() const;
+                std::vector<Fox::Graphics::Vulkan::Material> TerrainLayerMaterials();
                 bool structureChanged = false;
                 CameraPose pendingCamera;
                 bool hasPendingCamera = false;

@@ -126,7 +126,7 @@ namespace Fox {
 			forward.y = 0.0f;
 			forward = glm::dot(forward, forward) > 1e-6f ? glm::normalize(forward) : glm::vec3(1.0f, 0.0f, 0.0f);
 			glm::vec3 inFront = camera.position + forward * 12.0f;
-			inFront.y = scene.GetGroundHeight();
+			inFront.y = scene.GetGroundHeightAt(inFront.x, inFront.z);
 
 			// --- Add ---
 			if (ImGui::CollapsingHeader("Add", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -149,7 +149,9 @@ namespace Fox {
 				ImGui::BeginDisabled(modelFiles.empty());
 				if (ImGui::Button("Add model") && !modelFiles.empty()) {
 					glm::vec3 position = inFront;
-					position.y = 0.0f; // Models carry their own height (e.g. the cabin's foundation)
+					// Models carry their own height above the ground plane (e.g. the cabin's foundation); on
+					// terrain they follow it
+					position.y = inFront.y - scene.GetEnvironment().groundHeight;
 					scene.AddModel(modelFiles[modelChoice], displacement, position);
 					status = "Loading " + modelFiles[modelChoice] + "...";
 					statusIsError = false;
@@ -217,6 +219,8 @@ namespace Fox {
 				bool changed = false;
 
 				changed |= ImGui::Checkbox("Ground", &environment.ground);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("Terrain instead (see the Terrain window)", &environment.terrain);
 				changed |= ImGui::DragFloat("Ground height", &environment.groundHeight, 0.01f, -100.0f, 100.0f, "%.2f m");
 				changed |= ImGui::ColorEdit3("Ground colour", &environment.groundMaterial.color.x);
 				changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");

@@ -81,6 +81,14 @@ namespace Fox {
 			return index;
 		}
 
+		int TextureLibrary::CreateTexture(const std::vector<uint8_t>& rgba, int width, int height) {
+			auto texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool, queue,
+				rgba.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), VK_FORMAT_R8G8B8A8_UNORM, 4);
+			const int index = static_cast<int>(Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(std::move(texture)));
+			version++;
+			return index;
+		}
+
 		const GrayImage& TextureLibrary::Gray(const std::string& file) {
 			if (auto it = grays.find(file); it != grays.end()) {
 				return it->second;

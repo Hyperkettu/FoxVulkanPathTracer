@@ -80,6 +80,9 @@ namespace Fox {
 
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainLayer, name, albedo, normal, roughness, metallic, occlusion, height,
+			normalGreenUp, tiling, tint, roughnessScale, normalStrength)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainSettings, size, resolution, blendResolution, position, blendSoftness, layers)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraPath, name, speed, ease, loop, lookAlongPath, keys)
 
 		namespace RayTracing {
@@ -93,7 +96,7 @@ namespace Fox {
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::TreeLook,
 				bark, leaf, barkTint, leafTint, barkRoughness, leafRoughness, alphaCutoff)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, groundHeight, groundMaterial, sun, sunDirection, sunColor, sunIntensity, sunAngularRadius)
+				ground, terrain, groundHeight, groundMaterial, sun, sunDirection, sunColor, sunIntensity, sunAngularRadius)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
@@ -126,6 +129,23 @@ namespace Fox {
 				file["version"] = FILE_VERSION;
 				file["camera"] = camera;
 				file["environment"] = environment;
+				// The terrain's heights and blend map go in files of their own beside the scene file
+				if (terrain.IsCreated()) {
+					json entry = terrain.settings;
+					const std::string base = std::filesystem::path(path).replace_extension("").generic_string();
+					const std::string heightsFile = base + ".terrain-heights.bin";
+					const std::string blendFile = base + ".terrain-blend.png";
+					const std::filesystem::path target(path);
+					if (target.has_parent_path()) {
+						std::filesystem::create_directories(target.parent_path());
+					}
+					if (!terrain.SaveHeights(heightsFile, error) || !terrain.SaveBlend(blendFile, error)) {
+						return false;
+					}
+					entry["heights"] = heightsFile;
+					entry["blend"] = blendFile;
+					file["terrain"] = entry;
+				}
 				file["cameraPaths"] = cameraManager.GetPaths();
 				file["activeCameraPath"] = cameraManager.GetActivePath();
 
@@ -203,7 +223,20 @@ namespace Fox {
 				CameraPose newCamera;
 				std::vector<Fox::Scene::CameraPath> newPaths;
 				int newActivePath = 0;
+				Fox::Scene::Terrain newTerrain;
 				try {
+					if (file.contains("terrain")) {
+						const json& entry = file.at("terrain");
+						newTerrain.Create(entry.get<Fox::Scene::TerrainSettings>());
+						const std::string heightsFile = entry.value("heights", std::string());
+						const std::string blendFile = entry.value("blend", std::string());
+						if (!heightsFile.empty() && !newTerrain.LoadHeights(heightsFile, error)) {
+							return false;
+						}
+						if (!blendFile.empty() && !newTerrain.LoadBlend(blendFile, error)) {
+							return false;
+						}
+					}
 					newPaths = file.value("cameraPaths", std::vector<Fox::Scene::CameraPath>{});
 					newActivePath = file.value("activeCameraPath", 0);
 					newCamera = file.value("camera", CameraPose{});
@@ -246,6 +279,13 @@ namespace Fox {
 				spheres = std::move(newSpheres);
 				trees = std::move(newTrees);
 				environment = newEnvironment;
+				ResetTerrain();
+				if (newTerrain.IsCreated()) {
+					newTerrain.blendTexture = terrain.blendTexture; // Reused when the size matches
+					newTerrain.blendTextureResolution = terrain.blendTextureResolution;
+					terrain = std::move(newTerrain);
+					terrain.MarkAllDirty();
+				}
 				cameraManager.Clear();
 				cameraManager.GetPaths() = std::move(newPaths);
 				cameraManager.SetActivePath(newActivePath);

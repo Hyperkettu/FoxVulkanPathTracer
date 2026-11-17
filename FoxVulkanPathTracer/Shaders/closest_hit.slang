@@ -2,6 +2,7 @@
 // the surface back to the path tracer (raygen.slang). No lighting is computed here.
 
 #include "common.slang"
+#include "terrain.slang"
 
 // Where the vertices of skinned meshes were in the previous frame, mesh space (see skinning.slang)
 [[vk::binding(15, 0)]] StructuredBuffer<float4> gPreviousSkinnedPositions;
@@ -49,73 +50,97 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
     float2 uv2 = TransformUV(v2.uv, material);
     float2 uv = uv0 * barycentrics.x + uv1 * barycentrics.y + uv2 * barycentrics.z;
 
-    // --- Normal mapping ---
-    if (material.normalTexture >= 0)
+    float3 baseColor;
+    float roughness;
+    float metallic;
+    float occlusion;
+    float3 emission;
+
+    if (material.layerMaterial >= 0)
     {
-        float4 localTangent = v0.tangent * barycentrics.x + v1.tangent * barycentrics.y + v2.tangent * barycentrics.z;
+        // --- Terrain: blended layers, projected from the position (see terrain.slang) ---
+        float3 localPosition = v0.position.xyz * barycentrics.x + v1.position.xyz * barycentrics.y + v2.position.xyz * barycentrics.z;
+        float3 smoothNormal = dot(localNormal, localNormal) > 0.0f ? normalize(localNormal) : float3(0.0f, 1.0f, 0.0f);
+        float2 blendUV = v0.uv * barycentrics.x + v1.uv * barycentrics.y + v2.uv * barycentrics.z;
+        TerrainSurface terrain = EvaluateTerrain(material, localPosition, smoothNormal, blendUV);
 
-        float3 tangent;
-        float handedness;
-
-        if (dot(localTangent.xyz, localTangent.xyz) > 1e-8f)
+        N = normalize(mul(terrain.normal, worldToObject));
+        baseColor = terrain.baseColor;
+        roughness = terrain.roughness;
+        metallic = terrain.metallic;
+        occlusion = terrain.occlusion;
+        emission = float3(0.0f);
+    }
+    else
+    {
+        // --- Normal mapping ---
+        if (material.normalTexture >= 0)
         {
-            tangent = mul(objectToWorld, localTangent.xyz);
-            handedness = localTangent.w < 0.0f ? -1.0f : 1.0f;
+            float4 localTangent = v0.tangent * barycentrics.x + v1.tangent * barycentrics.y + v2.tangent * barycentrics.z;
+
+            float3 tangent;
+            float handedness;
+
+            if (dot(localTangent.xyz, localTangent.xyz) > 1e-8f)
+            {
+                tangent = mul(objectToWorld, localTangent.xyz);
+                handedness = localTangent.w < 0.0f ? -1.0f : 1.0f;
+            }
+            else
+            {
+                // No tangents in the mesh: derive the direction of increasing U from the triangle itself
+                float2 duv1 = uv1 - uv0;
+                float2 duv2 = uv2 - uv0;
+                float det = duv1.x * duv2.y - duv2.x * duv1.y;
+
+                tangent = mul(objectToWorld, (edge1 * duv2.y - edge2 * duv1.y) * (abs(det) > 1e-12f ? 1.0f / det : 1.0f));
+                handedness = det < 0.0f ? -1.0f : 1.0f;
+            }
+
+            // Gram-Schmidt: make the tangent perpendicular to the normal
+            tangent = tangent - N * dot(N, tangent);
+
+            if (dot(tangent, tangent) > 1e-12f)
+            {
+                tangent = normalize(tangent);
+                float3 bitangent = cross(N, tangent) * handedness;
+
+                float3 mapped = SampleTexture(material.normalTexture, uv).xyz * 2.0f - 1.0f;
+                mapped.xy *= material.normalScale;
+
+                N = normalize(tangent * mapped.x + bitangent * mapped.y + N * mapped.z);
+            }
         }
-        else
+
+        // --- Material ---
+        baseColor = material.baseColor.rgb;
+        if (material.baseColorTexture >= 0)
         {
-            // No tangents in the mesh: derive the direction of increasing U from the triangle itself
-            float2 duv1 = uv1 - uv0;
-            float2 duv2 = uv2 - uv0;
-            float det = duv1.x * duv2.y - duv2.x * duv1.y;
-
-            tangent = mul(objectToWorld, (edge1 * duv2.y - edge2 * duv1.y) * (abs(det) > 1e-12f ? 1.0f / det : 1.0f));
-            handedness = det < 0.0f ? -1.0f : 1.0f;
+            baseColor *= SampleTexture(material.baseColorTexture, uv).rgb;
         }
 
-        // Gram-Schmidt: make the tangent perpendicular to the normal
-        tangent = tangent - N * dot(N, tangent);
-
-        if (dot(tangent, tangent) > 1e-12f)
+        roughness = material.roughness;
+        metallic = material.metallic;
+        if (material.metallicRoughnessTexture >= 0)
         {
-            tangent = normalize(tangent);
-            float3 bitangent = cross(N, tangent) * handedness;
-
-            float3 mapped = SampleTexture(material.normalTexture, uv).xyz * 2.0f - 1.0f;
-            mapped.xy *= material.normalScale;
-
-            N = normalize(tangent * mapped.x + bitangent * mapped.y + N * mapped.z);
+            // glTF packing: G = roughness, B = metallic
+            float3 roughnessMetallic = SampleTexture(material.metallicRoughnessTexture, uv).rgb;
+            roughness *= roughnessMetallic.g;
+            metallic *= roughnessMetallic.b;
         }
-    }
 
-    // --- Material ---
-    float3 baseColor = material.baseColor.rgb;
-    if (material.baseColorTexture >= 0)
-    {
-        baseColor *= SampleTexture(material.baseColorTexture, uv).rgb;
-    }
+        // Ambient occlusion: only for light from the surroundings (applied in raygen.slang)
+        occlusion = 1.0f;
+        if (material.occlusionTexture >= 0)
+        {
+            occlusion = lerp(1.0f, SampleTexture(material.occlusionTexture, uv).r, saturate(material.occlusionStrength));
+        }
 
-    float roughness = material.roughness;
-    float metallic = material.metallic;
-    if (material.metallicRoughnessTexture >= 0)
-    {
-        // glTF packing: G = roughness, B = metallic
-        float3 roughnessMetallic = SampleTexture(material.metallicRoughnessTexture, uv).rgb;
-        roughness *= roughnessMetallic.g;
-        metallic *= roughnessMetallic.b;
-    }
-
-    // Ambient occlusion: only for light from the surroundings (applied in raygen.slang)
-    float occlusion = 1.0f;
-    if (material.occlusionTexture >= 0)
-    {
-        occlusion = lerp(1.0f, SampleTexture(material.occlusionTexture, uv).r, saturate(material.occlusionStrength));
-    }
-
-    float3 emission = material.emissive;
-    if (material.emissiveTexture >= 0)
-    {
-        emission *= SampleTexture(material.emissiveTexture, uv).rgb;
+        emission = material.emissive;
+        if (material.emissiveTexture >= 0)
+        {
+            emission *= SampleTexture(material.emissiveTexture, uv).rgb;
+        }
     }
 
     payload.hitT = RayTCurrent();

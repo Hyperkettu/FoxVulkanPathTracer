@@ -206,7 +206,7 @@ namespace Fox {
 				glm::vec3 forward(cameraForward.x, 0.0f, cameraForward.z);
 				forward = glm::dot(forward, forward) > 1e-6f ? glm::normalize(forward) : glm::vec3(1.0f, 0.0f, 0.0f);
 				glm::vec3 position = cameraPosition + forward * 12.0f;
-				position.y = scene.GetGroundHeight();
+				position.y = scene.GetGroundHeightAt(position.x, position.z);
 				return position;
 			};
 
@@ -277,7 +277,7 @@ namespace Fox {
 				moved = true;
 			}
 			if (ImGui::Button("Stand on the ground")) {
-				transform.position.y = scene.GetGroundHeight();
+				transform.position.y = scene.GetGroundHeightAt(transform.position.x, transform.position.z);
 				moved = true;
 			}
 			if (moved) {

@@ -21,7 +21,7 @@ namespace Fox {
 
 				public:
 					// Size of the bindless texture array declared in the descriptor set layout.
-					static constexpr uint32_t MAX_BINDLESS_TEXTURES = 100;
+					static constexpr uint32_t MAX_BINDLESS_TEXTURES = 1024;
 
 					TextureManager() = default;
 					~TextureManager() = default;

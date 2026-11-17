@@ -104,7 +104,11 @@ namespace Fox {
 					SetObjectTransform(sphere.object, sphere.transform);
 				}
 
-				if (environment.ground) {
+				terrainPlaced = false;
+				if (environment.terrain) {
+					PlaceTerrain();
+				}
+				else if (environment.ground) {
 					AddGroundPlane(environment.groundHeight, 2000.0f, environment.groundMaterial.ToMaterial());
 				}
 				if (environment.sun) {
@@ -133,6 +137,7 @@ namespace Fox {
 				trees.clear();
 				environment = Environment{};
 				cameraManager.Clear();
+				ResetTerrain();
 				structureChanged = true;
 			}
 
@@ -212,6 +217,129 @@ namespace Fox {
 
 			float MainRayTracingScene::GetGroundHeight() const {
 				return environment.groundHeight;
+			}
+
+			float MainRayTracingScene::GetGroundHeightAt(float x, float z) const {
+				float y = environment.groundHeight;
+				if (environment.terrain && terrain.HeightAt(x, z, y)) {
+					return y;
+				}
+				return environment.groundHeight;
+			}
+
+			// --- Terrain ---
+
+			void MainRayTracingScene::ResetTerrain() {
+				// The blend map texture stays: a terrain made later reuses it
+				const int texture = terrain.blendTexture, resolution = terrain.blendTextureResolution;
+				terrain = Fox::Scene::Terrain{};
+				terrain.blendTexture = texture;
+				terrain.blendTextureResolution = resolution;
+			}
+
+			Fox::Graphics::Vulkan::Material MainRayTracingScene::TerrainSurfaceMaterial() const {
+				// Read by Shaders/terrain.slang: the blend map as base colour texture, the blend softness in
+				// occlusionStrength; layerMaterial is set by AddEditableSurface
+				Fox::Graphics::Vulkan::Material material;
+				material.baseColorTexture = terrain.blendTexture;
+				material.roughness = 1.0f;
+				material.metallic = 0.0f;
+				material.occlusionStrength = std::max(terrain.settings.blendSoftness, 0.001f);
+				return material;
+			}
+
+			std::vector<Fox::Graphics::Vulkan::Material> MainRayTracingScene::TerrainLayerMaterials() {
+				Fox::Scene::TextureLibrary& library = *textureLibrary;
+				std::vector<Fox::Graphics::Vulkan::Material> layers;
+				for (const Fox::Scene::TerrainLayer& layer : terrain.settings.layers) {
+					// How Shaders/terrain.slang reads a layer: albedo, normal map, packed occlusion / roughness /
+					// metallic as for any material; the height map in emissiveTexture; repeats per meter in uvScale;
+					// uvRotation 1 for a DirectX normal map
+					Fox::Graphics::Vulkan::Material material;
+					material.baseColor[0] = layer.tint.r;
+					material.baseColor[1] = layer.tint.g;
+					material.baseColor[2] = layer.tint.b;
+					material.baseColorTexture = library.Texture(layer.albedo, true);
+					material.normalTexture = library.Texture(layer.normal, false);
+					material.normalScale = layer.normalStrength;
+					const bool packed = !(layer.occlusion.empty() && layer.roughness.empty() && layer.metallic.empty());
+					if (packed) {
+						const int texture = library.PackedOcclusionRoughnessMetallic(layer.occlusion, layer.roughness, layer.metallic);
+						material.metallicRoughnessTexture = texture;
+						material.occlusionTexture = layer.occlusion.empty() ? -1 : texture;
+					}
+					material.metallic = packed ? 1.0f : 0.0f;
+					material.roughness = layer.roughnessScale;
+					material.emissiveTexture = library.Texture(layer.height, false);
+					const float repeats = 1.0f / std::max(layer.tiling, 0.01f);
+					material.uvScale[0] = repeats;
+					material.uvScale[1] = repeats;
+					material.uvRotation = layer.normalGreenUp ? 0.0f : 1.0f;
+					layers.push_back(material);
+				}
+				return layers;
+			}
+
+			void MainRayTracingScene::PlaceTerrain() {
+				if (!terrain.IsCreated()) {
+					// Flat at the height of the ground plane it replaces, all grass
+					Fox::Scene::TerrainSettings settings = Fox::Scene::TerrainSettings::Defaults();
+					settings.position.y = environment.groundHeight;
+					terrain.Create(settings);
+				}
+
+				// The blend map texture: made once per size, then only its changed texels are uploaded
+				const int blendSize = terrain.settings.blendResolution;
+				if (terrain.blendTexture < 0 || terrain.blendTextureResolution != blendSize) {
+					terrain.blendTexture = textureLibrary->CreateTexture(terrain.BlendPixels(0, 0, blendSize, blendSize), blendSize, blendSize);
+					terrain.blendTextureResolution = blendSize;
+					int x0, y0, x1, y1;
+					terrain.TakeDirtyBlend(x0, y0, x1, y1); // Uploaded with it
+				}
+
+				std::vector<Fox::Graphics::Vulkan::Vertex> terrainVertices;
+				std::vector<uint32_t> terrainIndices;
+				terrain.BuildMesh(terrainVertices, terrainIndices);
+				int first, last;
+				terrain.TakeDirtyRows(first, last); // The mesh is current
+
+				terrainSurface = AddEditableSurface(terrainVertices, terrainIndices, TerrainSurfaceMaterial(), TerrainLayerMaterials(),
+					glm::translate(glm::mat4(1.0f), terrain.settings.position), "Terrain");
+				terrainPlaced = true;
+			}
+
+			void MainRayTracingScene::ApplyTerrainLayers() {
+				if (!terrainPlaced) {
+					return;
+				}
+				const uint32_t index = GetSurfaceMaterial(terrainSurface);
+				Fox::Graphics::Vulkan::Material surface = TerrainSurfaceMaterial();
+				surface.layerMaterial = static_cast<int>(index + 1);
+				SetMaterial(index, surface);
+				const std::vector<Fox::Graphics::Vulkan::Material> layers = TerrainLayerMaterials();
+				for (size_t i = 0; i < layers.size(); i++) {
+					SetMaterial(index + 1 + static_cast<uint32_t>(i), layers[i]);
+				}
+			}
+
+			void MainRayTracingScene::ApplyTerrainEdits(bool strokeEnded) {
+				if (!terrainPlaced) {
+					return;
+				}
+				int first, last;
+				if (terrain.TakeDirtyRows(first, last)) {
+					std::vector<Fox::Graphics::Vulkan::Vertex> rows;
+					terrain.BuildRows(first, last, rows);
+					const uint32_t n = static_cast<uint32_t>(terrain.settings.resolution);
+					UpdateSurfaceVertices(terrainSurface, static_cast<uint32_t>(first) * n, rows.data(), static_cast<uint32_t>(rows.size()));
+				}
+				int x0, y0, x1, y1;
+				if (terrain.TakeDirtyBlend(x0, y0, x1, y1)) {
+					UpdateTextureRegion(terrain.blendTexture, x0, y0, x1 - x0, y1 - y0, terrain.BlendPixels(x0, y0, x1, y1));
+				}
+				if (strokeEnded) {
+					RebuildSurface(terrainSurface);
+				}
 			}
 
 			size_t MainRayTracingScene::AddTree(const glm::vec3& position, const Tree* copyOf) {

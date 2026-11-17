@@ -21,3 +21,6 @@ x64/Debug/
 
 # NVIDIA DLSS SDK (optional, fetched separately - see readme)
 ThirdParty/DLSS/
+
+# Terrain heights saved with scene files
+!*.terrain-heights.bin

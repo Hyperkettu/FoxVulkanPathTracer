@@ -1,0 +1,419 @@
+{
+  "activeCameraPath": -1,
+  "camera": {
+    "position": [
+      40.0,
+      22.0,
+      48.0
+    ],
+    "target": [
+      39.492542,
+      21.534225,
+      47.27506
+    ]
+  },
+  "cameraPaths": [],
+  "environment": {
+    "ground": true,
+    "groundHeight": -3.73,
+    "groundMaterial": {
+      "attenuationColor": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "attenuationDistance": 0.0,
+      "color": [
+        0.07,
+        0.07,
+        0.08
+      ],
+      "ior": 1.5,
+      "metallic": 0.0,
+      "roughness": 0.12,
+      "transmission": 0.0
+    },
+    "sun": true,
+    "sunAngularRadius": 1.2,
+    "sunColor": [
+      1.0,
+      0.58,
+      0.3
+    ],
+    "sunDirection": [
+      0.876,
+      0.22,
+      0.479
+    ],
+    "sunIntensity": 18.0,
+    "terrain": true
+  },
+  "models": [
+    {
+      "displacement": true,
+      "file": "Models/cabin.glb",
+      "name": "Cabin",
+      "transform": {
+        "position": [
+          20.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          90.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "displacement": false,
+      "file": "Models/box.glb",
+      "name": "Box",
+      "transform": {
+        "position": [
+          0.0,
+          -3.18,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          25.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "displacement": true,
+      "file": "Models/cabin.glb",
+      "name": "Second cabin",
+      "transform": {
+        "position": [
+          70.7107,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          45.000004,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "spheres": [
+    {
+      "material": {
+        "attenuationColor": [
+          0.8,
+          0.94,
+          0.9
+        ],
+        "attenuationDistance": 2.0,
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "ior": 1.5,
+        "metallic": 0.0,
+        "roughness": 0.0,
+        "transmission": 1.0
+      },
+      "name": "Glass ball",
+      "radius": 1.2,
+      "transform": {
+        "position": [
+          21.0,
+          -2.53,
+          10.0
+        ],
+        "rotation": [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ],
+  "terrain": {
+    "blend": "Scenes/terrain.terrain-blend.png",
+    "blendResolution": 1024,
+    "blendSoftness": 0.15,
+    "heights": "Scenes/terrain.terrain-heights.bin",
+    "layers": [
+      {
+        "albedo": "Textures/terrain/grasss/albedo.png",
+        "height": "Textures/terrain/grasss/displacement.png",
+        "metallic": "Textures/terrain/grasss/metallic.png",
+        "name": "Grass",
+        "normal": "Textures/terrain/grasss/normal.png",
+        "normalGreenUp": true,
+        "normalStrength": 1.0,
+        "occlusion": "Textures/terrain/grasss/ao.png",
+        "roughness": "Textures/terrain/grasss/roughness.png",
+        "roughnessScale": 1.0,
+        "tiling": 2.5,
+        "tint": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "albedo": "Textures/terrain/rocky/albedo.png",
+        "height": "Textures/terrain/rocky/displacement.png",
+        "metallic": "Textures/terrain/rocky/metallic.png",
+        "name": "Rock",
+        "normal": "Textures/terrain/rocky/normal.png",
+        "normalGreenUp": true,
+        "normalStrength": 1.0,
+        "occlusion": "Textures/terrain/rocky/ao.png",
+        "roughness": "Textures/terrain/rocky/roughness.png",
+        "roughnessScale": 1.0,
+        "tiling": 4.0,
+        "tint": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "albedo": "Textures/terrain/badland/albedo.png",
+        "height": "Textures/terrain/badland/displacement.png",
+        "metallic": "Textures/terrain/badland/metallic.png",
+        "name": "Badland",
+        "normal": "Textures/terrain/badland/normal.png",
+        "normalGreenUp": true,
+        "normalStrength": 1.0,
+        "occlusion": "Textures/terrain/badland/ao.png",
+        "roughness": "Textures/terrain/badland/roughness.png",
+        "roughnessScale": 1.0,
+        "tiling": 4.0,
+        "tint": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "albedo": "Textures/terrain/bumpy/albedo.png",
+        "height": "Textures/terrain/bumpy/displacement.png",
+        "metallic": "Textures/terrain/bumpy/metallic.png",
+        "name": "Bumpy ground",
+        "normal": "Textures/terrain/bumpy/normal.png",
+        "normalGreenUp": true,
+        "normalStrength": 1.0,
+        "occlusion": "Textures/terrain/bumpy/ao.png",
+        "roughness": "Textures/terrain/bumpy/roughness.png",
+        "roughnessScale": 1.0,
+        "tiling": 3.0,
+        "tint": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    ],
+    "position": [
+      0.0,
+      -3.73,
+      0.0
+    ],
+    "resolution": 513,
+    "size": 400.0
+  },
+  "trees": [
+    {
+      "look": {
+        "alphaCutoff": 0.5,
+        "bark": {
+          "albedo": "Textures/bark/albedo.png",
+          "displacement": "Textures/bark/displacement.png",
+          "invertDisplacement": false,
+          "metallic": "Textures/bark/metallic.png",
+          "normal": "Textures/bark/normal.png",
+          "normalGreenUp": true,
+          "occlusion": "Textures/bark/ao.png",
+          "roughness": "Textures/bark/roughness.png"
+        },
+        "barkRoughness": 1.0,
+        "barkTint": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "leaf": {
+          "albedo": "Textures/bark/leaf-albedo.png",
+          "displacement": "Textures/bark/leaf_displacement.png",
+          "invertDisplacement": true,
+          "metallic": "Textures/bark/leaf-metallic.png",
+          "normal": "Textures/bark/leaf_normal.png",
+          "normalGreenUp": false,
+          "occlusion": "Textures/bark/leaf_ambient_occlusion.png",
+          "roughness": "Textures/bark/leaf-roughness.png"
+        },
+        "leafRoughness": 1.0,
+        "leafTint": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "name": "Tree 1",
+      "shape": {
+        "angleVariation": 0.2,
+        "azimuthVariation": 0.3,
+        "bendiness": 0.09,
+        "branchAngle": 50.0,
+        "branchBranches": 2,
+        "branchCrossSection": 0.0,
+        "branchLengthRatio": 0.55,
+        "branchLevels": 3,
+        "branchRadiusRatio": 0.55,
+        "crossSection": {
+          "points": [
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.70710677,
+              0.70710677
+            ],
+            [
+              -4.371139e-08,
+              1.0
+            ],
+            [
+              -0.70710677,
+              0.70710677
+            ],
+            [
+              -1.0,
+              -8.742278e-08
+            ],
+            [
+              -0.70710665,
+              -0.7071069
+            ],
+            [
+              1.1924881e-08,
+              -1.0
+            ],
+            [
+              0.707107,
+              -0.70710653
+            ]
+          ]
+        },
+        "crossSectionBase": 1.0,
+        "crossSectionTop": 0.4,
+        "detailEdgeLength": 0.03,
+        "displacementMidlevel": 0.5,
+        "displacementScale": 0.15,
+        "firstBranchHeight": 0.3,
+        "leafColumns": 8,
+        "leafCurl": 0.07,
+        "leafDisplacementMidlevel": 0.5,
+        "leafDisplacementScale": 0.04,
+        "leafLevel": 2,
+        "leafRollVariation": 35.0,
+        "leafRows": 10,
+        "leafSize": 0.6,
+        "leafSizeVariation": 0.2,
+        "leaves": true,
+        "leavesPerCylinder": 2,
+        "lengthVariation": 0.15,
+        "minDisplacedRadius": 0.025,
+        "positionVariation": 0.3,
+        "ringsPerCylinder": 3,
+        "seed": 11,
+        "textureSize": 1.0,
+        "trunkBranches": 2,
+        "trunkCurve": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "trunkCylinders": 8,
+        "trunkLength": 7.0,
+        "trunkRadius": 0.3,
+        "trunkTaper": 0.2,
+        "trunkWander": 0.02,
+        "upwardTendency": 0.14
+      },
+      "transform": {
+        "position": [
+          14.0,
+          -3.73,
+          12.0
+        ],
+        "rotation": [
+          0.0,
+          -0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "wind": {
+        "dampingRatio": 0.12,
+        "gustSpeed": 6.0,
+        "gustStrength": 0.7,
+        "maxAngle": 0.3,
+        "maxFrequency": 3.5,
+        "response": 5.0,
+        "trunkFrequency": 0.45,
+        "turbulence": 0.35,
+        "windDirection": [
+          1.0,
+          0.0,
+          0.35
+        ],
+        "windSpeed": 8.0
+      }
+    }
+  ],
+  "version": 1
+}
