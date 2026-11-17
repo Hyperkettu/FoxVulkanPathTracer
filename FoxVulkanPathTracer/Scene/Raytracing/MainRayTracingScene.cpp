@@ -42,17 +42,17 @@ namespace Fox {
 
 				glm::mat4 cabinTransform = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
 				cabinTransform = glm::rotate(cabinTransform, glm::radians(90.0f), up);
-				AddMesh(cabin, cabinTransform);
+				AddMesh(cabin, cabinTransform, "Cabin");
 
 				// The box model's floor is at y = -0.55: lower it so it rests on the ground
 				glm::mat4 boxTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, GROUND_HEIGHT + 0.55f, 0.0f));
 				boxTransform = glm::rotate(boxTransform, glm::radians(25.0f), up);
-				AddMesh(box, boxTransform);
+				AddMesh(box, boxTransform, "Box");
 
 				// Second cabin: the same mesh instanced with another transform
 				glm::mat4 secondCabinTransform = glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), up);
 				secondCabinTransform = glm::translate(secondCabinTransform, glm::vec3(50.0f, 0.0f, 50.0f));
-				AddMesh(cabin, secondCabinTransform);
+				AddMesh(cabin, secondCabinTransform, "Second cabin");
 
 				// Dark, slightly glossy ground (think wet asphalt): picks up reflections of the sky and the buildings
 				Fox::Graphics::Vulkan::Material ground;
@@ -73,7 +73,7 @@ namespace Fox {
 				const float glassAttenuation[3] = { 0.80f, 0.94f, 0.90f };
 				glass.SetAttenuation(glassAttenuation, 2.0f); // Colour left after 2 m of glass
 				const float ballRadius = 1.2f;
-				AddSphere(glm::vec3(21.0f, GROUND_HEIGHT + ballRadius, 10.0f), ballRadius, glass);
+				AddSphere(glm::vec3(21.0f, GROUND_HEIGHT + ballRadius, 10.0f), ballRadius, glass, "Glass ball");
 
 				AddSun(SUN_DIRECTION, SUN_IRRADIANCE, SUN_ANGULAR_RADIUS);
 

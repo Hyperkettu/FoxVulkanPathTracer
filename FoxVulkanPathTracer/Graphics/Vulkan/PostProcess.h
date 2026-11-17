@@ -19,7 +19,9 @@ namespace Fox {
 				void SetInput(VkImageView hdrImageView, VkImageLayout layout);
 
 				// Records the tone mapping render pass. The caller owns Begin/End/Submit of the command list.
-				void Record(Fox::Graphics::Vulkan::CommandList& commandList, VkFramebuffer framebuffer, VkExtent2D extent);
+				// overlay, if given, records more drawing into the same pass on top of the image (e.g. gizmos).
+				void Record(Fox::Graphics::Vulkan::CommandList& commandList, VkFramebuffer framebuffer, VkExtent2D extent,
+					const std::function<void(Fox::Graphics::Vulkan::CommandList&)>& overlay = {});
 
 				// Exposure in stops (EV): each +1 doubles the brightness of the image.
 				void SetExposure(float stops) { exposureStops = stops; }

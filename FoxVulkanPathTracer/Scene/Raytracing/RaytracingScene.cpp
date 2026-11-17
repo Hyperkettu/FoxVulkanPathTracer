@@ -1,4 +1,4 @@
-﻿#include "FoxRenderer.h"
+#include "FoxRenderer.h"
 
 namespace Fox {
 
@@ -366,6 +366,7 @@ namespace Fox {
                 buildInfo.dstAccelerationStructure = topLevelAccelerationStructure.handle;
                 buildInfo.scratchData.deviceAddress =
                     GetBufferAddress(scratchBuffer);
+                tlasScratchAddress = buildInfo.scratchData.deviceAddress; // Reused when objects move
 
                 VkAccelerationStructureBuildRangeInfoKHR range{
                     .primitiveCount = instanceCount
@@ -381,50 +382,6 @@ namespace Fox {
                 };
                 topLevelAccelerationStructure.deviceAddress =
                     vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
-            }
-
-            void RayTracingScene::UpdateTLAS(VkCommandBuffer cmd)
-            {
-                UploadInstanceBuffer();
-
-                VkDeviceAddress instanceAddress =
-                    GetBufferAddress(instanceBuffer->Get());
-
-                VkAccelerationStructureGeometryInstancesDataKHR instances{
-                    .sType =
-                        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
-                    .data = { instanceAddress },
-                };
-
-                instances.arrayOfPointers = VK_FALSE;
-
-                VkAccelerationStructureGeometryKHR geometry{
-                    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-                    .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
-                    .geometry = {.instances = instances }
-                };
-
-                VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
-                    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-                    .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
-                    .flags = VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR,
-                    .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR,
-                    .srcAccelerationStructure = topLevelAccelerationStructure.handle,
-                    .dstAccelerationStructure = topLevelAccelerationStructure.handle,
-                    .geometryCount = 1,
-                    .pGeometries = &geometry,
-                    .scratchData = {
-                        .deviceAddress = GetBufferAddress(scratchBuffer)
-                    }
-                };
-
-                VkAccelerationStructureBuildRangeInfoKHR range{
-                    .primitiveCount = uint32_t(this->instances.size())
-                };
-
-                const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { &range };
-
-                vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
             }
 
             void RayTracingScene::CreateAccelerationStructure(
@@ -587,7 +544,7 @@ namespace Fox {
                 return meshRecords.size() - 1;
             }
 
-            void RayTracingScene::AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform) {
+            void RayTracingScene::AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name) {
                 // Geometry is stored once per mesh and shared by all its placements
                 auto existing = std::find_if(meshRecords.begin(), meshRecords.end(),
                     [&mesh](const MeshRecord& record) { return record.mesh == &mesh; });
@@ -596,26 +553,187 @@ namespace Fox {
                     ? static_cast<size_t>(existing - meshRecords.begin())
                     : AddMeshGeometry(&mesh);
 
-                placements.push_back({ record, transform });
+                Placement placement;
+                placement.record = record;
+                placement.transform = Decompose(transform);
+                placement.name = name;
 
-                // Lights are stored in world space
-                const glm::mat3 linearTransform(transform);
-                for (Fox::Graphics::Vulkan::Light light : mesh.GetLights()) {
-                    if (light.type == (int)Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
-                        light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
-                        light.tangentX = linearTransform * light.tangentX;
-                        light.tangentY = linearTransform * light.tangentY;
-                        // The tangents are half extents
-                        light.area = glm::length(glm::cross(2.0f * light.tangentX, 2.0f * light.tangentY));
-                    }
-
-                    light.normal = glm::normalize(linearTransform * light.normal);
-                    lights.push_back(light);
+                // Lights are stored in world space; the mesh-space originals follow the object when it moves
+                placement.firstLight = static_cast<uint32_t>(lights.size());
+                placement.localLights = mesh.GetLights();
+                for (const Fox::Graphics::Vulkan::Light& light : placement.localLights) {
+                    lights.push_back(TransformLight(light, transform));
                 }
+
+                placements.push_back(std::move(placement));
+            }
+
+            Fox::Graphics::Vulkan::Light RayTracingScene::TransformLight(Fox::Graphics::Vulkan::Light light, const glm::mat4& transform) {
+                const glm::mat3 linearTransform(transform);
+                if (light.type == (int)Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
+                    light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
+                    light.tangentX = linearTransform * light.tangentX;
+                    light.tangentY = linearTransform * light.tangentY;
+                    // The tangents are half extents
+                    light.area = glm::length(glm::cross(2.0f * light.tangentX, 2.0f * light.tangentY));
+                }
+
+                light.normal = glm::normalize(glm::transpose(glm::inverse(linearTransform)) * light.normal);
+                return light;
+            }
+
+            RayTracingScene::ObjectTransform RayTracingScene::Decompose(const glm::mat4& matrix) {
+                // Translation, rotation and scale; shear is not supported
+                ObjectTransform result;
+                result.position = glm::vec3(matrix[3]);
+
+                glm::mat3 linear(matrix);
+                for (int axis = 0; axis < 3; axis++) {
+                    result.scale[axis] = glm::length(linear[axis]);
+                    if (result.scale[axis] > 0.0f) {
+                        linear[axis] /= result.scale[axis];
+                    }
+                }
+
+                // A mirroring transform: keep the rotation proper, put the flip into the scale
+                if (glm::determinant(linear) < 0.0f) {
+                    result.scale.x = -result.scale.x;
+                    linear[0] = -linear[0];
+                }
+
+                result.rotation = glm::normalize(glm::quat_cast(linear));
+                return result;
+            }
+
+            void RayTracingScene::SetObjectTransform(size_t object, const ObjectTransform& transform) {
+                Placement& placement = placements[object];
+                if (!placement.movable) {
+                    return;
+                }
+
+                placement.transform = transform;
+                placement.transform.rotation = glm::normalize(transform.rotation);
+                tlasDirty = true;
+                lightsDirty = lightsDirty || !placement.localLights.empty();
+            }
+
+            void RayTracingScene::RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot) {
+                // Instance motion since the previous frame (for motion vectors), and lights of moved objects.
+                // Small, so they are written into the command buffer (vkCmdUpdateBuffer, up to 64 KiB).
+                std::vector<InstanceMotion> motion(instancePlacements.size());
+                for (Placement& placement : placements) {
+                    const glm::mat4 current = placement.transform.Matrix();
+                    const glm::mat4 toPrevious = placement.previousMatrix * glm::inverse(current);
+                    for (uint32_t instance : placement.instances) {
+                        for (int row = 0; row < 3; row++) {
+                            motion[instance].rows[row] = glm::vec4(toPrevious[0][row], toPrevious[1][row], toPrevious[2][row], toPrevious[3][row]);
+                        }
+                    }
+                    placement.previousMatrix = current;
+                }
+
+                if (lightsDirty) {
+                    for (const Placement& placement : placements) {
+                        for (size_t i = 0; i < placement.localLights.size(); i++) {
+                            lights[placement.firstLight + i] = TransformLight(placement.localLights[i], placement.transform.Matrix());
+                        }
+                    }
+                }
+
+                const VkDeviceSize motionSize = sizeof(InstanceMotion) * motion.size();
+                const VkDeviceSize lightsSize = sizeof(Fox::Graphics::Vulkan::Light) * lights.size();
+                const bool uploadLights = lightsDirty && lightsSize <= 65536;
+                lightsDirty = false;
+
+                // The previous frame may still be reading these buffers
+                VkMemoryBarrier beforeWrite{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT };
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &beforeWrite, 0, nullptr, 0, nullptr);
+
+                if (motionSize > 0 && motionSize <= 65536) {
+                    vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), 0, motionSize, motion.data());
+                }
+                if (uploadLights) {
+                    vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), 0, lightsSize, lights.data());
+                }
+
+                VkMemoryBarrier afterWrite{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT };
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &afterWrite, 0, nullptr, 0, nullptr);
+
+                if (!tlasDirty) {
+                    return;
+                }
+                tlasDirty = false;
+
+                // Rebuild the top level structure in place. It holds one instance per object and surface kind,
+                // so a full rebuild costs microseconds and keeps tracing as fast as the original build.
+                for (const Placement& placement : placements) {
+                    const glm::mat4 transform = placement.transform.Matrix();
+                    for (uint32_t instance : placement.instances) {
+                        instances[instance].transform = {
+                            transform[0][0], transform[1][0], transform[2][0], transform[3][0],
+                            transform[0][1], transform[1][1], transform[2][1], transform[3][1],
+                            transform[0][2], transform[1][2], transform[2][2], transform[3][2]
+                        };
+                    }
+                }
+
+                // Its own instance buffer per frame in flight: the previous frame's build may still read the other
+                if (frameInstanceBuffers.size() <= frameSlot) {
+                    frameInstanceBuffers.resize(frameSlot + 1);
+                }
+                auto& instanceData = frameInstanceBuffers[frameSlot];
+                const VkDeviceSize instancesSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
+                if (!instanceData) {
+                    instanceData = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, instancesSize,
+                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                }
+                std::memcpy(instanceData->Map(), instances.data(), instancesSize);
+                instanceData->Unmap();
+
+                VkAccelerationStructureGeometryInstancesDataKHR instancesData{
+                    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+                    .arrayOfPointers = VK_FALSE,
+                    .data = { GetBufferAddress(instanceData->Get()) }
+                };
+
+                VkAccelerationStructureGeometryKHR geometry{
+                    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+                    .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+                    .geometry = {.instances = instancesData }
+                };
+
+                VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                    .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                    .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+                    .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+                    .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                    .dstAccelerationStructure = topLevelAccelerationStructure.handle,
+                    .geometryCount = 1,
+                    .pGeometries = &geometry,
+                    .scratchData = {.deviceAddress = tlasScratchAddress }
+                };
+
+                VkAccelerationStructureBuildRangeInfoKHR range{ .primitiveCount = static_cast<uint32_t>(instances.size()) };
+                const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { &range };
+
+                // The previous frame's rays must be done with the structure before it is overwritten
+                VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
+
+                vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
+
+                VkMemoryBarrier afterBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                    VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &afterBuild, 0, nullptr, 0, nullptr);
             }
 
             void RayTracingScene::AddGeneratedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
-                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material) {
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material,
+                const glm::mat4& transform, const std::string& name, bool movable) {
                 vertices.insert(vertices.end(), surfaceVertices.begin(), surfaceVertices.end());
                 for (uint32_t index : surfaceIndices) {
                     indices.push_back(vertexOffset + index);
@@ -632,7 +750,13 @@ namespace Fox {
                 record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
                 record.count[KindOf(material)] = 1;
                 meshRecords.push_back(record);
-                placements.push_back({ meshRecords.size() - 1, glm::mat4(1.0f) });
+
+                Placement placement;
+                placement.record = meshRecords.size() - 1;
+                placement.transform = Decompose(transform);
+                placement.name = name;
+                placement.movable = movable;
+                placements.push_back(std::move(placement));
 
                 submeshes.push_back(submesh);
 
@@ -660,10 +784,11 @@ namespace Fox {
                     planeVertices.push_back(vertex);
                 }
 
-                AddGeneratedSurface(planeVertices, { 0u, 1u, 2u, 0u, 2u, 3u }, material);
+                AddGeneratedSurface(planeVertices, { 0u, 1u, 2u, 0u, 2u, 3u }, material, glm::mat4(1.0f), "Ground", false);
             }
 
-            void RayTracingScene::AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material, uint32_t segments) {
+            void RayTracingScene::AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material,
+                const std::string& name, uint32_t segments) {
                 // UV sphere: rings of latitude from the north pole (+Y) to the south pole
                 const uint32_t columns = std::max(segments, 3u);
                 const uint32_t rows = std::max(segments / 2, 2u);
@@ -681,7 +806,8 @@ namespace Fox {
 
                         // Outward unit normal; the tangent follows increasing u (towards increasing phi)
                         const glm::vec3 normal(std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi));
-                        const glm::vec3 position = center + normal * radius;
+                        // Around the origin: the object's transform places it, so it moves and scales about its center
+                        const glm::vec3 position = normal * radius;
 
                         Fox::Graphics::Vulkan::Vertex vertex{};
                         vertex.position[0] = position.x;
@@ -716,7 +842,7 @@ namespace Fox {
                     }
                 }
 
-                AddGeneratedSurface(sphereVertices, sphereIndices, material);
+                AddGeneratedSurface(sphereVertices, sphereIndices, material, glm::translate(glm::mat4(1.0f), center), name, true);
             }
 
             void RayTracingScene::AddSun(const glm::vec3& directionToSun, const glm::vec3& irradiance, float angularRadius) {
@@ -771,14 +897,27 @@ namespace Fox {
                 }
 
                 const uint32_t masks[SurfaceKindCount] = { INSTANCE_MASK_OPAQUE, INSTANCE_MASK_GLASS, INSTANCE_MASK_SOLID_GLASS };
-                for (const Placement& placement : placements) {
+                for (size_t p = 0; p < placements.size(); p++) {
+                    Placement& placement = placements[p];
                     const MeshRecord& record = meshRecords[placement.record];
+                    placement.previousMatrix = placement.transform.Matrix();
                     for (int kind = 0; kind < SurfaceKindCount; kind++) {
                         if (record.blas[kind] >= 0) {
-                            AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.transform, record.FirstOf(kind), masks[kind]);
+                            placement.instances.push_back(static_cast<uint32_t>(instances.size()));
+                            instancePlacements.push_back(static_cast<uint32_t>(p));
+                            AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), masks[kind]);
                         }
                     }
                 }
+
+                // No motion yet: identity for every instance
+                std::vector<InstanceMotion> identity(std::max<size_t>(instances.size(), 1));
+                for (InstanceMotion& motion : identity) {
+                    motion.rows[0] = glm::vec4(1, 0, 0, 0);
+                    motion.rows[1] = glm::vec4(0, 1, 0, 0);
+                    motion.rows[2] = glm::vec4(0, 0, 1, 0);
+                }
+                instanceMotionSSBO = ShaderStorageBuffer<InstanceMotion>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Instance Motion", identity);
             }
 
             void RayTracingScene::TransformVertices(uint32_t first, uint32_t count, const glm::mat4& toWorld) {

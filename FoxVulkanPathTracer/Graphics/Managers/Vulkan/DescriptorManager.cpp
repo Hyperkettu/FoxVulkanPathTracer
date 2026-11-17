@@ -31,6 +31,8 @@ namespace Fox {
 							.AddBinding(10, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR)  // G-buffer: motion
 							.AddBinding(11, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_SHADER_STAGE_RAYGEN_BIT_KHR)  // G-buffer: specular albedo + roughness
 							.AddBinding(12, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_RAYGEN_BIT_KHR) // Environment importance sampling table
+							.AddBinding(13, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_RAYGEN_BIT_KHR) // Instance motion since the previous frame
+							.AddBinding(14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_RAYGEN_BIT_KHR) // Object picking result
 							.SetMaxSets(config.MAX_FRAMES_IN_FLIGHT)
 							.Build();
 

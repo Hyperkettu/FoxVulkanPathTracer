@@ -29,8 +29,10 @@ namespace Fox
                     return *this;
                 }
 
+                // The binding and attribute arrays vi points to must stay valid until Build()
                 PipelineBuilder& SetVertexInput(const VkPipelineVertexInputStateCreateInfo& vi) {
                     vertexInput = vi;
+                    withVertexInput = true;
                     return *this;
                 }
 

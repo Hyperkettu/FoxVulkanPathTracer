@@ -11,6 +11,7 @@
 #include <sstream>
 #include <array>
 #include <iomanip>
+#include <functional>
 
 #define SAFE_DELETE(ptr) do { delete (ptr); (ptr) = nullptr; } while(0)
 
@@ -96,6 +97,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/DlssRayReconstruction.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/PostProcess.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/OverlayRenderer.h"
 
 #include "FoxVulkanPathTracer/Graphics/Geometry/GeometryGenerator.h"
 
@@ -108,6 +110,7 @@
 #include "FoxVulkanPathTracer/Scene/Scene.h"
 #include "FoxVulkanPathTracer/Scene/MainScene.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
+#include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 

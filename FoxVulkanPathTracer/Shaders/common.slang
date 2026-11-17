@@ -32,6 +32,8 @@ struct HitPayload
 
     float3 emission;         // Emitted radiance
     int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1
+
+    uint instanceIndex;      // Acceleration structure instance that was hit (an object, see RayTracingScene)
 };
 
 // Mirrors Fox::Graphics::Vulkan::Submesh (Vertex.h)
@@ -102,6 +104,9 @@ struct Camera
     uint samplesPerPixel;   // Paths traced per pixel and frame
     uint jitterAllSamples;  // 1: every path uses `jitter`, 0: paths after the first are spread over the pixel
     uint gbufferFollowsReflections; // 1: the G-buffer describes what is seen in a mirror instead of the mirror
+
+    int2 pickPixel;         // Report the object seen at this pixel in gPickResult; negative: none
+    uint pickSlot;          // Entry of gPickResult to write (the frame in flight)
 };
 
 // Core PCG hash function (transforms a 32-bit state)

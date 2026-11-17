@@ -53,6 +53,12 @@ namespace Fox {
 				// Tells the denoiser that the previous frame must not be reused (resize, lighting change...).
 				void ResetHistory() { resetHistory = true; }
 
+				// --- Editing (E key): select objects with the mouse, move / rotate / scale them with gizmos ---
+				void SetEditMode(bool enabled);
+				glm::vec2 MouseInDisplayPixels() const;
+				Fox::Editor::TransformGizmo::View GizmoView() const;
+				void ReadPickResult(uint32_t frameSlot);
+
 			private:
 				Fox::Graphics::RendererConfig config;
 
@@ -127,6 +133,22 @@ namespace Fox {
 				Fox::Input::InputManager* inputManager = nullptr;
 				Fox::Core::Connection mouseInputBind;
 				Fox::Core::Connection keyInputBind;
+				Fox::Core::Connection mouseButtonPressBind;
+				Fox::Core::Connection mouseButtonReleaseBind;
+
+				// --- Editing ---
+				bool editMode = false;
+				Fox::Editor::TransformGizmo gizmo;
+				std::unique_ptr<OverlayRenderer> overlay;
+				std::vector<OverlayRenderer::Vertex> overlayVertices;
+
+				// Object picking: the path tracer reports the object seen at a pixel into pickBuffer (one entry per
+				// frame in flight), read back once that frame has finished
+				std::unique_ptr<Buffer> pickBuffer;
+				bool pickRequested = false;
+				glm::vec2 pickMouse{ 0.0f };            // Display pixels
+				std::vector<bool> pickPending;          // Per frame in flight
+				bool sceneChanged = false;              // An object moved this frame (restarts accumulation)
 			};
 
 		}

@@ -26,16 +26,53 @@ namespace Fox {
                 virtual void Initialize() = 0;
                 virtual void Update(float dt) = 0;
 
-                // Places the mesh in the scene. The same mesh can be added several times with different
-                // transforms: its geometry and acceleration structures are stored once and instanced.
-                void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform);
+                // Places the mesh in the scene as a movable object. The same mesh can be added several times with
+                // different transforms: its geometry and acceleration structures are stored once and instanced.
+                void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name = "Mesh");
 
-                // Adds a large horizontal quad at the given height, e.g. as the ground.
+                // Adds a large horizontal quad at the given height, e.g. as the ground. Not movable.
                 void AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material);
 
-                // Adds a sphere, e.g. a glass ball (a material with transmission and an ior, see Material.h).
-                // segments: subdivisions around the equator; the sphere is smooth shaded either way.
-                void AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material, uint32_t segments = 128);
+                // Adds a sphere as a movable object, e.g. a glass ball (a material with transmission and an ior,
+                // see Material.h). segments: subdivisions around the equator; it is smooth shaded either way.
+                void AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material,
+                    const std::string& name = "Sphere", uint32_t segments = 128);
+
+                // --- Objects: everything placed in the scene, movable while it renders ---
+
+                struct ObjectTransform {
+                    glm::vec3 position{ 0.0f };
+                    glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+                    glm::vec3 scale{ 1.0f };
+
+                    glm::mat4 Matrix() const {
+                        return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation) * glm::scale(glm::mat4(1.0f), scale);
+                    }
+                };
+
+                size_t GetObjectCount() const { return placements.size(); }
+                const std::string& GetObjectName(size_t object) const { return placements[object].name; }
+                bool IsObjectMovable(size_t object) const { return placements[object].movable; }
+                const ObjectTransform& GetObjectTransform(size_t object) const { return placements[object].transform; }
+
+                // Takes effect with the next RecordFrameUpdate
+                void SetObjectTransform(size_t object, const ObjectTransform& transform);
+
+                // The object an acceleration structure instance belongs to (InstanceIndex() in the shaders), -1 if none
+                int GetObjectOfInstance(uint32_t instanceIndex) const {
+                    return instanceIndex < instancePlacements.size() ? static_cast<int>(instancePlacements[instanceIndex]) : -1;
+                }
+
+                // Records what moved objects need on the GPU before this frame is traced: the top level
+                // acceleration structure, the lights they carry and the motion of every instance since the
+                // previous frame (instanceMotionSSBO, for motion vectors). frameSlot: the frame in flight.
+                void RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot);
+
+                // Per acceleration structure instance: world space now -> world space in the previous frame
+                struct InstanceMotion {
+                    glm::vec4 rows[3]; // 3x4 matrix, row major
+                };
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<InstanceMotion>> instanceMotionSSBO;
 
                 // Adds a sun: a distant light with soft shadows.
                 //   directionToSun: where the sun is in the sky (does not need to be normalized)
@@ -88,7 +125,6 @@ namespace Fox {
 
                 void BuildBLAS(VkCommandBuffer cmd);
                 void BuildTLAS(VkCommandBuffer cmd);
-                void UpdateTLAS(VkCommandBuffer cmd);
 
                 static void RegisterExtensionFunctions(VkDevice device) {
                     vkCreateAccelerationStructureKHR = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(vkGetDeviceProcAddr(device, "vkCreateAccelerationStructureKHR"));
@@ -190,17 +226,36 @@ namespace Fox {
                     return material.IsSolidGlass() ? SolidGlass : material.IsThinGlass() ? ThinGlass : Opaque;
                 }
 
-                // A record for generated geometry with one submesh and one material, placed at the origin
+                // A record for generated geometry with one submesh and one material, and its placement
                 void AddGeneratedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
-                    const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material);
+                    const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material,
+                    const glm::mat4& transform, const std::string& name, bool movable);
                 std::vector<MeshRecord> meshRecords;
 
-                // Where each mesh is placed; one TLAS instance per placement and BLAS
+                // Where each mesh is placed (an object); one TLAS instance per placement and BLAS
                 struct Placement {
                     size_t record;
-                    glm::mat4 transform;
+                    ObjectTransform transform;
+                    std::string name;
+                    bool movable = true;
+
+                    // Its lights: entries [firstLight, firstLight + localLights.size()) of the light buffer
+                    uint32_t firstLight = 0;
+                    std::vector<Fox::Graphics::Vulkan::Light> localLights;
+
+                    std::vector<uint32_t> instances;  // Its TLAS instances
+                    glm::mat4 previousMatrix{ 1.0f }; // As traced in the previous frame
                 };
                 std::vector<Placement> placements;
+                std::vector<uint32_t> instancePlacements; // Per TLAS instance
+
+                static ObjectTransform Decompose(const glm::mat4& matrix);
+                static Fox::Graphics::Vulkan::Light TransformLight(Fox::Graphics::Vulkan::Light light, const glm::mat4& transform);
+
+                bool tlasDirty = false;
+                bool lightsDirty = false;
+                VkDeviceAddress tlasScratchAddress = 0;
+                std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Buffer>> frameInstanceBuffers; // Per frame in flight
 
                 // Running offsets into the scene-wide arrays, advanced by AddMesh
                 uint32_t vertexOffset = 0u;

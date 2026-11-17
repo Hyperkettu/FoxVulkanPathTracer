@@ -29,6 +29,8 @@ namespace Fox {
 				alignas(4)  uint32_t samplesPerPixel;  // Offset 156 - paths traced per pixel and frame
 				alignas(4)  uint32_t jitterAllSamples; // Offset 160 - 1: all paths of a pixel share the jitter
 				alignas(4)  uint32_t gbufferFollowsReflections; // Offset 164 - 1: describe what a mirror shows, not the mirror
+				alignas(8)  glm::ivec2 pickPixel{ -1, -1 }; // Offset 168 - report the object seen at this pixel (editor)
+				alignas(4)  uint32_t pickSlot;      // Offset 176 - entry of the pick result buffer to write
 			};
 
 			// Must match the Camera struct in Shaders/common.slang (std140 layout).
@@ -39,6 +41,8 @@ namespace Fox {
 			static_assert(offsetof(CameraUBO, lightCount) == 148, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, jitterAllSamples) == 160, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, gbufferFollowsReflections) == 164, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, pickPixel) == 168, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, pickSlot) == 176, "CameraUBO layout must match common.slang");
 
 			struct OldFrame {
 				alignas(16) glm::mat4 model;

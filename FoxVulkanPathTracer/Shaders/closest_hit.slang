@@ -154,4 +154,5 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
     payload.specularWeight = material.specularWeight;
     payload.emission = emission;
     payload.lightIndex = material.lightIndex;
+    payload.instanceIndex = InstanceIndex();
 }

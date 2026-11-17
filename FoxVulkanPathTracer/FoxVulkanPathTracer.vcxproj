@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -188,6 +188,8 @@
     <ClCompile Include="Graphics\Vulkan\PostProcess.cpp" />
     <ClCompile Include="Graphics\Vulkan\ComputePass.cpp" />
     <ClCompile Include="Graphics\Vulkan\GpuProfiler.cpp" />
+    <ClCompile Include="Graphics\Vulkan\OverlayRenderer.cpp" />
+    <ClCompile Include="Editor\TransformGizmo.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\GBuffer.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\Denoiser.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.cpp" />
@@ -265,6 +267,8 @@
     <ClInclude Include="Graphics\Vulkan\PostProcess.h" />
     <ClInclude Include="Graphics\Vulkan\ComputePass.h" />
     <ClInclude Include="Graphics\Vulkan\GpuProfiler.h" />
+    <ClInclude Include="Graphics\Vulkan\OverlayRenderer.h" />
+    <ClInclude Include="Editor\TransformGizmo.h" />
     <ClInclude Include="Graphics\Vulkan\DeviceContext.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\GBuffer.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.h" />
@@ -337,6 +341,12 @@
     </SlangShader>
     <SlangShader Include="Shaders\svgf_modulate.slang">
       <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\overlay_vert.slang">
+      <Stage>vertex</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\overlay_frag.slang">
+      <Stage>fragment</Stage>
     </SlangShader>
     <SlangShader Include="Shaders\dlss_prepare.slang">
       <Stage>compute</Stage>

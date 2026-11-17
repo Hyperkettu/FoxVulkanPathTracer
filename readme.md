@@ -36,6 +36,8 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   * **SVGF** (Spatiotemporal Variance-Guided Filtering): temporal reprojection + variance-guided a-trous wavelet filter, in compute shaders.
   * **Accumulation**: plain averaging while the camera is still, as the ground-truth reference.
 * **HDR Pipeline** Floating point rendering and an AgX tone mapping pass with exposure control.
+* **Scene Editing** Click an object to select it, then move, rotate or scale it with gizmos while the image keeps
+  path tracing. Moved objects carry their lights along and get motion vectors, so the denoisers follow them.
 * **Real-time at 4K** 60 fps in 4K fullscreen with the default scene: about 4 ms of GPU time per frame on an RTX 5090
   (DLSS Quality, 1440p path tracing, ~4 M displaced triangles). See *Performance* below.
 
@@ -149,6 +151,30 @@ tinted and absorbed, so a glass ball casts a light, coloured shadow rather than 
 glass surface itself rather than the view through it (the view through a curved solid changes too much with the
 sub-pixel jitter for its history), so solids look softer with SVGF than with DLSS.
 
+### Editing the scene
+
+Press `E` for edit mode: the mouse pointer appears and the window title shows the gizmo mode and the selection.
+
+| Input | Action |
+| --- | --- |
+| Left click | Select the object under the pointer (the ground cannot be selected) |
+| `Z` / `X` / `C` | Move / rotate / scale gizmo |
+| Drag an arrow | Move along that world axis; the center square moves in the view plane |
+| Drag a ring | Rotate about that world axis |
+| Drag an axis | Scale along that axis of the object; the center square scales uniformly |
+| `Ctrl` while dragging | Snap to 0.25 m, 15° or 0.1x steps |
+| Right mouse + drag | Look around (`W` `A` `S` `D` `R` `F` still move) |
+| `E` | Leave edit mode |
+
+Each object rotates and scales about its origin. Objects are the placements of `AddMesh` / `AddSphere`
+(`MainRayTracingScene.cpp`); `RayTracingScene::SetObjectTransform` moves them from code too.
+
+How it works: the path tracer reports the object seen at the clicked pixel (`gPickResult` in `raygen.slang`), read back
+once that frame finishes. When an object moves, the top level acceleration structure is rebuilt that frame
+(microseconds: one instance per object), its lights follow it, and every instance's motion since the previous frame
+goes to the shaders, which add it to the motion vectors of directly visible surfaces. The gizmos are 2D triangles
+drawn over the tone mapped image (`Editor/TransformGizmo`, `Graphics/Vulkan/OverlayRenderer`).
+
 ### Adding a denoiser
 
 Derive from `Denoiser` (`Graphics/Vulkan/Raytracing/Denoiser.h`), implement `Resize` / `Denoise` / `GetOutputView`, and register the class in
@@ -169,6 +195,7 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `U` | Next upscaling mode (Native → Quality → Balanced → Performance → Ultra Performance). Chosen from the display size until pressed |
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
+| `E` | Edit mode: select, move, rotate and scale objects (see *Editing the scene*) |
 | `Esc` | Quit |
 
 The window title shows the active denoiser, the upscaling mode and render resolution, the paths per pixel, the frame rate
@@ -198,7 +225,7 @@ Below is the active development checklist for the renderer.
 ### 🏗️ Scene Graph & Performance
 - [ ] Acceleration structure (BLAS/TLAS) refitting
 - [ ] Full hierarchical scene graph
-- [ ] Instance buffer updates for dynamic object movement
+- [x] Instance buffer updates for dynamic object movement (editor gizmos)
 - [ ] Scene configuration files using JSON (*Fox Scene format*)
 
 ### 🏃 Animation & Physics

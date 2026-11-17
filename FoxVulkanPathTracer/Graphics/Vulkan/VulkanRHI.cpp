@@ -182,12 +182,19 @@ namespace Fox {
 				CreateGBuffer();
 				denoisers = RayTracing::CreateDenoisers(deviceContext);
 
+				// Object picking result, one entry (uint2) per frame in flight, read back by the CPU
+				pickBuffer = std::make_unique<Buffer>(device, physicalDevice, sizeof(uint32_t) * 2 * config.MAX_FRAMES_IN_FLIGHT,
+					VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+				pickPending.assign(config.MAX_FRAMES_IN_FLIGHT, false);
+
 				Managers::DescriptorManager::Get().Initialize(device, config);
 				CreateFrameDescriptors();
 
 				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities, shaderExecutionReordering);
 
 				postProcessor = std::make_unique<PostProcessor>(device);
+				overlay = std::make_unique<OverlayRenderer>(device, physicalDevice,
+					Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get(), config.MAX_FRAMES_IN_FLIGHT);
 				BindGBuffer();
 
 				std::cout << "Vulkan renderer initialized (" << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ").\n";
@@ -200,6 +207,8 @@ namespace Fox {
 
 					mouseInputBind.Disconnect();
 					keyInputBind.Disconnect();
+					mouseButtonPressBind.Disconnect();
+					mouseButtonReleaseBind.Disconnect();
 
 					for (auto& frameResource : frameResources) {
 						frameResource->Destroy(device);
@@ -207,6 +216,8 @@ namespace Fox {
 					frameResources.clear();
 
 					postProcessor = nullptr;
+					overlay = nullptr;
+					pickBuffer = nullptr;
 					profiler = nullptr;
 					renderFinishedSemaphores.clear();
 					denoisers.clear();
@@ -578,7 +589,7 @@ namespace Fox {
 						descriptorManager.GetDescriptorSet(Managers::Descriptor::RAY_TRACING)->AllocateSet());
 
 					auto& set = frameResource->perFrameDescriptorSet;
-					set->Reserve(13);
+					set->Reserve(15);
 					set->SetAccelerationStructure(0, tlas);
 					set->SetStorageImage(1, gbuffer->radiance->GetView());
 					set->SetStorageImage(8, gbuffer->albedo->GetView());
@@ -592,6 +603,8 @@ namespace Fox {
 					set->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
 					set->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
 					set->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique());
+					set->SetStorageBuffer(13, raytracingScene->instanceMotionSSBO->GetBufferUnique());
+					set->SetStorageBuffer(14, pickBuffer);
 					set->Update();
 				}
 
@@ -659,6 +672,11 @@ namespace Fox {
 				std::ostringstream title;
 				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << RayTracing::UpscalingModeName(upscalingMode)
 					<< " " << gbuffer->extent.width << "x" << gbuffer->extent.height << " - " << samplesPerPixel << " spp";
+				if (editMode) {
+					const int selected = gizmo.GetSelected();
+					title << " - EDIT " << Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode()) << ": "
+						<< (selected >= 0 ? raytracingScene->GetObjectName(static_cast<size_t>(selected)) : std::string("click an object"));
+				}
 				if (titleTimer > 0.0f) {
 					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps" << (vsync ? "" : " (vsync off)");
 				}
@@ -716,6 +734,7 @@ namespace Fox {
 				// Block until the GPU has finished the work that last used this frame slot
 				frameResource.renderFence->Wait();
 				profiler->ReadResults(currentFrame);
+				ReadPickResult(currentFrame);
 
 				frameResource.renderFence->Reset();
 				frameResource.commandPool->Reset();
@@ -809,13 +828,25 @@ namespace Fox {
 				cam.jitterAllSamples = denoisers[activeDenoiser]->GetJitterMode() == RayTracing::JitterMode::Halton ? 1u : 0u;
 				cam.gbufferFollowsReflections = denoisers[activeDenoiser]->WantsReflectedSurfaces() ? 1u : 0u;
 
+				// Object picking: the pixel under the mouse, in render resolution
+				cam.pickPixel = glm::ivec2(-1, -1);
+				cam.pickSlot = currentFrame;
+				if (pickRequested) {
+					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
+					cam.pickPixel = glm::ivec2(pickMouse / display * glm::vec2(extent.width, extent.height));
+					pickPending[currentFrame] = true;
+					pickRequested = false;
+				}
+
 				frameResource.camUBO->Update(cam);
 
 				// What the denoiser needs to know about this frame
 				denoiserFrame = RayTracing::DenoiserFrameInfo{};
 				denoiserFrame.frameIndex = frameCounter;
 				denoiserFrame.resetHistory = resetHistory;
-				denoiserFrame.cameraMoved = current.position != previous.position || current.forward != previous.forward;
+				// Moved objects also invalidate what accumulated (the other denoisers follow them with motion vectors)
+				denoiserFrame.cameraMoved = current.position != previous.position || current.forward != previous.forward || sceneChanged;
+				sceneChanged = false;
 				denoiserFrame.jitter = jitter;
 				denoiserFrame.verticalFov = camera->GetFov();
 				denoiserFrame.nearPlane = camera->GetNearPlane();
@@ -842,7 +873,12 @@ namespace Fox {
 				// of the frame only need to be ordered with memory barriers.
 				CommandList& commandList = *frameResource.commandList;
 
-				commandList.Begin()
+				commandList.Begin();
+
+				// Objects moved since the last frame: acceleration structure, lights, motion
+				raytracingScene->RecordFrameUpdate(commandList.Get(), currentFrame);
+
+				commandList
 					// 1. Path trace into the G-buffer. The previous frame may still be reading these images.
 					.MemoryBarrier(
 						VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
@@ -889,7 +925,19 @@ namespace Fox {
 					VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 
 				// Also upscales the denoisers that output at render resolution (bilinear filtering)
-				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), displayExtent);
+				// Gizmos of the selected object, at display resolution on top of the image
+				overlayVertices.clear();
+				if (editMode) {
+					static_assert(sizeof(OverlayRenderer::Vertex) == sizeof(Fox::Editor::TransformGizmo::OverlayVertex), "Overlay vertex layouts differ");
+					std::vector<Fox::Editor::TransformGizmo::OverlayVertex> gizmoVertices;
+					gizmo.BuildOverlay(GizmoView(), *raytracingScene, gizmoVertices);
+					for (const auto& vertex : gizmoVertices) {
+						overlayVertices.push_back({ vertex.position, vertex.color });
+					}
+				}
+
+				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), displayExtent,
+					[this, displayExtent](CommandList& pass) { overlay->Record(pass, overlayVertices, currentFrame, displayExtent); });
 
 				profiler->Mark(commandList, "tonemap");
 
@@ -936,22 +984,123 @@ namespace Fox {
 			// Input
 			// ------------------------------------------------------------------------------------
 
+			void VulkanRHI::SetEditMode(bool enabled) {
+				editMode = enabled;
+				gizmo.MouseUp();
+
+				// Edit mode frees the mouse pointer for clicking; otherwise the mouse looks around
+				if (inputManager) {
+					inputManager->SetRelativeMode(!editMode);
+				}
+
+				std::cout << "Edit mode: " << (editMode ? "on (click an object, Z move, X rotate, C scale, Ctrl snaps, right mouse looks around)" : "off") << "\n";
+				UpdateWindowTitle(0.0f);
+			}
+
+			glm::vec2 VulkanRHI::MouseInDisplayPixels() const {
+				// SDL reports window coordinates, which can differ from the drawable's pixels (display scaling)
+				int windowWidth = 0, windowHeight = 0;
+				SDL_GetWindowSize(static_cast<SDL_Window*>(config.windowHandle), &windowWidth, &windowHeight);
+
+				const glm::vec2 window(std::max(windowWidth, 1), std::max(windowHeight, 1));
+				const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
+				const glm::vec2 mouse(inputManager ? inputManager->GetMouseX() : 0, inputManager ? inputManager->GetMouseY() : 0);
+				return (mouse + 0.5f) * display / window;
+			}
+
+			Fox::Editor::TransformGizmo::View VulkanRHI::GizmoView() const {
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+
+				Fox::Editor::TransformGizmo::View view;
+				view.position = camera->GetPosition();
+				view.forward = camera->GetForward();
+				view.right = camera->GetRight();
+				view.up = camera->GetUp();
+				view.tanHalfFov = std::tan(camera->GetFov() * 0.5f);
+				view.size = glm::vec2(capabilities.currentExtent.width, capabilities.currentExtent.height);
+				return view;
+			}
+
+			void VulkanRHI::ReadPickResult(uint32_t frameSlot) {
+				if (frameSlot >= pickPending.size() || !pickPending[frameSlot]) {
+					return;
+				}
+				pickPending[frameSlot] = false;
+
+				// The frame that asked has finished (its fence was waited on)
+				uint32_t result[2] = {};
+				std::memcpy(result, static_cast<const uint8_t*>(pickBuffer->Map()) + sizeof(result) * frameSlot, sizeof(result));
+				pickBuffer->Unmap();
+
+				// Instance index + 1, 0 for the sky. Objects that cannot move (the ground) deselect.
+				const int object = result[0] > 0 ? raytracingScene->GetObjectOfInstance(result[0] - 1) : -1;
+				const bool selectable = object >= 0 && raytracingScene->IsObjectMovable(static_cast<size_t>(object));
+				gizmo.Select(selectable ? object : -1);
+
+				if (selectable) {
+					std::cout << "Selected: " << raytracingScene->GetObjectName(static_cast<size_t>(object)) << "\n";
+				}
+				UpdateWindowTitle(0.0f);
+			}
+
 			void VulkanRHI::RegisterInput(Fox::Input::InputManager& input) {
 				inputManager = &input;
 
 				input.SetRelativeMode(true);
 
 				mouseInputBind = input.OnMouseMoved.Connect([this](int dx, int dy) {
-					if (inputManager->IsRelativeMode()) {
+					// Looking around: always outside edit mode, with the right mouse button held inside it
+					const bool look = inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT));
+					if (look) {
 						Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(
 							static_cast<float>(dx) * mouseSensitivity, -static_cast<float>(dy) * mouseSensitivity);
+					}
+
+					if (editMode) {
+						const bool snap = inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL);
+						gizmo.MouseMove(MouseInDisplayPixels(), GizmoView(), *raytracingScene, snap);
+						sceneChanged = sceneChanged || gizmo.IsDragging();
+					}
+				});
+
+				mouseButtonPressBind = input.OnMouseButtonPressed.Connect([this](Uint8 button) {
+					if (!editMode || button != SDL_BUTTON_LEFT) {
+						return;
+					}
+
+					// Grab a handle of the gizmo, or select what is under the mouse (answered a frame or two later)
+					const glm::vec2 mouse = MouseInDisplayPixels();
+					if (!gizmo.MouseDown(mouse, GizmoView(), *raytracingScene)) {
+						pickRequested = true;
+						pickMouse = mouse;
+					}
+				});
+
+				mouseButtonReleaseBind = input.OnMouseButtonReleased.Connect([this](Uint8 button) {
+					if (button == SDL_BUTTON_LEFT) {
+						gizmo.MouseUp();
 					}
 				});
 
 				keyInputBind = input.OnKeyReleased.Connect([this](SDL_Scancode key) {
 					using Managers::TextureManager;
+					using Mode = Fox::Editor::TransformGizmo::Mode;
 
 					switch (key) {
+					case SDL_SCANCODE_E:
+						SetEditMode(!editMode);
+						break;
+
+					// Gizmo modes
+					case SDL_SCANCODE_Z:
+					case SDL_SCANCODE_X:
+					case SDL_SCANCODE_C:
+						if (editMode) {
+							gizmo.SetMode(key == SDL_SCANCODE_Z ? Mode::Translate : key == SDL_SCANCODE_X ? Mode::Rotate : Mode::Scale);
+							UpdateWindowTitle(0.0f);
+						}
+						break;
+
 					case SDL_SCANCODE_N:
 						SelectDenoiser(activeDenoiser + 1);
 						break;

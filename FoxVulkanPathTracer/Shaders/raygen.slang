@@ -21,6 +21,17 @@
 [[vk::binding(10, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> gMotion;
 [[vk::binding(11, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> gSpecular;
 
+// Per acceleration structure instance: world space now -> world space in the previous frame (3x4, row major).
+// Moved objects get motion vectors from it. Mirrors RayTracingScene::InstanceMotion.
+struct InstanceMotion
+{
+    float4 rows[3];
+};
+[[vk::binding(13, 0)]] StructuredBuffer<InstanceMotion> gInstanceMotion;
+
+// Object picking: x = instance index + 1 of the object seen at camera.pickPixel (0 = sky), y = distance
+[[vk::binding(14, 0)]] RWStructuredBuffer<uint2> gPickResult;
+
 // Bounces after the first hit. Longer paths are also cut probabilistically (Russian roulette).
 // Deeper bounces add little light outdoors but cost as much as the first ones.
 static const int MAX_BOUNCES = 4;
@@ -383,6 +394,7 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
 
 struct PrimarySurface
 {
+    bool isFirstHit;       // The surface the camera ray hit, not one seen through glass or in a mirror
     float3 normal;
     float distance;        // Path length from the camera, negative for the sky
     float3 diffuseAlbedo;
@@ -410,6 +422,7 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
     result.specularAlbedo = float3(0.0f);
     result.roughness = 1.0f;
     result.specularHitDistance = 65504.0f; // "Nothing reflected", the largest 16-bit float
+    result.isFirstHit = false;
 
     const bool followReflections = camera.gbufferFollowsReflections != 0;
 
@@ -483,6 +496,7 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
         if (exhausted && reflector.distance >= 0.0f)
             return reflector;
 
+        result.isFirstHit = i == 0;
         result.normal = N;
         result.distance = pathLength;
         result.diffuseAlbedo = (opaqueToDenoiser ? surface.transmitColor
@@ -529,10 +543,28 @@ void main()
     // Motion vector: the scene is static, so only the camera moves. The sky is treated as infinitely
     // far away. For surfaces seen in a mirror, the distance is the unfolded path length, which places
     // the point behind the mirror - exactly where its reflection appears to be for a flat mirror.
+    float3 primaryPoint = camera.camPos + primaryDirection * primary.distance;
+
+    // Moving objects: where the point was last frame. Only for surfaces hit directly; what is seen
+    // through glass or in a mirror moves with the camera only.
+    if (!isSky && primary.isFirstHit)
+    {
+        InstanceMotion motion = gInstanceMotion[primaryHit.instanceIndex];
+        float4 p = float4(primaryPoint, 1.0f);
+        primaryPoint = float3(dot(motion.rows[0], p), dot(motion.rows[1], p), dot(motion.rows[2], p));
+    }
+
     float prevDepth;
     float2 prevPosition = isSky
         ? ProjectToPreviousFrame(primaryDirection, prevDepth)
-        : ProjectToPreviousFrame(camera.camPos + primaryDirection * primary.distance - camera.prevCamPos, prevDepth);
+        : ProjectToPreviousFrame(primaryPoint - camera.prevCamPos, prevDepth);
+
+    // Object picking for the editor gizmos
+    if (all(int2(pixel) == camera.pickPixel))
+    {
+        bool hit = primaryHit.hitT >= 0.0f;
+        gPickResult[camera.pickSlot] = uint2(hit ? primaryHit.instanceIndex + 1 : 0, asuint(hit ? primaryHit.hitT : -1.0f));
+    }
 
     float depth = isSky ? -1.0f : primary.distance * dot(primaryDirection, camera.camForward);
 
