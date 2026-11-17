@@ -212,6 +212,8 @@
     </ClCompile>
     <ClCompile Include="Editor\TreeEditor.cpp" />
     <ClCompile Include="Editor\SceneEditor.cpp" />
+    <ClCompile Include="Editor\CameraEditor.cpp" />
+    <ClCompile Include="Scene\CameraManager.cpp" />
     <ClCompile Include="Scene\SceneFile.cpp" />
     <ClCompile Include="Graphics\Geometry\TreeGenerator.cpp" />
     <ClCompile Include="Animation\WindSkeleton.cpp" />
@@ -307,6 +309,8 @@
     <ClInclude Include="Scene\TextureLibrary.h" />
     <ClInclude Include="Editor\TreeEditor.h" />
     <ClInclude Include="Editor\SceneEditor.h" />
+    <ClInclude Include="Editor\CameraEditor.h" />
+    <ClInclude Include="Scene\CameraManager.h" />
     <ClInclude Include="Graphics\Geometry\SkinnedMesh.h" />
     <ClInclude Include="Graphics\Geometry\TreeGenerator.h" />
     <ClInclude Include="Graphics\Geometry\Spline.h" />

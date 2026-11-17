@@ -6,7 +6,10 @@
 //   "environment": { "ground": true, "groundHeight": -3.73, "groundMaterial": {...}, "sun": true, ... },
 //   "models":  [ { "name": "Cabin", "file": "Models/cabin.glb", "displacement": true, "transform": {...} } ],
 //   "spheres": [ { "name": "Glass ball", "radius": 1.2, "material": {...}, "transform": {...} } ],
-//   "trees":   [ { "name": "Tree 1", "transform": {...}, "shape": {...}, "look": {...}, "wind": {...} } ]
+//   "trees":   [ { "name": "Tree 1", "transform": {...}, "shape": {...}, "look": {...}, "wind": {...} } ],
+//   "cameraPaths": [ { "name": "Path 1", "speed": 4, "ease": 1.5, "loop": false, "lookAlongPath": false,
+//                      "keys": [ { "position": [x, y, z], "target": [x, y, z] }, ... ] } ],
+//   "activeCameraPath": 0
 // }
 //
 // A transform is { "position": [x, y, z], "rotation": [x, y, z] (Euler angles, degrees), "scale": [x, y, z] }.
@@ -76,6 +79,8 @@ namespace Fox {
 	}
 
 	namespace Scene {
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraPath, name, speed, ease, loop, lookAlongPath, keys)
 
 		namespace RayTracing {
 
@@ -121,6 +126,8 @@ namespace Fox {
 				file["version"] = FILE_VERSION;
 				file["camera"] = camera;
 				file["environment"] = environment;
+				file["cameraPaths"] = cameraManager.GetPaths();
+				file["activeCameraPath"] = cameraManager.GetActivePath();
 
 				file["models"] = json::array();
 				for (const Model& model : models) {
@@ -194,7 +201,11 @@ namespace Fox {
 				std::vector<Tree> newTrees;
 				Environment newEnvironment;
 				CameraPose newCamera;
+				std::vector<Fox::Scene::CameraPath> newPaths;
+				int newActivePath = 0;
 				try {
+					newPaths = file.value("cameraPaths", std::vector<Fox::Scene::CameraPath>{});
+					newActivePath = file.value("activeCameraPath", 0);
 					newCamera = file.value("camera", CameraPose{});
 					newEnvironment = file.value("environment", Environment{});
 
@@ -235,6 +246,9 @@ namespace Fox {
 				spheres = std::move(newSpheres);
 				trees = std::move(newTrees);
 				environment = newEnvironment;
+				cameraManager.Clear();
+				cameraManager.GetPaths() = std::move(newPaths);
+				cameraManager.SetActivePath(newActivePath);
 				camera = newCamera;
 				pendingCamera = newCamera; // The renderer moves the camera there (TakePendingCamera)
 				hasPendingCamera = true;

@@ -85,6 +85,8 @@ namespace Fox {
                 std::vector<Model>& GetModels() { return models; }
                 std::vector<Sphere>& GetSpheres() { return spheres; }
                 Environment& GetEnvironment() { return environment; }
+                // Camera paths (saved with the scene) and the camera's flight
+                Fox::Scene::CameraManager& GetCameraManager() { return cameraManager; }
 
                 size_t AddModel(const std::string& file, bool displacement, const glm::vec3& position);
                 size_t AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material);
@@ -178,6 +180,7 @@ namespace Fox {
                 std::vector<Model> models;
                 std::vector<Sphere> spheres;
                 Environment environment;
+                Fox::Scene::CameraManager cameraManager;
                 bool structureChanged = false;
                 CameraPose pendingCamera;
                 bool hasPendingCamera = false;

@@ -321,6 +321,7 @@ Press `E` for edit mode: the mouse pointer appears and the window title shows th
 | `Ctrl` while dragging | Snap to 0.25 m, 15° or 0.1x steps |
 | Right mouse + drag | Look around (`W` `A` `S` `D` `R` `F` still move) |
 | `Delete` | Remove the selected object |
+| `K` | Add a camera path key from the view |
 | `E` | Leave edit mode |
 
 Each object rotates and scales about its origin. `RayTracingScene::SetObjectTransform` moves objects from code too.
@@ -368,6 +369,36 @@ Rotations are Euler angles in degrees. A tree's `shape`, `look` and `wind` hold 
 structures; models already loaded once are kept in memory, so this takes about half a second with two displaced
 cabins (the first load of a displaced model takes a few seconds).
 
+### Camera paths
+
+A scene can hold camera paths: keys (where the camera is and what it looks at) joined by a centripetal Catmull-Rom
+spline, which passes through every key without loops or overshoot where keys are unevenly spaced. The camera flies
+the active path at a constant speed whatever the spacing of the keys (an arc length table maps distance to the
+spline), speeding up from rest and slowing down to it over the *ease* time at the ends. A *loop* path joins its last
+key to the first and goes round until stopped; *look along the path* turns the camera where the path goes instead
+of where the keys look. The default scene has one, *Around the cabin*: press `P` to fly it.
+
+| Input | Action |
+| --- | --- |
+| `P` | Fly the active path, or stop (from the start again once it has ended) |
+| `K` (edit mode) | Add a key where the camera is and where it looks, after the selected key (makes a path if there is none) |
+
+The **Camera** window (edit mode) sets the free flight speed and edits paths: new, remove, name, speed, ease, loop,
+look along the path, play / stop, a time slider to scrub through the flight, and the keys (select, double click or
+**Go to** to look from one, **Set to view**, reorder, remove, or type positions). The active path is drawn in the
+view, with each key's number and where it looks. While a path plays, the mouse and `W` `A` `S` `D` `R` `F` do not move
+the camera and the window title shows the time. Paths are saved in the scene file:
+
+```json
+"cameraPaths": [
+  { "name": "Around the cabin", "speed": 6, "ease": 1.5, "loop": true, "lookAlongPath": false,
+    "keys": [ { "position": [29, -2.6, 17], "target": [4, -0.6, -3] }, { "position": [12, -1.5, 30], "target": [12, -1.5, 4] } ] }
+],
+"activeCameraPath": 0
+```
+
+The code: `Scene/CameraManager` (paths, playback, free flight), `Editor/CameraEditor` (the window and the drawn path).
+
 ### Adding a denoiser
 
 Derive from `Denoiser` (`Graphics/Vulkan/Raytracing/Denoiser.h`), implement `Resize` / `Denoise` / `GetOutputView`, and register the class in
@@ -388,7 +419,8 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `U` | Next upscaling mode (Native → Quality → Balanced → Performance → Ultra Performance). Chosen from the display size until pressed |
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
-| `E` | Edit mode: select, move, rotate and scale objects, the Scene and Trees windows (see *Editing the scene*, *Scene files*, *Tree editor*) |
+| `P` | Fly the active camera path, or stop (see *Camera paths*) |
+| `E` | Edit mode: select, move, rotate and scale objects, the Scene, Trees and Camera windows (see *Editing the scene*, *Scene files*, *Camera paths*, *Tree editor*) |
 | `Esc` | Quit |
 
 The window title shows the active denoiser, the upscaling mode and render resolution, the paths per pixel, the frame rate

@@ -14,6 +14,25 @@
     "sunIntensity": 18.0,
     "sunAngularRadius": 1.2
   },
+  "cameraPaths": [
+    {
+      "name": "Around the cabin",
+      "speed": 6.0,
+      "ease": 1.5,
+      "loop": true,
+      "lookAlongPath": false,
+      "keys": [
+        { "position": [29, -2.6, 17], "target": [4, -0.6, -3] },
+        { "position": [12, -1.5, 30], "target": [12, -1.5, 4] },
+        { "position": [-12, 0, 22], "target": [10, -1.5, 4] },
+        { "position": [-22, 2, -2], "target": [12, -1, 2] },
+        { "position": [0, 4, -28], "target": [16, 0, 2] },
+        { "position": [34, 3, -26], "target": [16, -1, 2] },
+        { "position": [46, 1, 0], "target": [18, -1, 4] }
+      ]
+    }
+  ],
+  "activeCameraPath": 0,
   "models": [
     {
       "name": "Cabin",

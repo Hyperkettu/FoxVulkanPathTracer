@@ -137,7 +137,6 @@ namespace Fox {
 				std::unique_ptr<GpuProfiler> profiler;
 
 				// --- Input ---
-				float cameraSpeed = 10.0f;
 				float mouseSensitivity = 0.13f;
 				Fox::Input::InputManager* inputManager = nullptr;
 				Fox::Core::Connection mouseInputBind;
@@ -150,6 +149,7 @@ namespace Fox {
 				float uiScale = 0.0f;            // Sizes scale with the window height
 				Fox::Editor::TreeEditor treeEditor;
 				Fox::Editor::SceneEditor sceneEditor;
+				Fox::Editor::CameraEditor cameraEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written
 				bool editMode = false;
 				Fox::Editor::TransformGizmo gizmo;

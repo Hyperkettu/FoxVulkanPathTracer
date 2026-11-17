@@ -55,6 +55,9 @@ namespace Fox {
 			// Triangles drawing the gizmo of the selected object (nothing without a selection)
 			void BuildOverlay(const View& view, const Fox::Scene::RayTracing::RayTracingScene& scene, std::vector<OverlayVertex>& vertices) const;
 
+			// Where a world point appears in the image (pixels); false behind the camera
+			static bool Project(const View& view, const glm::vec3& point, glm::vec2& pixel);
+
 		private:
 			enum class Handle { None = -1, X = 0, Y = 1, Z = 2, Center = 3 };
 
@@ -69,7 +72,6 @@ namespace Fox {
 			Handle HandleAt(glm::vec2 mouse, const View& view, const Frame& frame) const;
 			std::vector<glm::vec3> RingPoints(const Frame& frame, int axis) const;
 
-			static bool Project(const View& view, const glm::vec3& point, glm::vec2& pixel);
 			static void MouseRay(const View& view, glm::vec2 mouse, glm::vec3& origin, glm::vec3& direction);
 			static bool AxisParameter(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const glm::vec3& point, const glm::vec3& axis, float& parameter);
 

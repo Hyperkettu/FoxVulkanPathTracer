@@ -132,6 +132,7 @@ namespace Fox {
 				spheres.clear();
 				trees.clear();
 				environment = Environment{};
+				cameraManager.Clear();
 				structureChanged = true;
 			}
 

@@ -725,6 +725,12 @@ namespace Fox {
 				std::ostringstream title;
 				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << RayTracing::UpscalingModeName(upscalingMode)
 					<< " " << gbuffer->extent.width << "x" << gbuffer->extent.height << " - " << samplesPerPixel << " spp";
+				auto& cameraManager = raytracingScene->GetCameraManager();
+				if (cameraManager.IsPlaying() && cameraManager.ActivePath()) {
+					title << std::fixed << std::setprecision(1) << " - PATH " << cameraManager.ActivePath()->name << " "
+						<< cameraManager.GetTime() << " / " << cameraManager.ActivePath()->Duration() << " s";
+					title.unsetf(std::ios::fixed);
+				}
 				if (editMode) {
 					const int selected = gizmo.GetSelected();
 					title << " - EDIT " << Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode()) << ": "
@@ -843,14 +849,20 @@ namespace Fox {
 				}
 
 				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
-				const float distance = cameraSpeed * deltaTime;
+				auto key = [this](SDL_Scancode code) { return inputManager->IsKeyDown(code) ? 1.0f : 0.0f; };
+				const glm::vec3 move(
+					key(SDL_SCANCODE_D) - key(SDL_SCANCODE_A),
+					key(SDL_SCANCODE_R) - key(SDL_SCANCODE_F),
+					key(SDL_SCANCODE_W) - key(SDL_SCANCODE_S));
 
-				if (inputManager->IsKeyDown(SDL_SCANCODE_A)) camera->MoveLeft(distance);
-				if (inputManager->IsKeyDown(SDL_SCANCODE_D)) camera->MoveRight(distance);
-				if (inputManager->IsKeyDown(SDL_SCANCODE_W)) camera->MoveForward(distance);
-				if (inputManager->IsKeyDown(SDL_SCANCODE_S)) camera->MoveBackward(distance);
-				if (inputManager->IsKeyDown(SDL_SCANCODE_R)) camera->MoveUp(distance);
-				if (inputManager->IsKeyDown(SDL_SCANCODE_F)) camera->MoveDown(distance);
+				// Free flight, or along the camera path while it plays
+				auto& cameraManager = raytracingScene->GetCameraManager();
+				const bool wasPlaying = cameraManager.IsPlaying();
+				cameraManager.Update(deltaTime, move, *camera);
+				if (wasPlaying && !cameraManager.IsPlaying()) {
+					std::cout << "Camera path: finished\n";
+					UpdateWindowTitle(0.0f);
+				}
 			}
 
 			void VulkanRHI::UpdateCameraUniforms(FrameResource& frameResource, float deltaTime) {
@@ -1107,6 +1119,9 @@ namespace Fox {
 					pose.target = camera->GetPosition() + camera->GetForward();
 					sceneEditor.Draw(*raytracingScene, gizmo, pose, uiScale);
 					treeEditor.Draw(*raytracingScene, gizmo, camera->GetPosition(), camera->GetForward(), uiScale);
+					if (cameraEditor.Draw(raytracingScene->GetCameraManager(), *camera, GizmoView(), uiScale)) {
+						ResetHistory(); // The camera jumped
+					}
 				}
 
 				ImGui::Render();
@@ -1275,7 +1290,9 @@ namespace Fox {
 
 				mouseInputBind = input.OnMouseMoved.Connect([this](int dx, int dy) {
 					// Looking around: always outside edit mode, with the right mouse button held inside it
-					const bool look = inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT));
+					// Not while the camera flies its path
+					const bool look = (inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT)))
+						&& !raytracingScene->GetCameraManager().IsPlaying();
 					if (look) {
 						Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(
 							static_cast<float>(dx) * mouseSensitivity, -static_cast<float>(dy) * mouseSensitivity);
@@ -1320,6 +1337,31 @@ namespace Fox {
 					case SDL_SCANCODE_DELETE:
 						if (editMode && raytracingScene->RemoveObject(gizmo.GetSelected())) {
 							gizmo.Select(-1);
+						}
+						break;
+
+					// Fly the active camera path, or stop
+					case SDL_SCANCODE_P: {
+						auto& cameraManager = raytracingScene->GetCameraManager();
+						const bool playing = cameraManager.TogglePlay();
+						if (playing) {
+							std::cout << "Camera path: playing " << cameraManager.ActivePath()->name << "\n";
+						}
+						else if (!cameraManager.ActivePath() || !cameraManager.ActivePath()->IsFlyable()) {
+							std::cout << "Camera path: none to play (edit mode: K adds keys from the view)\n";
+						}
+						else {
+							std::cout << "Camera path: stopped\n";
+						}
+						UpdateWindowTitle(0.0f);
+						break;
+					}
+
+					// A camera path key where the camera is
+					case SDL_SCANCODE_K:
+						if (editMode) {
+							auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+							cameraEditor.AddKeyFromView(raytracingScene->GetCameraManager(), *camera);
 						}
 						break;
 
