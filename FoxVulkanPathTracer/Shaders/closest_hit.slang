@@ -18,6 +18,9 @@ struct Vertex
 
 [[vk::binding(1, 1)]] Sampler2D gTextures[];
 
+// Where the vertices of skinned meshes were in the previous frame, mesh space (see skinning.slang)
+[[vk::binding(15, 0)]] StructuredBuffer<float4> gPreviousSkinnedPositions;
+
 float4 SampleTexture(int index, float2 uv)
 {
     return gTextures[NonUniformResourceIndex(index)].SampleLevel(uv, 0.0f);
@@ -48,9 +51,10 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
 
     uint baseIndex = submesh.indexOffset + PrimitiveIndex() * 3;
 
-    Vertex v0 = gAllVertices[gAllIndices[baseIndex + 0]];
-    Vertex v1 = gAllVertices[gAllIndices[baseIndex + 1]];
-    Vertex v2 = gAllVertices[gAllIndices[baseIndex + 2]];
+    uint3 vertexIndices = uint3(gAllIndices[baseIndex + 0], gAllIndices[baseIndex + 1], gAllIndices[baseIndex + 2]);
+    Vertex v0 = gAllVertices[vertexIndices.x];
+    Vertex v1 = gAllVertices[vertexIndices.y];
+    Vertex v2 = gAllVertices[vertexIndices.z];
 
     float3 barycentrics = float3(
         1.0f - attribs.barycentrics.x - attribs.barycentrics.y,
@@ -136,6 +140,13 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
         metallic *= roughnessMetallic.b;
     }
 
+    // Ambient occlusion: only for light from the surroundings (applied in raygen.slang)
+    float occlusion = 1.0f;
+    if (material.occlusionTexture >= 0)
+    {
+        occlusion = lerp(1.0f, SampleTexture(material.occlusionTexture, uv).r, saturate(material.occlusionStrength));
+    }
+
     float3 emission = material.emissive;
     if (material.emissiveTexture >= 0)
     {
@@ -155,4 +166,17 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
     payload.emission = emission;
     payload.lightIndex = material.lightIndex;
     payload.instanceIndex = InstanceIndex();
+    payload.occlusion = occlusion;
+
+    // Skinned surfaces move by themselves: how far this point moved since the previous frame
+    payload.skinnedMotion = float3(0.0f);
+    if (submesh.previousPositions > 0)
+    {
+        uint3 previous = (submesh.previousPositions - 1) + (vertexIndices - submesh.vertexOffset);
+        float3 previousPosition = gPreviousSkinnedPositions[previous.x].xyz * barycentrics.x
+                                + gPreviousSkinnedPositions[previous.y].xyz * barycentrics.y
+                                + gPreviousSkinnedPositions[previous.z].xyz * barycentrics.z;
+        float3 currentPosition = v0.position.xyz * barycentrics.x + v1.position.xyz * barycentrics.y + v2.position.xyz * barycentrics.z;
+        payload.skinnedMotion = mul(objectToWorld, previousPosition - currentPosition);
+    }
 }

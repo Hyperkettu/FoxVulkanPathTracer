@@ -49,6 +49,9 @@
 
 #include "FoxVulkanPathTracer/Graphics/Geometry/Submesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/Vulkan/Mesh.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/SkinnedMesh.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/TreeGenerator.h"
+#include "FoxVulkanPathTracer/Animation/WindSkeleton.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/CommandList.h"
 
@@ -88,6 +91,7 @@
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DeviceContext.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ComputePass.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/SkinningPass.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/GpuProfiler.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/GBuffer.h"

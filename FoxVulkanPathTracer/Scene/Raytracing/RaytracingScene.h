@@ -8,6 +8,10 @@
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingInstance.h"
 
+namespace Fox::Graphics::Vulkan::RayTracing {
+    class SkinningPass;
+}
+
 
 namespace Fox {
     namespace Scene {
@@ -37,6 +41,36 @@ namespace Fox {
                 // see Material.h). segments: subdivisions around the equator; it is smooth shaded either way.
                 void AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material,
                     const std::string& name = "Sphere", uint32_t segments = 128);
+
+                // --- Skinned meshes: vertices follow joint matrices that can change every frame ---
+
+                // Adds a skinned mesh as a movable object; returns its index for SetJointMatrices
+                size_t AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const Fox::Graphics::Vulkan::Material& material,
+                    const glm::mat4& transform, const std::string& name);
+
+                // Per joint of the mesh: pose * inverse(bind), in mesh space. Applied with the next RecordFrameUpdate,
+                // which deforms the mesh on the GPU and refits its acceleration structure.
+                void SetJointMatrices(size_t skinnedMesh, const std::vector<glm::mat4>& skinMatrices);
+
+                // The object a skinned mesh is placed as (for GetObjectTransform)
+                size_t GetObjectOfSkinnedMesh(size_t skinnedMesh) const { return skinnedMeshes[skinnedMesh].object; }
+
+                // Bind pose of a skinned vertex, mirrors SkinVertex in Shaders/skinning.slang
+                struct SkinVertex {
+                    float position[4];
+                    float normal[4];
+                    float tangent[4];
+                    uint32_t joints[4];
+                    float weights[4];
+                };
+
+                // 3x4 row major, mirrors JointMatrix in Shaders/skinning.slang
+                struct JointMatrix {
+                    glm::vec4 rows[3];
+                };
+
+                // Where skinned vertices were in the previous frame (mesh space), for motion vectors
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<glm::vec4>> previousPositionsSSBO;
 
                 // --- Objects: everything placed in the scene, movable while it renders ---
 
@@ -109,7 +143,8 @@ namespace Fox {
                     VkDeviceAddress vertexAddress,
                     VkDeviceAddress indexAddress,
                     uint32_t firstSubmesh,
-                    uint32_t submeshCount);
+                    uint32_t submeshCount,
+                    bool dynamic = false);
 
                 void AddInstance(
                     uint32_t blasIndex,
@@ -204,6 +239,26 @@ namespace Fox {
 
                 uint32_t lightCount = 0;
 
+                struct SkinnedRecord {
+                    size_t object = 0;
+                    size_t record = 0;
+                    uint32_t firstVertex = 0;     // In the scene's vertex buffers
+                    uint32_t vertexCount = 0;
+                    uint32_t firstSkinVertex = 0; // In bindPose / previous positions
+                    uint32_t firstJoint = 0;
+                    std::vector<JointMatrix> joints;
+                };
+                std::vector<SkinnedRecord> skinnedMeshes;
+                std::vector<SkinVertex> bindPose;
+                uint32_t jointCount = 0;
+
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<SkinVertex>> bindPoseSSBO;
+                std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<JointMatrix>> jointsSSBO;
+                std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::SkinningPass> skinningPass;
+                VkDeviceAddress blasScratchAddress = 0; // Also used to refit deforming structures
+
+                void RecordSkinning(VkCommandBuffer cmd);
+
                 // Geometry stored once per mesh. Its submeshes are contiguous and grouped by kind (opaque,
                 // thin glass, solid glass), each group one BLAS. Each kind has its own visibility bit, so shadow
                 // rays can treat them differently (see IsOccluded in raygen.slang).
@@ -214,6 +269,7 @@ namespace Fox {
                     uint32_t firstSubmesh = 0;
                     uint32_t count[SurfaceKindCount] = {};
                     int blas[SurfaceKindCount] = { -1, -1, -1 };
+                    bool dynamic = false; // Skinned: its acceleration structures are refitted every frame
 
                     uint32_t FirstOf(int kind) const {
                         uint32_t first = firstSubmesh;

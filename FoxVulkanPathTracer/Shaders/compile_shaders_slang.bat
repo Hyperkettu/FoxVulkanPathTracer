@@ -19,6 +19,13 @@ rem Tone mapping
 %SLANGC% tonemapping_mesh.slang -stage mesh %OPTIONS% -o tonemapping_mesh.spv || goto :error
 %SLANGC% tonemapping_frag.slang -stage fragment %OPTIONS% -o tonemapping_frag.spv || goto :error
 
+rem Editor overlay (gizmos)
+%SLANGC% overlay_vert.slang -stage vertex %OPTIONS% -o overlay_vert.spv || goto :error
+%SLANGC% overlay_frag.slang -stage fragment %OPTIONS% -o overlay_frag.spv || goto :error
+
+rem Skinning
+%SLANGC% skinning.slang -stage compute %OPTIONS% -o skinning.spv || goto :error
+
 rem Denoisers
 for %%S in (accumulate svgf_temporal svgf_variance svgf_atrous svgf_modulate dlss_prepare) do (
     %SLANGC% %%S.slang -stage compute %OPTIONS% -o %%S.spv || goto :error

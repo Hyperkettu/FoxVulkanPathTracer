@@ -16,6 +16,9 @@ struct BottomLevelAccelerationStructure {
 
     // Size info
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo{};
+
+    // Deforming geometry (skinned meshes): built to allow updates, refitted every frame
+    bool dynamic = false;
 };
 
 struct TopLevelAccelerationStructure {

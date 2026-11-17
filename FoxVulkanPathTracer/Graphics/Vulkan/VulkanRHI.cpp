@@ -589,7 +589,7 @@ namespace Fox {
 						descriptorManager.GetDescriptorSet(Managers::Descriptor::RAY_TRACING)->AllocateSet());
 
 					auto& set = frameResource->perFrameDescriptorSet;
-					set->Reserve(15);
+					set->Reserve(16);
 					set->SetAccelerationStructure(0, tlas);
 					set->SetStorageImage(1, gbuffer->radiance->GetView());
 					set->SetStorageImage(8, gbuffer->albedo->GetView());
@@ -605,6 +605,7 @@ namespace Fox {
 					set->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique());
 					set->SetStorageBuffer(13, raytracingScene->instanceMotionSSBO->GetBufferUnique());
 					set->SetStorageBuffer(14, pickBuffer);
+					set->SetStorageBuffer(15, raytracingScene->previousPositionsSSBO->GetBufferUnique());
 					set->Update();
 				}
 
@@ -735,6 +736,9 @@ namespace Fox {
 				frameResource.renderFence->Wait();
 				profiler->ReadResults(currentFrame);
 				ReadPickResult(currentFrame);
+
+				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
+				raytracingScene->Update(deltaTime);
 
 				frameResource.renderFence->Reset();
 				frameResource.commandPool->Reset();

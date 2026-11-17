@@ -34,6 +34,8 @@ struct HitPayload
     int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1
 
     uint instanceIndex;      // Acceleration structure instance that was hit (an object, see RayTracingScene)
+    float3 skinnedMotion;    // Deforming (skinned) surfaces: previous minus current position, world space
+    float occlusion;         // Ambient occlusion texture: 1 = open, 0 = fully occluded
 };
 
 // Mirrors Fox::Graphics::Vulkan::Submesh (Vertex.h)
@@ -44,7 +46,7 @@ struct Submesh
     uint vertexCount;
     uint indexCount;
     uint materialIndex;
-    uint pad0;
+    uint previousPositions; // Skinned: 1 + its first entry of gPreviousSkinnedPositions; 0 = not skinned
     uint pad1;
     uint pad2;
 };
@@ -76,6 +78,11 @@ struct Material
     float absorptionR;
     float absorptionG;
     float absorptionB;
+
+    int occlusionTexture;     // Red channel
+    float occlusionStrength;
+    float padding0;
+    float padding1;
 };
 
 // Shared by the closest hit shader and raygen (shadow rays through glass)

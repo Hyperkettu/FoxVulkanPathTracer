@@ -219,7 +219,8 @@ float EnvironmentSelectionProbability()
 
 // Light arriving at a surface point directly from the light sources, reflected towards V.
 // Takes one sample: the environment or one of the analytic lights, with a single shadow ray.
-float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, float3 V, inout uint rng)
+// occlusion: the surface's ambient occlusion, applied to light from the sky (not to the sun and lamps)
+float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, float3 V, float occlusion, inout uint rng)
 {
     const float environmentProbability = EnvironmentSelectionProbability();
 
@@ -238,7 +239,7 @@ float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, 
             return float3(0.0f);
 
         distance = RAY_MAX_DISTANCE;
-        radiance = EnvironmentRadiance(L);
+        radiance = EnvironmentRadiance(L) * occlusion;
         lightPdf = environmentPdf * environmentProbability;
         isEnvironment = true;
     }
@@ -339,7 +340,7 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
         Surface surface = MakeSurface(hit, N, V);
 
         // --- Direct light ---
-        float3 direct = throughput * DirectLighting(surface, position, geometricNormal, V, rng);
+        float3 direct = throughput * DirectLighting(surface, position, geometricNormal, V, hit.occlusion, rng);
         radiance += isIndirect ? ClampIndirect(direct) : direct;
 
         // --- Continue the path ---
@@ -353,6 +354,11 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
             break;
 
         throughput *= scatter.weight;
+
+        // Light gathered from the surroundings (the next bounces) is what ambient occlusion darkens.
+        // Mirror-like reflections are left alone: they show a specific direction, not the surroundings.
+        if (!scatter.isDelta)
+            throughput *= hit.occlusion;
 
         if (scatter.isRefraction)
         {
@@ -549,8 +555,9 @@ void main()
     // through glass or in a mirror moves with the camera only.
     if (!isSky && primary.isFirstHit)
     {
+        // Deforming surfaces first (where the point was on the mesh), then the object's own movement
         InstanceMotion motion = gInstanceMotion[primaryHit.instanceIndex];
-        float4 p = float4(primaryPoint, 1.0f);
+        float4 p = float4(primaryPoint + primaryHit.skinnedMotion, 1.0f);
         primaryPoint = float3(dot(motion.rows[0], p), dot(motion.rows[1], p), dot(motion.rows[2], p));
     }
 

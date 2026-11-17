@@ -25,9 +25,9 @@ namespace Fox {
 				uint32_t vertexCount = 0;
 				uint32_t indexCount = 0;
 				uint32_t materialIndex = 0;
-				uint32_t pad0;
-				uint32_t pad1;
-				uint32_t pad2;
+				uint32_t previousPositions = 0; // Skinned: 1 + its first entry of the previous positions buffer; 0 = not skinned
+				uint32_t pad1 = 0;
+				uint32_t pad2 = 0;
 			};
 		}
 	}

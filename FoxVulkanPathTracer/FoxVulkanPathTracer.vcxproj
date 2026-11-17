@@ -190,6 +190,9 @@
     <ClCompile Include="Graphics\Vulkan\GpuProfiler.cpp" />
     <ClCompile Include="Graphics\Vulkan\OverlayRenderer.cpp" />
     <ClCompile Include="Editor\TransformGizmo.cpp" />
+    <ClCompile Include="Graphics\Geometry\TreeGenerator.cpp" />
+    <ClCompile Include="Animation\WindSkeleton.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\SkinningPass.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\GBuffer.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\Denoiser.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.cpp" />
@@ -269,6 +272,10 @@
     <ClInclude Include="Graphics\Vulkan\GpuProfiler.h" />
     <ClInclude Include="Graphics\Vulkan\OverlayRenderer.h" />
     <ClInclude Include="Editor\TransformGizmo.h" />
+    <ClInclude Include="Graphics\Geometry\SkinnedMesh.h" />
+    <ClInclude Include="Graphics\Geometry\TreeGenerator.h" />
+    <ClInclude Include="Animation\WindSkeleton.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\SkinningPass.h" />
     <ClInclude Include="Graphics\Vulkan\DeviceContext.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\GBuffer.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.h" />
@@ -340,6 +347,9 @@
       <Stage>compute</Stage>
     </SlangShader>
     <SlangShader Include="Shaders\svgf_modulate.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\skinning.slang">
       <Stage>compute</Stage>
     </SlangShader>
     <SlangShader Include="Shaders\overlay_vert.slang">

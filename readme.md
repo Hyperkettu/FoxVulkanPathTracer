@@ -36,6 +36,9 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   * **SVGF** (Spatiotemporal Variance-Guided Filtering): temporal reprojection + variance-guided a-trous wavelet filter, in compute shaders.
   * **Accumulation**: plain averaging while the camera is still, as the ground-truth reference.
 * **HDR Pipeline** Floating point rendering and an AgX tone mapping pass with exposure control.
+* **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
+  acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
+  joint is an angular spring pushed by gusty wind.
 * **Scene Editing** Click an object to select it, then move, rotate or scale it with gizmos while the image keeps
   path tracing. Moved objects carry their lights along and get motion vectors, so the denoisers follow them.
 * **Real-time at 4K** 60 fps in 4K fullscreen with the default scene: about 4 ms of GPU time per frame on an RTX 5090
@@ -151,6 +154,48 @@ tinted and absorbed, so a glass ball casts a light, coloured shadow rather than 
 glass surface itself rather than the view through it (the view through a curved solid changes too much with the
 sub-pixel jitter for its history), so solids look softer with SVGF than with DLSS.
 
+### Skinning and the tree in the wind
+
+`RayTracingScene::AddSkinnedMesh` adds a mesh whose vertices follow joints: each vertex has up to four joints and
+weights, and `SetJointMatrices` gives each joint's `pose * inverse(bind)` matrix. Every frame a compute shader
+(`Shaders/skinning.slang`) places the vertices, the mesh's acceleration structure is refitted and the top level one
+rebuilt. The shader also keeps where each vertex was in the previous frame, so the motion vectors follow the
+deformation and the denoisers do not smear moving branches.
+
+The tree (`Graphics/Geometry/TreeGenerator`) grows as chains of tapered cylinders batched into one mesh: the trunk,
+branches out of it, and smaller branches out of those. Each cylinder gets a bone as it is built, parented to the
+previous cylinder (or, for a branch's first cylinder, to the one it grows from). The ring where two cylinders meet is
+weighted half and half to both bones, so the wood bends smoothly at the joints.
+
+Wind (`Animation/WindSkeleton`) treats every joint as an angular spring:
+`I * angular acceleration = wind torque - k * angle - c * angular velocity`.
+
+* Wind torque: quadratic drag on every branch segment, summed over everything the joint carries, about the joint.
+* Inertia: of that subtree about the joint. The stiffness `k` follows from a natural frequency that rises from
+  0.45 Hz for the trunk to a few Hz for twigs. Damping is a fraction of critical.
+* Gusts: roll across the tree with the wind, and branches flutter sideways.
+
+Settings such as wind speed, gust strength, damping and response are in `WindSkeleton::Settings`; tree shape in
+`TreeSettings`.
+
+The bark uses every texture in `Textures/bark`:
+
+| Texture | Use |
+| --- | --- |
+| `albedo.png` | Base colour (sRGB) |
+| `normal.png` | Normal map, OpenGL convention: the tree's tangents are set up so its green channel points along the branch |
+| `roughness.png`, `metallic.png`, `ao.png` | Packed when loading into one texture the glTF way: R occlusion, G roughness, B metallic |
+| `displacement.png` | Pushes the trunk and branches out along their normals while the tree is generated |
+
+The tree's thicker branches are subdivided to about 3 cm triangles for the displacement, about 80 000 triangles in
+all. Their skin weights are kept, so the relief bends with the wind. Heights are averaged down to the triangle size
+first, and the normal map adds the finer detail. Branches thinner than 2.5 cm stay smooth. The texture repeats every
+meter along a branch, and a whole number of times around it, so there is no seam.
+
+Ambient occlusion (`Material::occlusionTexture`, red channel) darkens light from the surroundings in crevices finer
+than the geometry: sky light and light bouncing off other surfaces. Direct sunlight and lamps are not affected, as in
+glTF. The tree is an object like the others: move it with the gizmos and the wind keeps blowing in world space.
+
 ### Editing the scene
 
 Press `E` for edit mode: the mouse pointer appears and the window title shows the gizmo mode and the selection.
@@ -229,6 +274,7 @@ Below is the active development checklist for the renderer.
 - [ ] Scene configuration files using JSON (*Fox Scene format*)
 
 ### 🏃 Animation & Physics
+- [x] GPU skinning (procedural tree in the wind, angular springs)
 - [ ] Skeletal animation support
 - [ ] Integration of a physics engine (e.g., Box2D/3D physics library)
 

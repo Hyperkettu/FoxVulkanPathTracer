@@ -123,9 +123,11 @@ namespace Fox {
                 VkDeviceAddress vertexAddress,
                 VkDeviceAddress indexAddress,
                 uint32_t firstSubmesh,
-                uint32_t submeshCount)
+                uint32_t submeshCount,
+                bool dynamic)
             {
                 BottomLevelAccelerationStructure blas{};
+                blas.dynamic = dynamic;
 
                 for (uint32_t i = firstSubmesh; i < firstSubmesh + submeshCount; i++) {
                     const Fox::Graphics::Vulkan::Submesh& submesh = submeshes[i];
@@ -188,6 +190,14 @@ namespace Fox {
                 instanceBlasIndices.push_back(blasIndex);
             }
 
+            namespace {
+                // Deforming geometry is refitted every frame instead of rebuilt
+                VkBuildAccelerationStructureFlagsKHR BlasBuildFlags(const BottomLevelAccelerationStructure& blas) {
+                    return VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                        | (blas.dynamic ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR : 0);
+                }
+            }
+
             void RayTracingScene::BuildBLAS(VkCommandBuffer cmd)
             {
                 VkDeviceSize maxScratchSize = 0;
@@ -197,7 +207,7 @@ namespace Fox {
                     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
                         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
                         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+                        .flags = BlasBuildFlags(blas),
                         .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
                         .geometryCount = uint32_t(blas.geometries.size()),
                         .pGeometries = blas.geometries.data()
@@ -214,9 +224,8 @@ namespace Fox {
                         blas.primitiveCounts.data(), 
                         &sizeInfo);
 
-                    if (sizeInfo.buildScratchSize > maxScratchSize) {
-                        maxScratchSize = sizeInfo.buildScratchSize;
-                    }
+                    // The same scratch memory later refits the deforming ones
+                    maxScratchSize = std::max({ maxScratchSize, sizeInfo.buildScratchSize, blas.dynamic ? sizeInfo.updateScratchSize : VkDeviceSize(0) });
 
                     CreateAccelerationStructure(
                         VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
@@ -230,6 +239,7 @@ namespace Fox {
                 VkDeviceMemory globalScratchMemory;
                 CreateScratchBuffer(device, physicalDevice, maxScratchSize, globalScratchBuffer, globalScratchMemory, "Global BLAS Scratch");
                 VkDeviceAddress scratchAddress = GetBufferAddress(globalScratchBuffer);
+                blasScratchAddress = scratchAddress;
 
                 scratchBuffers.push_back(globalScratchBuffer);
                 scratchBufferMemories.push_back(globalScratchMemory); 
@@ -239,7 +249,7 @@ namespace Fox {
                     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
                         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
                         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+                        .flags = BlasBuildFlags(blas),
                         .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
                         .geometryCount = uint32_t(blas.geometries.size()),
                         .pGeometries = blas.geometries.data(),
@@ -605,6 +615,115 @@ namespace Fox {
                 return result;
             }
 
+            size_t RayTracingScene::AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const Fox::Graphics::Vulkan::Material& material,
+                const glm::mat4& transform, const std::string& name) {
+                SkinnedRecord skinned;
+                skinned.firstVertex = vertexOffset;
+                skinned.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
+                skinned.firstSkinVertex = static_cast<uint32_t>(bindPose.size());
+                skinned.firstJoint = jointCount;
+
+                // The bind pose is the rest pose: identity skin matrices
+                JointMatrix identity;
+                identity.rows[0] = glm::vec4(1, 0, 0, 0);
+                identity.rows[1] = glm::vec4(0, 1, 0, 0);
+                identity.rows[2] = glm::vec4(0, 0, 1, 0);
+                skinned.joints.assign(std::max<size_t>(mesh.bones.size(), 1), identity);
+                jointCount += static_cast<uint32_t>(skinned.joints.size());
+
+                for (size_t i = 0; i < mesh.vertices.size(); i++) {
+                    const Fox::Graphics::Vulkan::Vertex& vertex = mesh.vertices[i];
+                    SkinVertex skinVertex{};
+                    std::memcpy(skinVertex.position, vertex.position, sizeof(skinVertex.position));
+                    std::memcpy(skinVertex.normal, vertex.normal, sizeof(skinVertex.normal));
+                    std::memcpy(skinVertex.tangent, vertex.tangent, sizeof(skinVertex.tangent));
+                    if (i < mesh.skin.size()) {
+                        std::memcpy(skinVertex.joints, mesh.skin[i].joints, sizeof(skinVertex.joints));
+                        std::memcpy(skinVertex.weights, mesh.skin[i].weights, sizeof(skinVertex.weights));
+                    }
+                    else {
+                        skinVertex.weights[0] = 1.0f;
+                    }
+                    bindPose.push_back(skinVertex);
+                }
+
+                AddGeneratedSurface(mesh.vertices, mesh.indices, material, transform, name, true);
+                meshRecords.back().dynamic = true;
+                submeshes.back().previousPositions = skinned.firstSkinVertex + 1;
+
+                skinned.object = placements.size() - 1;
+                skinned.record = meshRecords.size() - 1;
+                skinnedMeshes.push_back(std::move(skinned));
+                return skinnedMeshes.size() - 1;
+            }
+
+            void RayTracingScene::SetJointMatrices(size_t skinnedMesh, const std::vector<glm::mat4>& skinMatrices) {
+                SkinnedRecord& skinned = skinnedMeshes[skinnedMesh];
+                const size_t count = std::min(skinMatrices.size(), skinned.joints.size());
+                for (size_t j = 0; j < count; j++) {
+                    const glm::mat4& m = skinMatrices[j];
+                    for (int row = 0; row < 3; row++) {
+                        skinned.joints[j].rows[row] = glm::vec4(m[0][row], m[1][row], m[2][row], m[3][row]);
+                    }
+                }
+            }
+
+            void RayTracingScene::RecordSkinning(VkCommandBuffer cmd) {
+                // The previous frame may still be tracing against these vertices and structures
+                VkMemoryBarrier beforeSkinning{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT };
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &beforeSkinning, 0, nullptr, 0, nullptr);
+
+                for (const SkinnedRecord& skinned : skinnedMeshes) {
+                    skinningPass->Dispatch(cmd, { skinned.firstVertex, skinned.vertexCount, skinned.firstSkinVertex, skinned.firstJoint });
+                }
+
+                // The refits read the new vertices, and so do the ray tracing shaders
+                VkMemoryBarrier afterSkinning{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT,
+                    VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                    0, 1, &afterSkinning, 0, nullptr, 0, nullptr);
+
+                // Refit: same triangles, new positions. Much cheaper than a rebuild, and fine for bending.
+                for (const SkinnedRecord& skinned : skinnedMeshes) {
+                    for (int blasIndex : meshRecords[skinned.record].blas) {
+                        if (blasIndex < 0) {
+                            continue;
+                        }
+                        BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[blasIndex];
+
+                        VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                            .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                            .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR,
+                            .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR,
+                            .srcAccelerationStructure = blas.handle,
+                            .dstAccelerationStructure = blas.handle,
+                            .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
+                            .pGeometries = blas.geometries.data(),
+                            .scratchData = {.deviceAddress = blasScratchAddress }
+                        };
+                        const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { blas.ranges.data() };
+                        vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
+
+                        // The refits share the scratch memory, and the top level build reads the result
+                        VkMemoryBarrier afterRefit{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            0, 1, &afterRefit, 0, nullptr, 0, nullptr);
+                    }
+                }
+
+                // The top level structure stores bounds of the bottom level ones: rebuild it too
+                tlasDirty = true;
+            }
+
             void RayTracingScene::SetObjectTransform(size_t object, const ObjectTransform& transform) {
                 Placement& placement = placements[object];
                 if (!placement.movable) {
@@ -647,7 +766,8 @@ namespace Fox {
 
                 // The previous frame may still be reading these buffers
                 VkMemoryBarrier beforeWrite{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT };
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &beforeWrite, 0, nullptr, 0, nullptr);
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0, 1, &beforeWrite, 0, nullptr, 0, nullptr);
 
                 if (motionSize > 0 && motionSize <= 65536) {
                     vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), 0, motionSize, motion.data());
@@ -656,8 +776,27 @@ namespace Fox {
                     vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), 0, lightsSize, lights.data());
                 }
 
+                // Joint matrices of the skinned meshes (in pieces: vkCmdUpdateBuffer takes up to 64 KiB)
+                if (jointsSSBO) {
+                    for (const SkinnedRecord& skinned : skinnedMeshes) {
+                        const uint8_t* data = reinterpret_cast<const uint8_t*>(skinned.joints.data());
+                        const VkDeviceSize size = sizeof(JointMatrix) * skinned.joints.size();
+                        const VkDeviceSize offset = sizeof(JointMatrix) * skinned.firstJoint;
+                        for (VkDeviceSize done = 0; done < size; done += 65536) {
+                            vkCmdUpdateBuffer(cmd, jointsSSBO->GetBuffer().Get(), offset + done, std::min<VkDeviceSize>(65536, size - done), data + done);
+                        }
+                    }
+                }
+
                 VkMemoryBarrier afterWrite{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT };
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 1, &afterWrite, 0, nullptr, 0, nullptr);
+                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0, 1, &afterWrite, 0, nullptr, 0, nullptr);
+
+                // Deform the skinned meshes every frame (also when their joints did not change: the previous
+                // positions must catch up, or a mesh that stopped would keep its last motion vectors)
+                if (skinningPass) {
+                    RecordSkinning(cmd);
+                }
 
                 if (!tlasDirty) {
                     return;
@@ -719,7 +858,8 @@ namespace Fox {
 
                 // The previous frame's rays must be done with the structure before it is overwritten
                 VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
-                    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                     VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
 
@@ -891,7 +1031,7 @@ namespace Fox {
                 for (MeshRecord& record : meshRecords) {
                     for (int kind = 0; kind < SurfaceKindCount; kind++) {
                         if (record.count[kind] > 0) {
-                            record.blas[kind] = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.FirstOf(kind), record.count[kind]));
+                            record.blas[kind] = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.FirstOf(kind), record.count[kind], record.dynamic));
                         }
                     }
                 }
@@ -918,6 +1058,31 @@ namespace Fox {
                     motion.rows[2] = glm::vec4(0, 0, 1, 0);
                 }
                 instanceMotionSSBO = ShaderStorageBuffer<InstanceMotion>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Instance Motion", identity);
+
+                // Skinning: bind pose and joints as inputs, the previous positions start out at the bind pose.
+                // The buffers exist (with one unused entry) even without skinned meshes: shaders bind them.
+                std::vector<glm::vec4> previous;
+                previous.reserve(std::max<size_t>(bindPose.size(), 1));
+                for (const SkinVertex& vertex : bindPose) {
+                    previous.emplace_back(vertex.position[0], vertex.position[1], vertex.position[2], 1.0f);
+                }
+                if (previous.empty()) {
+                    previous.emplace_back(0.0f);
+                }
+                previousPositionsSSBO = ShaderStorageBuffer<glm::vec4>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Previous Skinned Positions", previous);
+
+                if (!skinnedMeshes.empty()) {
+                    std::vector<JointMatrix> joints;
+                    for (const SkinnedRecord& skinned : skinnedMeshes) {
+                        joints.insert(joints.end(), skinned.joints.begin(), skinned.joints.end());
+                    }
+
+                    bindPoseSSBO = ShaderStorageBuffer<SkinVertex>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Skin Bind Pose", bindPose);
+                    jointsSSBO = ShaderStorageBuffer<JointMatrix>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Joint Matrices", joints);
+                    skinningPass = std::make_unique<Fox::Graphics::Vulkan::RayTracing::SkinningPass>(device,
+                        bindPoseSSBO->GetBufferUnique(), jointsSSBO->GetBufferUnique(), vertexSSBO->GetBufferUnique(),
+                        vertexBuffers.back(), previousPositionsSSBO->GetBufferUnique());
+                }
             }
 
             void RayTracingScene::TransformVertices(uint32_t first, uint32_t count, const glm::mat4& toWorld) {

@@ -47,11 +47,17 @@ namespace Fox {
 					}
 				}
 
+				// Ambient occlusion (red channel), as in glTF: darkens light arriving from the surroundings (sky,
+				// other surfaces) in crevices finer than the geometry. Direct light from the sun is not affected.
+				int occlusionTexture = -1;
+				float occlusionStrength = 1.0f; // 0 = ignore the texture
+				float padding[2] = { 0.0f, 0.0f };
+
 				bool IsSolidGlass() const { return transmission > 0.5f && ior > 0.0f; }
 				bool IsThinGlass() const { return transmission > 0.5f && ior <= 0.0f; }
 			};
 
-			static_assert(sizeof(Material) == 96, "Material layout must match common.slang");
+			static_assert(sizeof(Material) == 112, "Material layout must match common.slang");
 		}
 	}
 }
