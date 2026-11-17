@@ -26,7 +26,7 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   `KHR_materials_volume`.
 * **Refraction** Solid glass bends light where it enters and leaves, with exact dielectric Fresnel reflection, total
   internal reflection, rough (frosted) glass through GGX microfacets and coloured absorption inside (Beer–Lambert).
-  The scene has a glass ball in the foreground.
+  The default scene (`Scenes/default.json`) has a glass ball in the foreground.
 * **Lighting** Importance-sampled HDR environment map, emissive quads as area lights and a sun with soft shadows.
 * **Displacement Mapping** Surfaces are tessellated and displaced when a model loads, so the relief is real geometry
   (silhouettes, shadows, reflections). Height maps can be assigned per material; models without them (glTF has no slot
@@ -87,8 +87,9 @@ if DLSS is unavailable the renderer says so on the console and starts with SVGF 
 
 ### Displacement mapping
 
-Displacement is applied while a model loads (`Graphics/Geometry/Displacement.h`) and is configured per model, see
-`MainRayTracingScene.cpp`. The glTF format has no displacement map slot, so the height source of each material is:
+Displacement is applied while a model loads (`Graphics/Geometry/Displacement.h`) and is switched on per model (`"displacement": true` in
+the scene file, or the *Displacement from normal maps* checkbox when adding a model); height map files are assigned in
+`MainRayTracingScene::LoadModel`. The glTF format has no displacement map slot, so the height source of each material is:
 
 1. **A height map file**, assigned by glTF material name:
    ```cpp
@@ -319,16 +320,53 @@ Press `E` for edit mode: the mouse pointer appears and the window title shows th
 | Drag an axis | Scale along that axis of the object; the center square scales uniformly |
 | `Ctrl` while dragging | Snap to 0.25 m, 15° or 0.1x steps |
 | Right mouse + drag | Look around (`W` `A` `S` `D` `R` `F` still move) |
+| `Delete` | Remove the selected object |
 | `E` | Leave edit mode |
 
-Each object rotates and scales about its origin. Objects are the placements of `AddMesh` / `AddSphere`
-(`MainRayTracingScene.cpp`); `RayTracingScene::SetObjectTransform` moves them from code too.
+Each object rotates and scales about its origin. `RayTracingScene::SetObjectTransform` moves objects from code too.
 
 How it works: the path tracer reports the object seen at the clicked pixel (`gPickResult` in `raygen.slang`), read back
 once that frame finishes. When an object moves, the top level acceleration structure is rebuilt that frame
 (microseconds: one instance per object), its lights follow it, and every instance's motion since the previous frame
 goes to the shaders, which add it to the motion vectors of directly visible surfaces. The gizmos are 2D triangles
 drawn over the tone mapped image (`Editor/TransformGizmo`, `Graphics/Vulkan/OverlayRenderer`).
+
+### Scene files
+
+Nothing is built into the code: the scene starts from `Scenes/default.json` (relative to the working directory), and
+without that file it starts empty, with only the ground and the sun. In edit mode the **Scene** window:
+
+| Part | What it does |
+| --- | --- |
+| Path, **Save** / **Load** / **New** | Save the scene (with the current view) to the path, load a scene file, or start an empty scene. Save to `Scenes/default.json` to change what the renderer starts with |
+| **Add** | Add any glTF model from `Models/` (`.glb` / `.gltf`, optionally with displacement from its normal maps), or a sphere with a glass, frosted glass, chrome, gold or plastic material. New objects stand on the ground 12 m in front of the camera. Trees are added in the **Trees** window |
+| **Objects** | Every model, sphere and tree; click one to select it for the gizmo. **Remove selected** (or `Delete`) removes it |
+| **Environment** | Ground (height, colour, roughness) and sun (direction, elevation, colour, strength, size) |
+
+The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for what a file leaves out:
+
+```json
+{
+  "version": 1,
+  "camera": { "position": [29, -2.6, 17], "target": [4, -0.6, -3] },
+  "environment": { "ground": true, "groundHeight": -3.73, "sun": true, "sunDirection": [0.876, 0.22, 0.479], "sunIntensity": 18 },
+  "models": [
+    { "name": "Cabin", "file": "Models/cabin.glb", "displacement": true,
+      "transform": { "position": [20, 0, 0], "rotation": [0, 90, 0], "scale": [1, 1, 1] } }
+  ],
+  "spheres": [
+    { "name": "Glass ball", "radius": 1.2, "transform": { "position": [21, -2.53, 10] },
+      "material": { "color": [1, 1, 1], "roughness": 0, "transmission": 1, "ior": 1.5,
+                    "attenuationColor": [0.8, 0.94, 0.9], "attenuationDistance": 2 } }
+  ],
+  "trees": [ { "name": "Tree 1", "transform": { "position": [14, -3.73, 12] }, "shape": {}, "look": {}, "wind": {} } ]
+}
+```
+
+Rotations are Euler angles in degrees. A tree's `shape`, `look` and `wind` hold everything the Trees window edits
+(saved in full, so a file shows every parameter). Adding, removing or loading rebuilds the scene's acceleration
+structures; models already loaded once are kept in memory, so this takes about half a second with two displaced
+cabins (the first load of a displaced model takes a few seconds).
 
 ### Adding a denoiser
 
@@ -350,7 +388,7 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `U` | Next upscaling mode (Native → Quality → Balanced → Performance → Ultra Performance). Chosen from the display size until pressed |
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
-| `E` | Edit mode: select, move, rotate and scale objects, and the tree editor (see *Editing the scene*, *Tree editor*) |
+| `E` | Edit mode: select, move, rotate and scale objects, the Scene and Trees windows (see *Editing the scene*, *Scene files*, *Tree editor*) |
 | `Esc` | Quit |
 
 The window title shows the active denoiser, the upscaling mode and render resolution, the paths per pixel, the frame rate
@@ -374,14 +412,14 @@ Below is the active development checklist for the renderer.
 
 ### ⛰️ Procedural & Special Effects
 - [ ] Procedural terrain generation
-- [ ] Procedural tree generation
+- [x] Procedural tree generation
 - [ ] Particle systems and GPU-driven effects
 
 ### 🏗️ Scene Graph & Performance
 - [ ] Acceleration structure (BLAS/TLAS) refitting
 - [ ] Full hierarchical scene graph
 - [x] Instance buffer updates for dynamic object movement (editor gizmos)
-- [ ] Scene configuration files using JSON (*Fox Scene format*)
+- [x] Scene configuration files using JSON (`Scenes/*.json`, saved and loaded in the Scene window)
 
 ### 🏃 Animation & Physics
 - [x] GPU skinning (procedural tree in the wind, angular springs)

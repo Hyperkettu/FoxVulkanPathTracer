@@ -76,6 +76,40 @@ namespace Fox {
 
             RayTracingScene::~RayTracingScene()
             {
+                ReleaseGPUResources();
+            }
+
+            void RayTracingScene::Clear() {
+                ReleaseGPUResources();
+
+                vertices.clear();
+                indices.clear();
+                submeshes.clear();
+                materials.clear();
+                lights.clear();
+                lightCount = 0;
+                meshRecords.clear();
+                placements.clear();
+                instances.clear();
+                instanceBlasIndices.clear();
+                instancePlacements.clear();
+                skinnedMeshes.clear();
+                bindPose.clear();
+                jointCount = 0;
+                vertexOffset = 0;
+                indexOffset = 0;
+                materialOffset = 0;
+                opacityGeometries.clear();
+                staticCounts = StaticCounts{};
+                tlasDirty = false;
+                lightsDirty = false;
+            }
+
+            void RayTracingScene::ReleaseGPUResources()
+            {
+                // Micromaps after the structures that use them
+                skinningPass = nullptr;
+
                 // Destroy TLAS
                 if (topLevelAccelerationStructure.handle != VK_NULL_HANDLE) {
                     vkDestroyAccelerationStructureKHR(
@@ -121,8 +155,34 @@ namespace Fox {
                     vkFreeMemory(device, scratchBufferMemory, nullptr);
                 }
 
+                topLevelAccelerationStructure = TopLevelAccelerationStructure{};
+                bottomLevelAccelerationStructure.clear();
+                scratchBuffers.clear();
+                scratchBufferMemories.clear();
+                scratchBuffer = VK_NULL_HANDLE;
+                scratchMemory = VK_NULL_HANDLE;
+                dynamicScratchBuffer = VK_NULL_HANDLE;
+                dynamicScratchMemory = VK_NULL_HANDLE;
+                dynamicScratchSize = 0;
+                tlasScratchAddress = 0;
+                blasScratchAddress = 0;
+
+                staticMicromaps = OpacityMicromapSet{};
+                dynamicMicromaps = OpacityMicromapSet{};
+
+                instanceBuffer = nullptr;
+                frameInstanceBuffers.clear();
                 vertexBuffers.clear();
                 indexBuffers.clear();
+                vertexSSBO = nullptr;
+                indexSSBO = nullptr;
+                submeshSSBO = nullptr;
+                materialsSSBO = nullptr;
+                lightsSSBO = nullptr;
+                instanceMotionSSBO = nullptr;
+                previousPositionsSSBO = nullptr;
+                bindPoseSSBO = nullptr;
+                jointsSSBO = nullptr;
             }
 		
             uint32_t RayTracingScene::AddBLAS(
@@ -213,6 +273,10 @@ namespace Fox {
 
             void RayTracingScene::BuildBLAS(VkCommandBuffer cmd)
             {
+                if (bottomLevelAccelerationStructure.empty()) {
+                    return; // An empty scene, or only dynamic meshes (built later)
+                }
+
                 VkDeviceSize maxScratchSize = 0;
 
                 for (auto& blas : bottomLevelAccelerationStructure)
@@ -464,8 +528,9 @@ namespace Fox {
 
             void RayTracingScene::UploadInstanceBuffer()
             {
+                // At least one entry: an empty scene still has a (empty) top level structure
                 VkDeviceSize size =
-                    sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
+                    sizeof(VkAccelerationStructureInstanceKHR) * std::max<size_t>(instances.size(), 1);
 
                 instanceBuffer = std::make_unique<Fox::Graphics::Vulkan::Buffer>(
                     device,
@@ -477,7 +542,9 @@ namespace Fox {
                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
                 void* mapped = instanceBuffer->Map();
-                memcpy(mapped, instances.data(), size);
+                if (!instances.empty()) {
+                    memcpy(mapped, instances.data(), sizeof(VkAccelerationStructureInstanceKHR) * instances.size());
+                }
                 instanceBuffer->Unmap();
             }
 

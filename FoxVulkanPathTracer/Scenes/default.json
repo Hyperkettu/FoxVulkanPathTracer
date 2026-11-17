@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "camera": {
+    "position": [29.0, -2.6, 17.0],
+    "target": [4.0, -0.6, -3.0]
+  },
+  "environment": {
+    "ground": true,
+    "groundHeight": -3.73,
+    "groundMaterial": { "color": [0.07, 0.07, 0.08], "roughness": 0.12, "metallic": 0.0 },
+    "sun": true,
+    "sunDirection": [0.876, 0.22, 0.479],
+    "sunColor": [1.0, 0.58, 0.30],
+    "sunIntensity": 18.0,
+    "sunAngularRadius": 1.2
+  },
+  "models": [
+    {
+      "name": "Cabin",
+      "file": "Models/cabin.glb",
+      "displacement": true,
+      "transform": { "position": [20.0, 0.0, 0.0], "rotation": [0.0, 90.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+    },
+    {
+      "name": "Box",
+      "file": "Models/box.glb",
+      "displacement": false,
+      "transform": { "position": [0.0, -3.18, 0.0], "rotation": [0.0, 25.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+    },
+    {
+      "name": "Second cabin",
+      "file": "Models/cabin.glb",
+      "displacement": true,
+      "transform": { "position": [70.7107, 0.0, 0.0], "rotation": [0.0, 45.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+    }
+  ],
+  "spheres": [
+    {
+      "name": "Glass ball",
+      "radius": 1.2,
+      "material": {
+        "color": [1.0, 1.0, 1.0],
+        "roughness": 0.0,
+        "metallic": 0.0,
+        "transmission": 1.0,
+        "ior": 1.5,
+        "attenuationColor": [0.80, 0.94, 0.90],
+        "attenuationDistance": 2.0
+      },
+      "transform": { "position": [21.0, -2.53, 10.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+    }
+  ],
+  "trees": [
+    {
+      "name": "Tree 1",
+      "transform": { "position": [14.0, -3.73, 12.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }
+    }
+  ]
+}

@@ -1,91 +1,198 @@
 #include "FoxRenderer.h"
 
+#include <filesystem>
+
 namespace Fox {
 
 	namespace Scene {
 
 		namespace RayTracing {
 
-			namespace {
-				// The cabin model's foundation ends at this height; the ground is placed there
-				const float GROUND_HEIGHT = -3.73f;
-
-				// The sun of Textures/environment_map.hdr sits on the horizon in this direction.
-				// The analytic sun is raised a little for longer-reaching, less grazing light.
-				const glm::vec3 SUN_DIRECTION(0.876f, 0.22f, 0.479f);
-
-				// Golden hour: warm, and not much stronger than the sky itself
-				const glm::vec3 SUN_IRRADIANCE = glm::vec3(1.0f, 0.58f, 0.30f) * 18.0f;
-				const float SUN_ANGULAR_RADIUS = 1.2f; // Degrees. Larger than the real sun for softer shadows
+			Fox::Graphics::Vulkan::Material MainRayTracingScene::SurfaceMaterial::ToMaterial() const {
+				Fox::Graphics::Vulkan::Material material;
+				material.baseColor[0] = color.r;
+				material.baseColor[1] = color.g;
+				material.baseColor[2] = color.b;
+				material.roughness = roughness;
+				material.metallic = metallic;
+				material.transmission = transmission;
+				if (transmission > 0.0f && ior > 0.0f) {
+					material.ior = ior;
+					const float attenuation[3] = { attenuationColor.r, attenuationColor.g, attenuationColor.b };
+					material.SetAttenuation(attenuation, attenuationDistance);
+				}
+				return material;
 			}
 
 			void MainRayTracingScene::Initialize() {
-				using Fox::Graphics::Geometry::Vulkan::Mesh;
+				textureLibrary = std::make_unique<Fox::Scene::TextureLibrary>(device, physicalDevice, commandPool->Get(), queue);
 
-				const glm::vec3 up(0.0f, 1.0f, 0.0f);
+				// The scene comes from its file; without one it starts empty (ground and sun only)
+				std::string error;
+				if (std::filesystem::exists(DEFAULT_SCENE_FILE)) {
+					CameraPose camera;
+					if (!LoadFromFile(DEFAULT_SCENE_FILE, camera, error)) {
+						std::cout << "Scene: " << error << "\n";
+					}
+				}
+				else {
+					std::cout << "Scene: no " << DEFAULT_SCENE_FILE << ", starting with an empty scene\n";
+				}
 
-				// The meshes are only needed while the scene is assembled: AddMesh copies their
-				// geometry, and the textures are owned by the TextureManager.
-				Mesh cabin(device, physicalDevice, queue, queueFamily);
+				if (!RebuildScene(error)) {
+					std::cout << "Scene: " << error << "\n";
+				}
+			}
 
-				// Displacement: the cabin file has no height maps (glTF cannot carry them), so the relief of
-				// its stones, logs and shingles is reconstructed from the normal maps. To use real height maps
-				// instead, assign them per material name:
-				//   cabinDisplacement.heightMaps["concrete_pebbles.001"] = { "Textures/pebbles_height.png", 0.05f };
-				Fox::Graphics::Geometry::DisplacementSettings cabinDisplacement;
-				cabinDisplacement.enabled = true; // Default budget: up to 4 M triangles, ~1 ms of tracing at 4K on an RTX 5090
+			Fox::Graphics::Geometry::Vulkan::Mesh& MainRayTracingScene::LoadModel(const std::string& file, bool displacement) {
+				const std::string key = file + (displacement ? "|displaced" : "");
+				if (auto it = loadedModels.find(key); it != loadedModels.end()) {
+					return *it->second;
+				}
 
-				cabin.LoadFromGLTF("Models/cabin.glb", cabinDisplacement);
+				// Displacement: glTF has no height maps, so the relief is reconstructed from the normal maps (see
+				// Graphics/Geometry/Displacement.h). Default budget: up to 4 M triangles per model.
+				Fox::Graphics::Geometry::DisplacementSettings settings;
+				settings.enabled = displacement;
 
-				Mesh box(device, physicalDevice, queue, queueFamily);
-				box.LoadFromGLTF("Models/box.glb");
+				auto mesh = std::make_unique<Fox::Graphics::Geometry::Vulkan::Mesh>(device, physicalDevice, queue, queueFamily);
+				mesh->LoadFromGLTF(file, settings);
+				return *(loadedModels[key] = std::move(mesh));
+			}
 
-				glm::mat4 cabinTransform = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
-				cabinTransform = glm::rotate(cabinTransform, glm::radians(90.0f), up);
-				AddMesh(cabin, cabinTransform, "Cabin");
+			void MainRayTracingScene::SyncTransforms() {
+				for (Model& model : models) {
+					if (model.placed && model.object < GetObjectCount()) {
+						model.transform = GetObjectTransform(model.object);
+					}
+				}
+				for (Sphere& sphere : spheres) {
+					if (sphere.placed && sphere.object < GetObjectCount()) {
+						sphere.transform = GetObjectTransform(sphere.object);
+					}
+				}
+				for (Tree& tree : trees) {
+					if (tree.placed && tree.handle.object < GetObjectCount()) {
+						tree.transform = GetObjectTransform(tree.handle.object);
+					}
+				}
+			}
 
-				// The box model's floor is at y = -0.55: lower it so it rests on the ground
-				glm::mat4 boxTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, GROUND_HEIGHT + 0.55f, 0.0f));
-				boxTransform = glm::rotate(boxTransform, glm::radians(25.0f), up);
-				AddMesh(box, boxTransform, "Box");
+			bool MainRayTracingScene::RebuildScene(std::string& error) {
+				SyncTransforms();
+				Clear();
+				std::string problems;
 
-				// Second cabin: the same mesh instanced with another transform
-				glm::mat4 secondCabinTransform = glm::rotate(glm::mat4(1.0f), glm::radians(45.0f), up);
-				secondCabinTransform = glm::translate(secondCabinTransform, glm::vec3(50.0f, 0.0f, 50.0f));
-				AddMesh(cabin, secondCabinTransform, "Second cabin");
+				// Static content: models, spheres, ground and sun
+				for (Model& model : models) {
+					model.placed = false;
+					try {
+						AddMesh(LoadModel(model.file, model.displacement), model.transform.Matrix(), model.name);
+						model.object = GetObjectCount() - 1;
+						model.placed = true;
+						SetObjectTransform(model.object, model.transform); // Exactly, not decomposed from the matrix
+					}
+					catch (const std::exception& e) {
+						problems += std::string(problems.empty() ? "" : "; ") + model.file + ": " + e.what();
+					}
+				}
 
-				// Dark, slightly glossy ground (think wet asphalt): picks up reflections of the sky and the buildings
-				Fox::Graphics::Vulkan::Material ground;
-				ground.baseColor[0] = 0.07f;
-				ground.baseColor[1] = 0.07f;
-				ground.baseColor[2] = 0.08f;
-				ground.roughness = 0.12f;
-				ground.metallic = 0.0f;
-				AddGroundPlane(GROUND_HEIGHT, 2000.0f, ground);
+				for (Sphere& sphere : spheres) {
+					AddSphere(glm::vec3(0.0f), sphere.radius, sphere.material.ToMaterial(), sphere.name);
+					sphere.object = GetObjectCount() - 1;
+					sphere.placed = true;
+					SetObjectTransform(sphere.object, sphere.transform);
+				}
 
-				// Solid glass ball resting on the ground in front of the camera. It refracts the scene behind it
-				// upside down, and the faint green of thick window glass builds up towards its centre.
-				Fox::Graphics::Vulkan::Material glass;
-				glass.roughness = 0.0f;
-				glass.metallic = 0.0f;
-				glass.transmission = 1.0f;
-				glass.ior = 1.5f;
-				const float glassAttenuation[3] = { 0.80f, 0.94f, 0.90f };
-				glass.SetAttenuation(glassAttenuation, 2.0f); // Colour left after 2 m of glass
-				const float ballRadius = 1.2f;
-				AddSphere(glm::vec3(21.0f, GROUND_HEIGHT + ballRadius, 10.0f), ballRadius, glass, "Glass ball");
-
-				AddSun(SUN_DIRECTION, SUN_IRRADIANCE, SUN_ANGULAR_RADIUS);
+				if (environment.ground) {
+					AddGroundPlane(environment.groundHeight, 2000.0f, environment.groundMaterial.ToMaterial());
+				}
+				if (environment.sun) {
+					AddSun(environment.sunDirection, environment.sunColor * environment.sunIntensity, environment.sunAngularRadius);
+				}
 
 				Build();
+				structureChanged = false;
 
-				// Trees are dynamic: generated and rebuilt while the scene renders (the editor changes them)
-				textureLibrary = std::make_unique<Fox::Scene::TextureLibrary>(device, physicalDevice, commandPool->Get(), queue);
-				AddTree(glm::vec3(14.0f, GROUND_HEIGHT, 12.0f));
-				std::string error;
-				if (!ApplyTreeChanges(error)) {
-					throw std::runtime_error(error);
+				// Dynamic content: trees
+				for (Tree& tree : trees) {
+					tree.placed = false;
 				}
+				std::string treeError;
+				if (!ApplyTreeChanges(treeError)) {
+					problems += std::string(problems.empty() ? "" : "; ") + treeError;
+				}
+
+				error = problems;
+				return problems.empty();
+			}
+
+			void MainRayTracingScene::ClearContent() {
+				models.clear();
+				spheres.clear();
+				trees.clear();
+				environment = Environment{};
+				structureChanged = true;
+			}
+
+			size_t MainRayTracingScene::AddModel(const std::string& file, bool displacement, const glm::vec3& position) {
+				Model model;
+				model.file = file;
+				model.displacement = displacement;
+				model.name = std::filesystem::path(file).stem().string();
+				model.transform.position = position;
+				models.push_back(std::move(model));
+				structureChanged = true;
+				return models.size() - 1;
+			}
+
+			size_t MainRayTracingScene::AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material) {
+				Sphere sphere;
+				sphere.name = "Sphere " + std::to_string(spheres.size() + 1);
+				sphere.radius = radius;
+				sphere.material = material;
+				sphere.transform.position = position;
+				spheres.push_back(std::move(sphere));
+				structureChanged = true;
+				return spheres.size() - 1;
+			}
+
+			bool MainRayTracingScene::RemoveObject(int object) {
+				if (object < 0) {
+					return false;
+				}
+				SyncTransforms();
+
+				// The objects after a removed one move down an index once the scene is rebuilt; until then none of
+				// them can be selected by their old index
+				auto removed = [this] {
+					for (Model& model : models) {
+						model.placed = false;
+					}
+					for (Sphere& sphere : spheres) {
+						sphere.placed = false;
+					}
+					structureChanged = true;
+					return true;
+				};
+				for (size_t i = 0; i < models.size(); i++) {
+					if (models[i].placed && static_cast<int>(models[i].object) == object) {
+						models.erase(models.begin() + static_cast<std::ptrdiff_t>(i));
+						return removed();
+					}
+				}
+				for (size_t i = 0; i < spheres.size(); i++) {
+					if (spheres[i].placed && static_cast<int>(spheres[i].object) == object) {
+						spheres.erase(spheres.begin() + static_cast<std::ptrdiff_t>(i));
+						return removed();
+					}
+				}
+				const int tree = GetTreeOfObject(object);
+				if (tree >= 0) {
+					RemoveTree(static_cast<size_t>(tree));
+					return true;
+				}
+				return false;
 			}
 
 			void MainRayTracingScene::Update(float dt) {
@@ -103,7 +210,7 @@ namespace Fox {
 			}
 
 			float MainRayTracingScene::GetGroundHeight() const {
-				return GROUND_HEIGHT;
+				return environment.groundHeight;
 			}
 
 			size_t MainRayTracingScene::AddTree(const glm::vec3& position, const Tree* copyOf) {

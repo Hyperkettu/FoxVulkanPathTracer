@@ -65,6 +65,7 @@ namespace Fox {
 				void BuildUserInterface();  // This frame's windows (the tree editor in edit mode)
 				void ApplySceneChanges();   // Rebuilds what the editor changed (waits for the GPU)
 				void RefreshTextureDescriptors();
+				void WriteSceneDescriptors(FrameResource& frameResource); // Set 0: the scene's resources
 
 			private:
 				Fox::Graphics::RendererConfig config;
@@ -148,6 +149,7 @@ namespace Fox {
 				bool userInterface = false;      // ImGui is initialized
 				float uiScale = 0.0f;            // Sizes scale with the window height
 				Fox::Editor::TreeEditor treeEditor;
+				Fox::Editor::SceneEditor sceneEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written
 				bool editMode = false;
 				Fox::Editor::TransformGizmo gizmo;

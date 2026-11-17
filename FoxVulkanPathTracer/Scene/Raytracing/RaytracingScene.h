@@ -28,6 +28,10 @@ namespace Fox {
 
                 ~RayTracingScene();
 
+                // Back to an empty scene: geometry, objects, lights and every GPU resource. Build() again after
+                // adding the new content. Call with the device idle.
+                void Clear();
+
                 virtual void Initialize() = 0;
                 virtual void Update(float dt) = 0;
 
@@ -334,6 +338,7 @@ namespace Fox {
                 VkDeviceSize dynamicScratchSize = 0;
 
                 void CreateSkinningResources();
+                void ReleaseGPUResources();
                 void AddPlacementInstances(size_t placement);
                 void DestroyBLAS(BottomLevelAccelerationStructure& blas);
 

@@ -124,6 +124,7 @@
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 #include "FoxVulkanPathTracer/Editor/TreeEditor.h"
+#include "FoxVulkanPathTracer/Editor/SceneEditor.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 

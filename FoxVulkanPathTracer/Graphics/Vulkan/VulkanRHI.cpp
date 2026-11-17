@@ -621,6 +621,32 @@ namespace Fox {
 					<< " -> " << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ")\n";
 			}
 
+			void VulkanRHI::WriteSceneDescriptors(FrameResource& frameResource) {
+				auto& textureManager = Managers::TextureManager::Get();
+				VkAccelerationStructureKHR tlas = raytracingScene->GetTLAS();
+
+				auto& set = frameResource.perFrameDescriptorSet;
+				set->ClearWrites();
+				set->Reserve(16);
+				set->SetAccelerationStructure(0, tlas);
+				set->SetStorageImage(1, gbuffer->radiance->GetView());
+				set->SetStorageImage(8, gbuffer->albedo->GetView());
+				set->SetStorageImage(9, gbuffer->normalDepth->GetView());
+				set->SetStorageImage(10, gbuffer->motion->GetView());
+				set->SetStorageImage(11, gbuffer->specular->GetView());
+				set->SetStorageBuffer(12, textureManager.environmentSamplingTable->GetBufferUnique());
+				set->SetConstantBuffer(2, frameResource.camUBO);
+				set->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
+				set->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
+				set->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
+				set->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
+				set->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique());
+				set->SetStorageBuffer(13, raytracingScene->instanceMotionSSBO->GetBufferUnique());
+				set->SetStorageBuffer(14, pickBuffer);
+				set->SetStorageBuffer(15, raytracingScene->previousPositionsSSBO->GetBufferUnique());
+				set->Update();
+			}
+
 			void VulkanRHI::CreateFrameDescriptors() {
 				auto& descriptorManager = Managers::DescriptorManager::Get();
 				auto& textureManager = Managers::TextureManager::Get();
@@ -632,25 +658,7 @@ namespace Fox {
 					frameResource->perFrameDescriptorSet = std::make_unique<DescriptorSet>(
 						descriptorManager.GetDescriptorSet(Managers::Descriptor::RAY_TRACING)->AllocateSet());
 
-					auto& set = frameResource->perFrameDescriptorSet;
-					set->Reserve(16);
-					set->SetAccelerationStructure(0, tlas);
-					set->SetStorageImage(1, gbuffer->radiance->GetView());
-					set->SetStorageImage(8, gbuffer->albedo->GetView());
-					set->SetStorageImage(9, gbuffer->normalDepth->GetView());
-					set->SetStorageImage(10, gbuffer->motion->GetView());
-					set->SetStorageImage(11, gbuffer->specular->GetView());
-					set->SetStorageBuffer(12, textureManager.environmentSamplingTable->GetBufferUnique());
-					set->SetConstantBuffer(2, frameResource->camUBO);
-					set->SetStorageBuffer(3, raytracingScene->vertexSSBO->GetBufferUnique());
-					set->SetStorageBuffer(4, raytracingScene->indexSSBO->GetBufferUnique());
-					set->SetStorageBuffer(5, raytracingScene->submeshSSBO->GetBufferUnique());
-					set->SetStorageBuffer(6, raytracingScene->materialsSSBO->GetBufferUnique());
-					set->SetStorageBuffer(7, raytracingScene->lightsSSBO->GetBufferUnique());
-					set->SetStorageBuffer(13, raytracingScene->instanceMotionSSBO->GetBufferUnique());
-					set->SetStorageBuffer(14, pickBuffer);
-					set->SetStorageBuffer(15, raytracingScene->previousPositionsSSBO->GetBufferUnique());
-					set->Update();
+					WriteSceneDescriptors(*frameResource);
 				}
 
 				// Set 1: environment settings + every texture referenced by the scene's materials.
@@ -1094,6 +1102,10 @@ namespace Fox {
 
 				if (editMode) {
 					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					Fox::Scene::RayTracing::MainRayTracingScene::CameraPose pose;
+					pose.position = camera->GetPosition();
+					pose.target = camera->GetPosition() + camera->GetForward();
+					sceneEditor.Draw(*raytracingScene, gizmo, pose, uiScale);
 					treeEditor.Draw(*raytracingScene, gizmo, camera->GetPosition(), camera->GetForward(), uiScale);
 				}
 
@@ -1103,6 +1115,37 @@ namespace Fox {
 			void VulkanRHI::ApplySceneChanges() {
 				// While a slider is dragged the change waits for its release, unless live update is on
 				const bool dragging = userInterface && ImGui::IsAnyItemActive();
+
+				// Objects added or removed, a scene file loaded, the environment changed: everything is rebuilt,
+				// and every scene resource the descriptors point at is new
+				if (raytracingScene->HasStructureChanged() && !dragging) {
+					vkDeviceWaitIdle(device);
+					const auto start = std::chrono::steady_clock::now();
+					std::string error;
+					const bool succeeded = raytracingScene->RebuildScene(error);
+					const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+
+					for (auto& frameResource : frameResources) {
+						WriteSceneDescriptors(*frameResource);
+					}
+					RefreshTextureDescriptors(); // Models bring their own textures
+					textureVersion = raytracingScene->GetTextureLibrary().GetVersion();
+
+					gizmo.Select(-1);
+					sceneEditor.Rebuilt(succeeded, error, seconds);
+					std::cout << "Scene: rebuilt in " << seconds << " s" << (succeeded ? "" : " (" + error + ")") << "\n";
+					ResetHistory();
+				}
+
+				// A loaded scene file's view
+				Fox::Scene::RayTracing::MainRayTracingScene::CameraPose pose;
+				if (raytracingScene->TakePendingCamera(pose)) {
+					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					camera->SetPosition(pose.position);
+					camera->SetCameraTarget(pose.target);
+					ResetHistory();
+				}
+
 				if (raytracingScene->HaveTreesChanged() && (treeEditor.LiveUpdate() || !dragging)) {
 					vkDeviceWaitIdle(device);
 					const auto start = std::chrono::steady_clock::now();
@@ -1271,6 +1314,13 @@ namespace Fox {
 					switch (key) {
 					case SDL_SCANCODE_E:
 						SetEditMode(!editMode);
+						break;
+
+					// Remove the selected object (model, sphere or tree)
+					case SDL_SCANCODE_DELETE:
+						if (editMode && raytracingScene->RemoveObject(gizmo.GetSelected())) {
+							gizmo.Select(-1);
+						}
 						break;
 
 					// Gizmo modes

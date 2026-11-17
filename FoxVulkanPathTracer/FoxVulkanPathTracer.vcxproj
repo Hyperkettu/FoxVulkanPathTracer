@@ -211,6 +211,8 @@
       <AdditionalIncludeDirectories>$(VULKAN_SDK)\Include\SDL2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ClCompile Include="Editor\TreeEditor.cpp" />
+    <ClCompile Include="Editor\SceneEditor.cpp" />
+    <ClCompile Include="Scene\SceneFile.cpp" />
     <ClCompile Include="Graphics\Geometry\TreeGenerator.cpp" />
     <ClCompile Include="Animation\WindSkeleton.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\SkinningPass.cpp" />
@@ -304,6 +306,7 @@
     <ClInclude Include="Editor\TransformGizmo.h" />
     <ClInclude Include="Scene\TextureLibrary.h" />
     <ClInclude Include="Editor\TreeEditor.h" />
+    <ClInclude Include="Editor\SceneEditor.h" />
     <ClInclude Include="Graphics\Geometry\SkinnedMesh.h" />
     <ClInclude Include="Graphics\Geometry\TreeGenerator.h" />
     <ClInclude Include="Graphics\Geometry\Spline.h" />
