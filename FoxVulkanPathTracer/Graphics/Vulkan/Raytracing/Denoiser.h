@@ -15,6 +15,29 @@ namespace Fox {
 					Halton  // Low discrepancy sequence, reported to the denoiser (temporal upscalers / DLSS)
 				};
 
+				// How much smaller than the display the path tracer renders. Denoisers that can upscale
+				// (DLSS) reconstruct the full resolution; the others are upscaled bilinearly when tone mapping.
+				enum class UpscalingMode : int {
+					Native = 0,       // Render at display resolution (DLAA for DLSS)
+					Quality,          // 0.67x per axis
+					Balanced,         // 0.58x
+					Performance,      // 0.5x
+					UltraPerformance, // 0.33x
+					Count
+				};
+
+				float RenderScale(UpscalingMode mode);
+				const char* UpscalingModeName(UpscalingMode mode);
+
+				// Resolution the path tracer renders at for the given display size and mode
+				VkExtent2D RenderExtentFor(VkExtent2D displayExtent, UpscalingMode mode);
+
+				// What the denoised image will be displayed at
+				struct OutputSettings {
+					VkExtent2D displayExtent{};
+					UpscalingMode mode = UpscalingMode::Native;
+				};
+
 				// Per-frame information handed to the active denoiser.
 				struct DenoiserFrameInfo {
 					uint32_t frameIndex = 0;
@@ -50,15 +73,17 @@ namespace Fox {
 
 					virtual const char* GetName() const = 0;
 
-					// (Re)creates everything that depends on the render resolution and binds the G-buffer.
+					// (Re)creates everything that depends on the resolution and binds the G-buffer.
 					// Called once after construction and again whenever the G-buffer is recreated.
-					virtual void Resize(const GBuffer& gbuffer) = 0;
+					// The G-buffer has the render resolution; output describes what it will be shown at.
+					virtual void Resize(const GBuffer& gbuffer, const OutputSettings& output) = 0;
 
 					// Records the denoising passes. On entry the G-buffer has been written by the ray tracing
 					// pipeline and made visible to compute shaders; all images are in VK_IMAGE_LAYOUT_GENERAL.
 					virtual void Denoise(CommandList& commandList, const DenoiserFrameInfo& frame) = 0;
 
 					// The linear HDR result of Denoise(), in VK_IMAGE_LAYOUT_GENERAL. Only changes on Resize().
+					// Either at render resolution (upscaled bilinearly afterwards) or at display resolution.
 					virtual VkImageView GetOutputView() const = 0;
 
 					virtual JitterMode GetJitterMode() const { return JitterMode::None; }

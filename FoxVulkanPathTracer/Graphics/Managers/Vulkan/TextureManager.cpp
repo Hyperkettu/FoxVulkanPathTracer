@@ -36,12 +36,12 @@ namespace Fox {
 					ENVIRONMENT_MAP_TEXTURE_INDEX = AddBindlessTexture(
 						Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromFile(device, physicalDevice, commandPool, graphicsQueue, environmentMapPath));
 
-					BuildEnvironmentSamplingTable(environmentMapPath);
+					BuildEnvironmentSamplingTable(environmentMapPath, graphicsQueue, commandPool);
 
 					return true;
 				}
 
-				void TextureManager::BuildEnvironmentSamplingTable(const std::string& path) {
+				void TextureManager::BuildEnvironmentSamplingTable(const std::string& path, VkQueue queue, VkCommandPool commandPool) {
 					int width = 0, height = 0, channels = 0;
 					float* pixels = stbi_loadf(path.c_str(), &width, &height, &channels, STBI_rgb);
 					if (!pixels) {
@@ -125,8 +125,9 @@ namespace Fox {
 						}
 					}
 
-					environmentSamplingTable = std::make_unique<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::EnvironmentCell>>(device, physicalDevice, "Environment Sampling Table", cells);
-					environmentSamplingTable->Update(cells);
+					// Read by every light sample of every bounce: keep it in video memory
+					environmentSamplingTable = Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::EnvironmentCell>::CreateDeviceLocal(
+						device, physicalDevice, commandPool, queue, "Environment Sampling Table", cells);
 				}
 
 				void TextureManager::Resize(VkExtent2D extent) {

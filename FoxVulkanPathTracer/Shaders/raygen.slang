@@ -22,8 +22,15 @@
 [[vk::binding(11, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> gSpecular;
 
 // Bounces after the first hit. Longer paths are also cut probabilistically (Russian roulette).
-static const int MAX_BOUNCES = 6;
-static const int ROULETTE_START_BOUNCE = 2;
+// Deeper bounces add little light outdoors but cost as much as the first ones.
+static const int MAX_BOUNCES = 4;
+static const int ROULETTE_START_BOUNCE = 1;
+
+// See EnvironmentSelectionProbability()
+static const float ENVIRONMENT_LIGHT_PROBABILITY = 0.5f;
+
+// Rougher surfaces do not trace a ray for the specular hit distance (see FindPrimarySurface)
+static const float SPECULAR_DISTANCE_MAX_ROUGHNESS = 0.5f;
 
 // Upper bound for the brightness one indirect light path may contribute. Rare, extremely bright
 // paths ("fireflies") would otherwise take very long to average out. Slightly darkens caustics.
@@ -39,16 +46,15 @@ static const float LOOK_THROUGH_ROUGHNESS = 0.2f;
 static const float RAY_OFFSET = 1e-3f;
 static const float RAY_MAX_DISTANCE = 1e4f;
 
-struct ShadowPayload
-{
-    bool isShadowed;
-};
-
 // ------------------------------------------------------------------------------------------------
 // Ray helpers
 // ------------------------------------------------------------------------------------------------
 
-HitPayload TraceSurface(float3 origin, float3 direction)
+// reorder: the rays of neighbouring threads go in unrelated directions (bounces after a diffuse or
+// rough hit). With shader execution reordering (FOX_SER, the raygen_ser variant, chosen when the
+// GPU supports it) the threads are first regrouped by what they hit, so the closest hit shader and
+// the shading after it run on coherent groups: same material, same textures, same branches.
+HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -58,6 +64,15 @@ HitPayload TraceSurface(float3 origin, float3 direction)
 
     HitPayload payload;
     payload.hitT = -1.0f;
+
+#if FOX_SER
+    if (reorder) {
+        HitObject hitObject = HitObject::TraceRay(tlas, RAY_FLAG_FORCE_OPAQUE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
+        ReorderThread(hitObject);
+        HitObject::Invoke(tlas, hitObject, payload);
+        return payload;
+    }
+#endif
 
     TraceRay(tlas, RAY_FLAG_FORCE_OPAQUE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
     return payload;
@@ -72,15 +87,13 @@ bool IsOccluded(float3 origin, float3 direction, float distance)
     ray.TMin = 0.0f;
     ray.TMax = distance;
 
-    ShadowPayload payload;
-    payload.isShadowed = true;
+    // Inline ray query: no shader is invoked and the path tracer's state stays in registers,
+    // which makes this much cheaper than a TraceRay call for a yes/no answer.
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> query;
+    query.TraceRayInline(tlas, RAY_FLAG_NONE, INSTANCE_MASK_OPAQUE, ray);
+    query.Proceed();
 
-    // Miss shader 1 (shadowmiss.slang) clears the flag; the closest hit shader is never run
-    TraceRay(tlas,
-        RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
-        INSTANCE_MASK_OPAQUE, 0, 0, 1, ray, payload);
-
-    return payload.isShadowed;
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
 }
 
 // Offsets a ray origin off the surface, to the side the ray leaves towards
@@ -132,50 +145,63 @@ float2 ProjectToPreviousFrame(float3 fromPrevCamera, out float depth)
 // Path tracing
 // ------------------------------------------------------------------------------------------------
 
-// Light arriving at a surface point directly from the light sources, reflected towards V
+// Chance that light sampling picks the environment rather than one of the analytic lights.
+// One shadow ray per bounce instead of one per light type: shadow rays towards the sky point in
+// all directions, which makes them expensive, and the sky is also found by the BSDF samples.
+float EnvironmentSelectionProbability()
+{
+    return camera.lightCount > 0 ? ENVIRONMENT_LIGHT_PROBABILITY : 1.0f;
+}
+
+// Light arriving at a surface point directly from the light sources, reflected towards V.
+// Takes one sample: the environment or one of the analytic lights, with a single shadow ray.
 float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, float3 V, inout uint rng)
 {
-    float3 result = float3(0.0f);
+    const float environmentProbability = EnvironmentSelectionProbability();
 
-    // Environment
+    float3 L;
+    float distance;
+    float3 radiance;
+    float lightPdf;   // Including the choice between environment and analytic lights
+    bool isDelta = false;
+
+    if (NextRandomFloat(rng) < environmentProbability)
     {
-        float lightPdf;
-        float3 L = SampleEnvironment(rng, lightPdf);
+        float environmentPdf;
+        L = SampleEnvironment(rng, environmentPdf);
+        if (environmentPdf <= 0.0f)
+            return float3(0.0f);
 
-        if (lightPdf > 0.0f && dot(geometricNormal, L) > 0.0f)
-        {
-            float bsdfPdf;
-            float3 bsdf = EvalBsdf(surface, V, L, bsdfPdf);
-
-            if (MaxComponent(bsdf) > 0.0f && !IsOccluded(OffsetRayOrigin(position, geometricNormal, L), L, RAY_MAX_DISTANCE))
-            {
-                result += bsdf * EnvironmentRadiance(L) * (PowerHeuristic(lightPdf, bsdfPdf) / lightPdf);
-            }
-        }
+        distance = RAY_MAX_DISTANCE;
+        radiance = EnvironmentRadiance(L);
+        lightPdf = environmentPdf * environmentProbability;
     }
-
-    // One of the analytic lights
+    else
     {
         LightSample light = SampleLight(position, camera.lightCount, rng);
+        if (!light.valid)
+            return float3(0.0f);
 
-        if (light.valid && dot(geometricNormal, light.L) > 0.0f)
-        {
-            float bsdfPdf;
-            float3 bsdf = EvalBsdf(surface, V, light.L, bsdfPdf);
-
-            // Stop just short of the light's own surface
-            float3 origin = OffsetRayOrigin(position, geometricNormal, light.L);
-            float shadowDistance = light.distance * (1.0f - 1e-3f) - RAY_OFFSET;
-
-            if (MaxComponent(bsdf) > 0.0f && !IsOccluded(origin, light.L, shadowDistance))
-            {
-                float weight = light.isDelta ? 1.0f : PowerHeuristic(light.pdf, bsdfPdf);
-                result += bsdf * light.radiance * (weight / light.pdf);
-            }
-        }
+        L = light.L;
+        // Stop just short of the light's own surface
+        distance = light.distance * (1.0f - 1e-3f) - RAY_OFFSET;
+        radiance = light.radiance;
+        lightPdf = light.pdf * (1.0f - environmentProbability);
+        isDelta = light.isDelta;
     }
 
-    return result;
+    if (dot(geometricNormal, L) <= 0.0f)
+        return float3(0.0f);
+
+    float bsdfPdf;
+    float3 bsdf = EvalBsdf(surface, V, L, bsdfPdf);
+
+    // The shadow ray is the expensive part: skip it when the light could not contribute anyway
+    if (MaxComponent(bsdf * radiance) <= 0.0f || IsOccluded(OffsetRayOrigin(position, geometricNormal, L), L, distance))
+        return float3(0.0f);
+
+    float weight = isDelta ? 1.0f : PowerHeuristic(lightPdf, bsdfPdf);
+    return bsdf * radiance * (weight / lightPdf);
 }
 
 float3 ClampIndirect(float3 radiance)
@@ -184,8 +210,9 @@ float3 ClampIndirect(float3 radiance)
     return brightest > INDIRECT_RADIANCE_CLAMP ? radiance * (INDIRECT_RADIANCE_CLAMP / brightest) : radiance;
 }
 
-// Radiance arriving at origin from direction
-float3 TracePath(float3 origin, float3 direction, inout uint rng)
+// Radiance arriving at origin from direction. firstHit is the result of tracing that ray when the
+// caller already has it (hasFirstHit), which saves tracing the primary ray twice.
+float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload firstHit, bool hasFirstHit)
 {
     float3 radiance = float3(0.0f);
     float3 throughput = float3(1.0f);
@@ -197,12 +224,12 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng)
 
     for (int bounce = 0; bounce <= MAX_BOUNCES; bounce++)
     {
-        HitPayload hit = TraceSurface(origin, direction);
+        HitPayload hit = (bounce == 0 && hasFirstHit) ? firstHit : TraceSurface(origin, direction, bounce > 0);
 
         // --- Left the scene: environment ---
         if (hit.hitT < 0.0f)
         {
-            float weight = sampledDelta ? 1.0f : PowerHeuristic(bsdfPdf, EnvironmentPdf(direction));
+            float weight = sampledDelta ? 1.0f : PowerHeuristic(bsdfPdf, EnvironmentSelectionProbability() * EnvironmentPdf(direction));
             float3 contribution = throughput * EnvironmentRadiance(direction) * weight;
             radiance += isIndirect ? ClampIndirect(contribution) : contribution;
             break;
@@ -220,7 +247,8 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng)
             float weight = 1.0f;
             if (!sampledDelta && hit.lightIndex >= 0)
             {
-                float lightPdf = AreaLightPdf(hit.lightIndex, camera.lightCount, hit.hitT, abs(dot(hit.geometricNormal, V)));
+                float lightPdf = (1.0f - EnvironmentSelectionProbability())
+                    * AreaLightPdf(hit.lightIndex, camera.lightCount, hit.hitT, abs(dot(hit.geometricNormal, V)));
                 weight = PowerHeuristic(bsdfPdf, lightPdf);
             }
 
@@ -294,7 +322,9 @@ struct PrimarySurface
 //    mirror itself is perfectly smooth.
 //  - Denoisers that track reflections themselves (DLSS Ray Reconstruction) get the mirror, plus
 //    the distance to the reflected surface.
-PrimarySurface FindPrimarySurface(float3 origin, float3 direction)
+//
+// firstHit is the result of tracing the primary ray, which the caller reuses for the path.
+PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload firstHit)
 {
     PrimarySurface result;
     result.normal = float3(0.0f);
@@ -314,7 +344,7 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction)
 
     for (int i = 0; i <= MAX_LOOK_THROUGH; i++)
     {
-        HitPayload hit = TraceSurface(origin, direction);
+        HitPayload hit = i == 0 ? firstHit : TraceSurface(origin, direction);
         // Sky. If it is seen in a reflection, describe the reflecting surface instead: sky
         // pixels are not denoised, but a glossy reflection of the sky is noisy and must be.
         if (hit.hitT < 0.0f)
@@ -357,7 +387,9 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction)
         result.specularAlbedo = surface.specularAlbedo * tint;
         result.roughness = surface.roughness;
 
-        if (!followReflections)
+        // The distance to what the reflection shows lets DLSS move reflections correctly. It only
+        // matters where reflections are sharp enough to see; rough surfaces skip the extra ray.
+        if (!followReflections && surface.roughness < SPECULAR_DISTANCE_MAX_ROUGHNESS)
         {
             float3 reflected = reflect(direction, N);
             if (dot(reflected, geometricNormal) > 0.0f)
@@ -384,7 +416,10 @@ void main()
     float2 primaryPosition = float2(pixel) + 0.5f + camera.jitter;
     float3 primaryDirection = PrimaryRayDirection(primaryPosition);
 
-    PrimarySurface primary = FindPrimarySurface(camera.camPos, primaryDirection);
+    // Traced once, used for both the G-buffer and the paths through the same sub-pixel position
+    HitPayload primaryHit = TraceSurface(camera.camPos, primaryDirection);
+
+    PrimarySurface primary = FindPrimarySurface(camera.camPos, primaryDirection, primaryHit);
     bool isSky = primary.distance < 0.0f;
 
     // Motion vector: the scene is static, so only the camera moves. The sky is treated as infinitely
@@ -402,16 +437,17 @@ void main()
 
     for (uint i = 0; i < camera.samplesPerPixel; i++)
     {
-        float3 direction = primaryDirection;
-
         // Spread the remaining paths over the pixel for anti-aliasing, unless the denoiser
         // wants every path at the same sub-pixel position
         if (i > 0 && camera.jitterAllSamples == 0)
         {
-            direction = PrimaryRayDirection(float2(pixel) + NextRandomFloat2(rng));
+            float3 direction = PrimaryRayDirection(float2(pixel) + NextRandomFloat2(rng));
+            color += TracePath(camera.camPos, direction, rng, primaryHit, false);
         }
-
-        color += TracePath(camera.camPos, direction, rng);
+        else
+        {
+            color += TracePath(camera.camPos, primaryDirection, rng, primaryHit, true);
+        }
     }
 
     color /= float(max(camera.samplesPerPixel, 1u));

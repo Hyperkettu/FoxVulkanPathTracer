@@ -21,7 +21,7 @@ namespace Fox {
 				{
 				}
 
-				void AccumulationDenoiser::Resize(const GBuffer& gbuffer) {
+				void AccumulationDenoiser::Resize(const GBuffer& gbuffer, const OutputSettings& /*output*/) {
 					extent = gbuffer.extent;
 					accumulation = CreateStorageImage(context, extent, VK_FORMAT_R32G32B32A32_SFLOAT);
 					accumulatedFrames = 0;

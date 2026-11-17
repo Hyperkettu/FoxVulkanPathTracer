@@ -32,7 +32,9 @@ namespace Fox {
 					~PipelineManager() = default;
 
 
-					bool Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceCapabilitiesKHR capabilities);
+					// shaderExecutionReordering: the device has VK_NV_ray_tracing_invocation_reorder enabled,
+					// so the path tracer can use the raygen variant that reorders its bounce rays
+					bool Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceCapabilitiesKHR capabilities, bool shaderExecutionReordering);
 
 					void Destroy() {
 						pipelines.clear();

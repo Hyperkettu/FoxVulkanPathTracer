@@ -86,7 +86,21 @@ namespace Fox {
 
 			void Application::ToggleFullscreen() {
 				isFullscreen = !isFullscreen;
-				SDL_SetWindowFullscreen(window, isFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+
+				if (isFullscreen) {
+					// Exclusive fullscreen at the desktop's resolution and refresh rate. Frames then go straight
+					// to the display: in a borderless window they pass through the desktop compositor, which
+					// on Windows latches Vulkan frames irregularly (every few frames waits an extra refresh,
+					// even when the GPU has time to spare).
+					SDL_DisplayMode desktopMode{};
+					if (SDL_GetDesktopDisplayMode(SDL_GetWindowDisplayIndex(window), &desktopMode) == 0) {
+						SDL_SetWindowDisplayMode(window, &desktopMode);
+					}
+					SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
+				}
+				else {
+					SDL_SetWindowFullscreen(window, 0);
+				}
 
 				int w = 0, h = 0;
 				SDL_Vulkan_GetDrawableSize(window, &w, &h);

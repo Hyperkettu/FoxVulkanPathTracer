@@ -29,6 +29,35 @@ namespace Fox {
 					return denoisers;
 				}
 
+				float RenderScale(UpscalingMode mode) {
+					// The scale factors DLSS uses for its modes
+					switch (mode) {
+					case UpscalingMode::Quality: return 2.0f / 3.0f;
+					case UpscalingMode::Balanced: return 0.58f;
+					case UpscalingMode::Performance: return 0.5f;
+					case UpscalingMode::UltraPerformance: return 1.0f / 3.0f;
+					default: return 1.0f;
+					}
+				}
+
+				const char* UpscalingModeName(UpscalingMode mode) {
+					switch (mode) {
+					case UpscalingMode::Quality: return "Quality";
+					case UpscalingMode::Balanced: return "Balanced";
+					case UpscalingMode::Performance: return "Performance";
+					case UpscalingMode::UltraPerformance: return "Ultra Performance";
+					default: return "Native";
+					}
+				}
+
+				VkExtent2D RenderExtentFor(VkExtent2D displayExtent, UpscalingMode mode) {
+					const float scale = RenderScale(mode);
+					return VkExtent2D{
+						std::max(1u, static_cast<uint32_t>(std::lround(displayExtent.width * scale))),
+						std::max(1u, static_cast<uint32_t>(std::lround(displayExtent.height * scale)))
+					};
+				}
+
 				std::vector<std::string> GetDenoiserInstanceExtensions() {
 #ifdef FOX_ENABLE_DLSS
 					return DlssRayReconstruction::GetInstanceExtensions();

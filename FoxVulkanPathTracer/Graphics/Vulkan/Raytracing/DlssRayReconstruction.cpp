@@ -166,17 +166,19 @@ namespace Fox {
 					}
 				}
 
-				void DlssRayReconstruction::Resize(const GBuffer& newGBuffer) {
+				void DlssRayReconstruction::Resize(const GBuffer& newGBuffer, const OutputSettings& outputSettings) {
 					gbuffer = &newGBuffer;
 					extent = newGBuffer.extent;
+					outputExtent = outputSettings.displayExtent;
 
 					ReleaseFeature();
 
+					// Guide buffers at render resolution, the reconstructed image at display resolution
 					normalRoughness = CreateStorageImage(context, extent, NORMAL_ROUGHNESS_FORMAT);
 					depth = CreateStorageImage(context, extent, DEPTH_FORMAT);
 					motion = CreateStorageImage(context, extent, MOTION_FORMAT);
 					specularHitDistance = CreateStorageImage(context, extent, HIT_DISTANCE_FORMAT);
-					output = CreateStorageImage(context, extent, OUTPUT_FORMAT);
+					output = CreateStorageImage(context, outputExtent, OUTPUT_FORMAT);
 
 					// Binding order mirrors the declarations in Shaders/dlss_prepare.slang
 					preparePass.BindImages(0, {
@@ -189,21 +191,37 @@ namespace Fox {
 						specularHitDistance->GetView(),
 					});
 
-					// DLAA: no upscaling, the network only denoises and anti-aliases
+					// The network denoises, anti-aliases and (outside DLAA) upscales to the display resolution
+					NVSDK_NGX_PerfQuality_Value quality = NVSDK_NGX_PerfQuality_Value_DLAA;
+					switch (outputSettings.mode) {
+					case UpscalingMode::Quality: quality = NVSDK_NGX_PerfQuality_Value_MaxQuality; break;
+					case UpscalingMode::Balanced: quality = NVSDK_NGX_PerfQuality_Value_Balanced; break;
+					case UpscalingMode::Performance: quality = NVSDK_NGX_PerfQuality_Value_MaxPerf; break;
+					case UpscalingMode::UltraPerformance: quality = NVSDK_NGX_PerfQuality_Value_UltraPerformance; break;
+					default: break;
+					}
+
 					NVSDK_NGX_DLSSD_Create_Params createParams{};
 					createParams.InDenoiseMode = NVSDK_NGX_DLSS_Denoise_Mode_DLUnified;
 					createParams.InRoughnessMode = NVSDK_NGX_DLSS_Roughness_Mode_Packed; // Roughness lives in normals.w
 					createParams.InUseHWDepth = NVSDK_NGX_DLSS_Depth_Type_Linear;
 					createParams.InWidth = extent.width;
 					createParams.InHeight = extent.height;
-					createParams.InTargetWidth = extent.width;
-					createParams.InTargetHeight = extent.height;
-					createParams.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_DLAA;
+					createParams.InTargetWidth = outputExtent.width;
+					createParams.InTargetHeight = outputExtent.height;
+					createParams.InPerfQualityValue = quality;
 					// The input is linear HDR radiance; motion vectors are at render resolution and exclude the jitter
 					createParams.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
 
-					// Preset F is the newest Ray Reconstruction model
-					NVSDK_NGX_Parameter_SetUI(parameters, NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA, NVSDK_NGX_RayReconstruction_Hint_Render_Preset_F);
+					// Preset F is the newest Ray Reconstruction model; presets are chosen per quality mode
+					for (const char* presetParameter : {
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_DLAA,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Quality,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Balanced,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_Performance,
+						NVSDK_NGX_Parameter_RayReconstruction_Hint_Render_Preset_UltraPerformance }) {
+						NVSDK_NGX_Parameter_SetUI(parameters, presetParameter, NVSDK_NGX_RayReconstruction_Hint_Render_Preset_F);
+					}
 
 					// Creating the feature records setup commands that must run before the first evaluation
 					CommandList commandList(context.device, context.setupCommandPool);
@@ -233,7 +251,7 @@ namespace Fox {
 					NVSDK_NGX_Resource_VK depthResource = Wrap(*depth, DEPTH_FORMAT, extent, false);
 					NVSDK_NGX_Resource_VK motionResource = Wrap(*motion, MOTION_FORMAT, extent, false);
 					NVSDK_NGX_Resource_VK hitDistanceResource = Wrap(*specularHitDistance, HIT_DISTANCE_FORMAT, extent, false);
-					NVSDK_NGX_Resource_VK outputResource = Wrap(*output, OUTPUT_FORMAT, extent, true);
+					NVSDK_NGX_Resource_VK outputResource = Wrap(*output, OUTPUT_FORMAT, outputExtent, true);
 
 					// NGX expects Direct3D style matrices: left-handed view space (+Z forward), row vectors.
 					// GLM stores column vectors in column-major order, which is the same memory layout as

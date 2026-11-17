@@ -24,7 +24,7 @@ namespace Fox {
 
 					const char* GetName() const override { return "SVGF"; }
 
-					void Resize(const GBuffer& gbuffer) override;
+					void Resize(const GBuffer& gbuffer, const OutputSettings& output) override;
 					void Denoise(CommandList& commandList, const DenoiserFrameInfo& frame) override;
 
 					VkImageView GetOutputView() const override { return output->GetView(); }

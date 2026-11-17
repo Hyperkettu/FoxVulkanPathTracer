@@ -26,8 +26,8 @@ namespace Fox {
                 virtual void Initialize() = 0;
                 virtual void Update(float dt) = 0;
 
-                // Appends a copy of the mesh to the scene. The same mesh can be added several times
-                // with different transforms; its textures are shared between the copies.
+                // Places the mesh in the scene. The same mesh can be added several times with different
+                // transforms: its geometry and acceleration structures are stored once and instanced.
                 void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform);
 
                 // Adds a large horizontal quad at the given height, e.g. as the ground.
@@ -62,15 +62,12 @@ namespace Fox {
                     return submeshes;
                 }
 
+                // One BLAS holding submeshes [firstSubmesh, firstSubmesh + submeshCount), one geometry each
                 uint32_t AddBLAS(
-                    VkBuffer vertexBuffer,
                     VkDeviceAddress vertexAddress,
-                    uint32_t vertexCount,
-                    VkBuffer indexBuffer,
                     VkDeviceAddress indexAddress,
-                    uint32_t indexCount,
-                    uint32_t indexOffset,
-                    uint32_t vertexOffset);
+                    uint32_t firstSubmesh,
+                    uint32_t submeshCount);
 
                 void AddInstance(
                     uint32_t blasIndex,
@@ -136,8 +133,6 @@ namespace Fox {
                 std::vector<Fox::Graphics::Vulkan::Submesh> submeshes;
                 std::vector<Fox::Graphics::Vulkan::Material> materials;
                 std::vector<Fox::Graphics::Vulkan::Light> lights; 
-                std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> rayTracingInstances;
-                std::vector<glm::mat4> transforms;
 
             private:
                 void CreateAccelerationStructure(
@@ -149,6 +144,12 @@ namespace Fox {
 
                 void UploadInstanceBuffer();
                 void UploadGeometry();
+
+                // Transforms vertices [first, first + count): positions, normals and tangents
+                void TransformVertices(uint32_t first, uint32_t count, const glm::mat4& transform);
+
+                // Appends a mesh's geometry and materials (once per mesh) and returns its record
+                size_t AddMeshGeometry(const Fox::Graphics::Geometry::Vulkan::Mesh* mesh);
                 VkDeviceAddress GetBufferAddress(VkBuffer buffer);
 
                 static PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
@@ -161,6 +162,26 @@ namespace Fox {
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::IndexBuffer>> indexBuffers;
 
                 uint32_t lightCount = 0;
+
+                // Geometry stored once per mesh. Its submeshes are contiguous, opaque ones first, and become
+                // at most two BLAS: opaque surfaces and glass (glass has its own visibility bit, so shadow rays
+                // can pass through windows).
+                struct MeshRecord {
+                    const Fox::Graphics::Geometry::Vulkan::Mesh* mesh = nullptr; // nullptr for generated geometry
+                    uint32_t firstSubmesh = 0;
+                    uint32_t opaqueCount = 0;
+                    uint32_t glassCount = 0;
+                    int opaqueBlas = -1;
+                    int glassBlas = -1;
+                };
+                std::vector<MeshRecord> meshRecords;
+
+                // Where each mesh is placed; one TLAS instance per placement and BLAS
+                struct Placement {
+                    size_t record;
+                    glm::mat4 transform;
+                };
+                std::vector<Placement> placements;
 
                 // Running offsets into the scene-wide arrays, advanced by AddMesh
                 uint32_t vertexOffset = 0u;

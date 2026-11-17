@@ -23,7 +23,8 @@ namespace Fox
 
                 // --- Command recording ---
                 std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool;
-                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> commandList;
+                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> commandList;        // Path tracing and denoising
+                std::unique_ptr<Fox::Graphics::Vulkan::CommandList> presentCommandList; // Tone mapping into the swapchain image
 
                 // --- Descriptors ---
                 std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet> perFrameDescriptorSet; // Ray tracing set 0

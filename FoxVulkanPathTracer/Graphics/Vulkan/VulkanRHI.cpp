@@ -19,6 +19,7 @@ namespace Fox {
 					VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
 					VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
 					VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+					VK_KHR_RAY_QUERY_EXTENSION_NAME, // Inline shadow rays in raygen.slang
 				};
 
 				// Van der Corput radical inverse, the building block of the Halton sequence
@@ -133,6 +134,8 @@ namespace Fox {
 
 				LoadExtensionAPIFunctions();
 
+				profiler = std::make_unique<GpuProfiler>(device, physicalDevice, graphicsQueueFamily, config.MAX_FRAMES_IN_FLIGHT);
+
 				// One family serves both roles (see FindGraphicsQueueFamily)
 				vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
 				presentQueue = graphicsQueue;
@@ -182,7 +185,7 @@ namespace Fox {
 				Managers::DescriptorManager::Get().Initialize(device, config);
 				CreateFrameDescriptors();
 
-				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities);
+				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities, shaderExecutionReordering);
 
 				postProcessor = std::make_unique<PostProcessor>(device);
 				BindGBuffer();
@@ -204,6 +207,7 @@ namespace Fox {
 					frameResources.clear();
 
 					postProcessor = nullptr;
+					profiler = nullptr;
 					renderFinishedSemaphores.clear();
 					denoisers.clear();
 					gbuffer = nullptr;
@@ -331,8 +335,13 @@ namespace Fox {
 				// Feature chain. Everything here is used by the shaders or the acceleration structure code.
 				// Features that were promoted to core are enabled through the Vulkan 1.x feature structs,
 				// which is why the matching extensions are not listed in REQUIRED_DEVICE_EXTENSIONS.
+				VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+				rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+				rayQueryFeatures.rayQuery = VK_TRUE; // Inline shadow rays
+
 				VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracingFeatures{};
 				raytracingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+				raytracingFeatures.pNext = &rayQueryFeatures;
 				raytracingFeatures.rayTracingPipeline = VK_TRUE;
 
 				VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{};
@@ -374,6 +383,31 @@ namespace Fox {
 				vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableCount, nullptr);
 				std::vector<VkExtensionProperties> available(availableCount);
 				vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableCount, available.data());
+
+				// Optional: shader execution reordering (NVIDIA RTX 40 series and newer). The path tracer then
+				// regroups threads by what their bounce rays hit (raygen_ser variant of raygen.slang).
+				VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorderFeatures{};
+				reorderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_NV;
+				{
+					const bool hasExtension = std::any_of(available.begin(), available.end(), [](const VkExtensionProperties& e) {
+						return std::strcmp(e.extensionName, VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME) == 0;
+					});
+
+					if (hasExtension) {
+						VkPhysicalDeviceFeatures2 features2{};
+						features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+						features2.pNext = &reorderFeatures;
+						vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+					}
+
+					shaderExecutionReordering = hasExtension && reorderFeatures.rayTracingInvocationReorder == VK_TRUE;
+					if (shaderExecutionReordering) {
+						extensions.push_back(VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME);
+						reorderFeatures.pNext = vulkan12Features.pNext;
+						vulkan12Features.pNext = &reorderFeatures;
+					}
+					std::cout << "Shader execution reordering: " << (shaderExecutionReordering ? "on" : "not supported") << "\n";
+				}
 
 				optionalDeviceExtensions = RayTracing::GetDenoiserDeviceExtensions(instance, physicalDevice);
 				AppendSupportedExtensions(extensions, optionalDeviceExtensions, available);
@@ -472,6 +506,23 @@ namespace Fox {
 			// ------------------------------------------------------------------------------------
 
 			void VulkanRHI::CreateSwapchain() {
+				// Vsync: FIFO, always available. Without it the frame rate is uncapped, which shows the real
+				// cost of a frame (with vsync the GPU lowers its clocks to just fit the refresh interval).
+				VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+				if (!vsync) {
+					uint32_t count = 0;
+					vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &count, nullptr);
+					std::vector<VkPresentModeKHR> modes(count);
+					vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &count, modes.data());
+
+					for (VkPresentModeKHR preferred : { VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR }) {
+						if (std::find(modes.begin(), modes.end(), preferred) != modes.end()) {
+							presentMode = preferred;
+							break;
+						}
+					}
+				}
+
 				swapchain = std::make_unique<Swapchain>(
 					device,
 					Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get(),
@@ -479,7 +530,7 @@ namespace Fox {
 					surface,
 					surfaceFormat,
 					capabilities,
-					config.MAX_FRAMES_IN_FLIGHT);
+					presentMode);
 
 				renderFinishedSemaphores.clear();
 				for (uint32_t i = 0; i < swapchain->GetImageCount(); i++) {
@@ -488,8 +539,31 @@ namespace Fox {
 			}
 
 			void VulkanRHI::CreateGBuffer() {
-				gbuffer = std::make_unique<RayTracing::GBuffer>(deviceContext, capabilities.currentExtent);
+				const VkExtent2D displayExtent = capabilities.currentExtent;
+
+				// Until the user picks a mode, choose one from the display size. At 4K, Quality (1440p) keeps
+				// a 60 fps frame well within budget (~4.5 ms on an RTX 5090; Native takes ~8.6 ms).
+				if (!upscalingModeChosenByUser) {
+					upscalingMode = displayExtent.height >= 2000 ? RayTracing::UpscalingMode::Quality
+						: RayTracing::UpscalingMode::Native;
+				}
+
+				gbuffer = std::make_unique<RayTracing::GBuffer>(deviceContext, RayTracing::RenderExtentFor(displayExtent, upscalingMode));
 				ResetHistory();
+			}
+
+			void VulkanRHI::SetUpscalingMode(RayTracing::UpscalingMode mode) {
+				// The G-buffer and the denoisers' images are about to be replaced
+				vkDeviceWaitIdle(device);
+
+				upscalingMode = mode;
+				upscalingModeChosenByUser = true;
+
+				CreateGBuffer();
+				BindGBuffer();
+
+				std::cout << "Upscaling: " << RayTracing::UpscalingModeName(upscalingMode) << " (" << gbuffer->extent.width << "x" << gbuffer->extent.height
+					<< " -> " << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ")\n";
 			}
 
 			void VulkanRHI::CreateFrameDescriptors() {
@@ -551,8 +625,9 @@ namespace Fox {
 					set->Update();
 				}
 
+				const RayTracing::OutputSettings output{ capabilities.currentExtent, upscalingMode };
 				for (auto& denoiser : denoisers) {
-					denoiser->Resize(*gbuffer);
+					denoiser->Resize(*gbuffer, output);
 				}
 
 				SelectDenoiser(activeDenoiser);
@@ -582,9 +657,26 @@ namespace Fox {
 				}
 
 				std::ostringstream title;
-				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << samplesPerPixel << " spp";
+				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << RayTracing::UpscalingModeName(upscalingMode)
+					<< " " << gbuffer->extent.width << "x" << gbuffer->extent.height << " - " << samplesPerPixel << " spp";
 				if (titleTimer > 0.0f) {
-					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps";
+					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps" << (vsync ? "" : " (vsync off)");
+				}
+
+				// The frame rate is capped by vsync; the GPU time shows the actual cost and headroom
+				if (profiler && profiler->GetFrameMilliseconds() > 0.0f) {
+					title << std::fixed << std::setprecision(1) << " - GPU " << profiler->GetFrameMilliseconds() << " ms (" << profiler->GetSectionSummary() << ")";
+
+					// Also on the console every few seconds, for logs and benchmarks
+					consoleTimer += titleTimer;
+					if (consoleTimer >= 2.0f) {
+						consoleTimer = 0.0f;
+						std::cout << "[GPU] " << profiler->GetFrameMilliseconds() << " ms: " << profiler->GetSectionSummary()
+							<< " (" << gbuffer->extent.width << "x" << gbuffer->extent.height << " -> "
+							<< capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ", "
+							<< denoisers[activeDenoiser]->GetName() << ", " << samplesPerPixel << " spp)\n";
+						std::cout.unsetf(std::ios::floatfield);
+					}
 				}
 
 				SDL_SetWindowTitle(static_cast<SDL_Window*>(config.windowHandle), title.str().c_str());
@@ -623,24 +715,34 @@ namespace Fox {
 
 				// Block until the GPU has finished the work that last used this frame slot
 				frameResource.renderFence->Wait();
+				profiler->ReadResults(currentFrame);
+
+				frameResource.renderFence->Reset();
+				frameResource.commandPool->Reset();
+
+				// The frame is two submits. Path tracing and denoising, nearly all of the work, need no
+				// swapchain image and start right away. Only tone mapping waits for the image: with vsync an
+				// image is released at a display refresh, and waiting for it before tracing would leave the
+				// trace a single refresh interval to finish in (any slower frame then misses a refresh).
+				UpdateCameraUniforms(frameResource, deltaTime);
+				RecordTrace(frameResource);
+				frameResource.commandList->Submit(graphicsQueue);
 
 				uint32_t imageIndex = 0;
 				VkResult acquireResult = swapchain->AcquireNextImage(frameResource.imageAvailableSemaphore->Get(), imageIndex);
 				if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+					// The fence was reset: signal it with an empty submit so the next Wait() returns
+					frameResource.presentCommandList->Begin().End();
+					frameResource.presentCommandList->Submit(graphicsQueue, VK_NULL_HANDLE, VK_NULL_HANDLE, frameResource.renderFence->Get());
 					Resize(0, 0);
 					return;
 				}
 
-				// Only reset once we know a submit will follow, otherwise the next Wait() would hang
-				frameResource.renderFence->Reset();
-				frameResource.commandPool->Reset();
-
-				UpdateCameraUniforms(frameResource, deltaTime);
-				RecordFrame(frameResource, imageIndex);
+				RecordToneMapping(frameResource, imageIndex);
 
 				const VkSemaphore renderFinished = renderFinishedSemaphores[imageIndex]->Get();
 
-				frameResource.commandList->Submit(
+				frameResource.presentCommandList->Submit(
 					graphicsQueue,
 					frameResource.imageAvailableSemaphore->Get(),
 					renderFinished,
@@ -684,7 +786,8 @@ namespace Fox {
 				// Without usable history the previous camera is the current one: zero motion
 				const CameraState previous = resetHistory ? current : previousCamera;
 
-				const VkExtent2D extent = capabilities.currentExtent;
+				// The path tracer renders at the G-buffer's resolution, which may be below the display's
+				const VkExtent2D extent = gbuffer->extent;
 				const glm::vec2 jitter = NextJitter();
 
 				CameraUBO cam{};
@@ -726,12 +829,12 @@ namespace Fox {
 				resetHistory = false;
 			}
 
-			void VulkanRHI::RecordFrame(FrameResource& frameResource, uint32_t imageIndex) {
+			void VulkanRHI::RecordTrace(FrameResource& frameResource) {
 				auto& pipelineManager = Managers::PipelineManager::Get();
 				auto& raytracingPipeline = pipelineManager.GetRayTracingPipeline(Managers::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE);
 				VkPipelineLayout raytracingPipelineLayout = pipelineManager.GetRayTracingPipelineLayout(Managers::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE)->Get();
 
-				const VkExtent2D extent = capabilities.currentExtent;
+				const VkExtent2D renderExtent = gbuffer->extent;
 				const VkPipelineBindPoint rayTracing = VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR;
 				const VkAccessFlags readWrite = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
@@ -747,27 +850,48 @@ namespace Fox {
 					.BindPipeline(raytracingPipeline->GetPipeline(), rayTracing)
 					.BindDescriptorSets(raytracingPipelineLayout, 0,
 						{ frameResource.perFrameDescriptorSet->Get(), Managers::TextureManager::Get().bindlessTextureDescriptorSet->Get() },
-						rayTracing)
-					.Raytrace(
-						raytracingPipeline->GetRaygenRegion(),
-						raytracingPipeline->GetMissRegion(),
-						raytracingPipeline->GetHitRegion(),
-						raytracingPipeline->GetCallableRegion(),
-						extent.width, extent.height)
+						rayTracing);
 
-					// 2. Denoise
-					.MemoryBarrier(
-						VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-						VK_ACCESS_SHADER_WRITE_BIT, readWrite);
+				profiler->BeginFrame(commandList, currentFrame);
+
+				commandList.Raytrace(
+					raytracingPipeline->GetRaygenRegion(),
+					raytracingPipeline->GetMissRegion(),
+					raytracingPipeline->GetHitRegion(),
+					raytracingPipeline->GetCallableRegion(),
+					renderExtent.width, renderExtent.height);
+
+				profiler->Mark(commandList, "trace");
+
+				// 2. Denoise
+				commandList.MemoryBarrier(
+					VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_ACCESS_SHADER_WRITE_BIT, readWrite);
 
 				denoisers[activeDenoiser]->Denoise(commandList, denoiserFrame);
+
+				profiler->Mark(commandList, "denoise");
+
+				commandList.End();
+			}
+
+			void VulkanRHI::RecordToneMapping(FrameResource& frameResource, uint32_t imageIndex) {
+				const VkExtent2D displayExtent = capabilities.currentExtent;
+				CommandList& commandList = *frameResource.presentCommandList;
+
+				// The time between the two submits: waiting for the display to release the image
+				commandList.Begin();
+				profiler->Mark(commandList, "wait", true);
 
 				// 3. Tone map the denoised HDR image into the swapchain image
 				commandList.MemoryBarrier(
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 
-				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), extent);
+				// Also upscales the denoisers that output at render resolution (bilinear filtering)
+				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), displayExtent);
+
+				profiler->Mark(commandList, "tonemap");
 
 				commandList.End();
 			}
@@ -830,6 +954,19 @@ namespace Fox {
 					switch (key) {
 					case SDL_SCANCODE_N:
 						SelectDenoiser(activeDenoiser + 1);
+						break;
+
+					case SDL_SCANCODE_V:
+						vsync = !vsync;
+						std::cout << "Vsync: " << (vsync ? "on" : "off") << "\n";
+						Resize(0, 0);
+						UpdateWindowTitle(0.0f);
+						break;
+
+					// Render resolution relative to the display: quality against frame rate
+					case SDL_SCANCODE_U:
+						SetUpscalingMode(static_cast<RayTracing::UpscalingMode>(
+							(static_cast<int>(upscalingMode) + 1) % static_cast<int>(RayTracing::UpscalingMode::Count)));
 						break;
 
 					// Exposure, in thirds of a stop like a camera dial

@@ -18,11 +18,12 @@ namespace Fox {
 			}
 
 			PostProcessor::PostProcessor(VkDevice device) : device(device) {
-				// The HDR image always matches the swapchain resolution, so a nearest/clamped lookup is exact.
+				// Bilinear: denoisers without their own upscaler output at render resolution, which can be below the
+				// swapchain resolution. At equal resolution it samples texel centers, so the result is exact.
 				VkSamplerCreateInfo samplerInfo{};
 				samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-				samplerInfo.magFilter = VK_FILTER_NEAREST;
-				samplerInfo.minFilter = VK_FILTER_NEAREST;
+				samplerInfo.magFilter = VK_FILTER_LINEAR;
+				samplerInfo.minFilter = VK_FILTER_LINEAR;
 				samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 				samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 				samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;

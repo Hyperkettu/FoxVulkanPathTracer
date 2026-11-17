@@ -35,7 +35,7 @@ namespace Fox {
 				{
 				}
 
-				void SpatiotemporalVarianceGuidedFilter::Resize(const GBuffer& gbuffer) {
+				void SpatiotemporalVarianceGuidedFilter::Resize(const GBuffer& gbuffer, const OutputSettings& /*output*/) {
 					extent = gbuffer.extent;
 
 					illuminationPing = CreateStorageImage(context, extent, ILLUMINATION_FORMAT);

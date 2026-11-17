@@ -39,13 +39,15 @@ namespace Fox {
 				void CreateFrameDescriptors();
 				void BindGBuffer();
 				void SelectDenoiser(size_t index);
+				void SetUpscalingMode(RayTracing::UpscalingMode mode);
 				void UpdateWindowTitle(float deltaTime);
 
 				// --- Per frame ---
 				void HandleCameraInput(float deltaTime);
 				void UpdateCameraUniforms(FrameResource& frameResource, float deltaTime);
 				glm::vec2 NextJitter() const;
-				void RecordFrame(FrameResource& frameResource, uint32_t imageIndex);
+				void RecordTrace(FrameResource& frameResource);                           // Path tracing + denoising
+				void RecordToneMapping(FrameResource& frameResource, uint32_t imageIndex); // Into the swapchain image
 				VkResult Present(uint32_t imageIndex, VkSemaphore waitSemaphore);
 
 				// Tells the denoiser that the previous frame must not be reused (resize, lighting change...).
@@ -81,11 +83,17 @@ namespace Fox {
 				std::unique_ptr<RayTracing::GBuffer> gbuffer;
 				std::vector<std::unique_ptr<RayTracing::Denoiser>> denoisers;
 				size_t activeDenoiser = 0;
+
+				// Render resolution relative to the display (the G-buffer has the render resolution)
+				RayTracing::UpscalingMode upscalingMode = RayTracing::UpscalingMode::Native;
+				bool upscalingModeChosenByUser = false; // Until then it follows the display size
 				RayTracing::DenoiserFrameInfo denoiserFrame;
 
 				// Extensions requested by the denoisers; kept alive because Vulkan is handed pointers into them
 				std::vector<std::string> optionalInstanceExtensions;
 				std::vector<std::string> optionalDeviceExtensions;
+				bool shaderExecutionReordering = false; // VK_NV_ray_tracing_invocation_reorder enabled
+				bool vsync = true; // V key
 				std::unique_ptr<Fox::Graphics::Vulkan::PostProcessor> postProcessor;
 
 				std::unique_ptr<Fox::Scene::RayTracing::MainRayTracingScene> raytracingScene;
@@ -103,11 +111,15 @@ namespace Fox {
 				};
 				CameraState previousCamera; // For motion vectors
 
-				uint32_t samplesPerPixel = 2; // Paths traced per pixel and frame
+				uint32_t samplesPerPixel = 1; // Paths traced per pixel and frame (DLSS Ray Reconstruction is designed for 1)
 
 				// Frame rate shown in the window title
 				float titleTimer = 0.0f;
 				uint32_t titleFrames = 0;
+				float consoleTimer = 0.0f;
+
+				// GPU time per pass, shown in the window title
+				std::unique_ptr<GpuProfiler> profiler;
 
 				// --- Input ---
 				float cameraSpeed = 10.0f;

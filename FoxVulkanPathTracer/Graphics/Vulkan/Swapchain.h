@@ -14,7 +14,7 @@ namespace Fox {
 					VkSurfaceKHR surface,
 					VkSurfaceFormatKHR surfaceFormat,
 					VkSurfaceCapabilitiesKHR capabilities,
-					uint32_t numImages);
+					VkPresentModeKHR presentMode);
 
 				// Returns VK_ERROR_OUT_OF_DATE_KHR when the swapchain no longer matches the surface and must be recreated.
 				inline VkResult AcquireNextImage(VkSemaphore imageAvailableSemaphore, uint32_t& imageIndex) {

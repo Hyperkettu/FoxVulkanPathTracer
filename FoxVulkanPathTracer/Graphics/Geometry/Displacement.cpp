@@ -679,12 +679,15 @@ namespace Fox {
 				//
 				// The triangle counts are exact: a long, thin triangle of length L becomes about 2 L / edge
 				// pieces whatever its area, so they cannot be estimated from the area.
+				//
+				// Step 0 is "not displaced": the surface keeps its original triangles. With a small budget the
+				// triangles then go only to the surfaces where relief shows, instead of a little everywhere.
 				const float targetEdge = std::max(settings.targetEdgeLength, 1e-4f);
-				constexpr int STEPS = 9; // Step k uses targetEdge * 2^((STEPS - 1 - k) / 2): k = 0 is the coarsest
+				constexpr int STEPS = 10; // Step k >= 1 uses targetEdge * 2^((STEPS - 1 - k) / 2): 16x the target down to 1x
 				const size_t TOO_MANY = std::numeric_limits<size_t>::max();
 
 				auto stepEdge = [&](int step) {
-					return targetEdge * std::pow(2.0f, 0.5f * (STEPS - 1 - step));
+					return step == 0 ? 0.0f : targetEdge * std::pow(2.0f, 0.5f * (STEPS - 1 - step));
 				};
 
 				struct Candidate {
@@ -706,8 +709,11 @@ namespace Fox {
 					Candidate candidate;
 					candidate.submeshIndex = submeshIndex;
 
+					candidate.triangles[0] = submesh.indexCount / 3;
+					candidate.relief[0] = 0.0;
+
 					bool overBudget = false;
-					for (int step = 0; step < STEPS; step++) {
+					for (int step = 1; step < STEPS; step++) {
 						const float edge = stepEdge(step);
 						candidate.relief[step] = info.area * field->RmsAt(lodFor(info, edge)) * info.heightScale;
 
@@ -730,7 +736,7 @@ namespace Fox {
 
 				size_t totalTriangles = 0;
 				for (const Candidate& candidate : candidates) {
-					totalTriangles += candidate.triangles[0] == TOO_MANY ? settings.maxTriangles : candidate.triangles[0];
+					totalTriangles += candidate.triangles[0];
 				}
 
 				while (true) {
@@ -764,11 +770,15 @@ namespace Fox {
 					best->step++;
 				}
 
-				stats.edgeLength = std::numeric_limits<float>::max();
+				stats.edgeLength = 0.0f;
 				for (const Candidate& candidate : candidates) {
 					submeshInfo[candidate.submeshIndex].edgeLength = stepEdge(candidate.step);
 					submeshInfo[candidate.submeshIndex].triangles = candidate.triangles[candidate.step];
-					stats.edgeLength = std::min(stats.edgeLength, stepEdge(candidate.step));
+
+					if (candidate.step > 0) {
+						const float edge = stepEdge(candidate.step);
+						stats.edgeLength = stats.edgeLength > 0.0f ? std::min(stats.edgeLength, edge) : edge;
+					}
 				}
 
 				// --- 4. Rebuild the mesh, tessellating the displaced submeshes ---
@@ -794,11 +804,17 @@ namespace Fox {
 					const uint32_t newVertexOffset = static_cast<uint32_t>(newVertices.size());
 					const uint32_t newIndexOffset = static_cast<uint32_t>(newIndices.size());
 
-					if (!field) {
+					// edgeLength 0: the budget allocation left this surface undisplaced
+					if (!field || submeshInfo[submeshIndex].edgeLength <= 0.0f) {
 						// Unchanged: copy and renumber
 						newVertices.insert(newVertices.end(), vertices.begin() + submesh.vertexOffset, vertices.begin() + submesh.vertexOffset + submesh.vertexCount);
 						for (uint32_t i = 0; i < submesh.indexCount; i++) {
 							newIndices.push_back(indices[submesh.indexOffset + i] - submesh.vertexOffset + newVertexOffset);
+						}
+
+						// Counted on both sides of the stats, like in trianglesBefore
+						if (field) {
+							stats.trianglesAfter += submesh.indexCount / 3;
 						}
 					}
 					else {

@@ -11,7 +11,7 @@ namespace Fox {
 				VkSurfaceKHR surface,
 				VkSurfaceFormatKHR surfaceFormat,
 				VkSurfaceCapabilitiesKHR capabilities,
-				uint32_t numImages) {
+				VkPresentModeKHR presentMode) {
 
 				this->device = device;
 
@@ -30,7 +30,7 @@ namespace Fox {
 				swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 				swapchainInfo.preTransform = capabilities.currentTransform;
 				swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-				swapchainInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+				swapchainInfo.presentMode = presentMode;
 				swapchainInfo.clipped = VK_TRUE;
 
 				if (vkCreateSwapchainKHR(device, &swapchainInfo, nullptr, &swapchain) != VK_SUCCESS) {

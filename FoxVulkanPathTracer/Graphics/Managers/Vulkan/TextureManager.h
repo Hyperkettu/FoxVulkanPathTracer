@@ -77,7 +77,7 @@ namespace Fox {
 
 				private:
 					// Builds environmentSamplingTable from the HDR image at path
-					void BuildEnvironmentSamplingTable(const std::string& path);
+					void BuildEnvironmentSamplingTable(const std::string& path, VkQueue queue, VkCommandPool commandPool);
 
 					uint32_t environmentTableWidth = 0;
 					uint32_t environmentTableHeight = 0;

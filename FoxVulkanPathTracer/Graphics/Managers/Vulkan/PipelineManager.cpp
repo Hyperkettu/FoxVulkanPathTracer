@@ -12,7 +12,7 @@ namespace Fox {
 
 			namespace Vulkan {
 
-				bool PipelineManager::Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceCapabilitiesKHR capabilities) {
+				bool PipelineManager::Initialize(VkDevice device, VkPhysicalDevice physicalDevice, VkSurfaceCapabilitiesKHR capabilities, bool shaderExecutionReordering) {
 					{
 						VkDescriptorSetLayout descriptorSetLayouts = Fox::Graphics::Managers::Vulkan::DescriptorManager::Get().GetDescriptorSet(Fox::Graphics::Managers::Vulkan::Descriptor::RAY_TRACING)->GetLayout().Get();
 						VkDescriptorSetLayout bindlessTextureLayout = Fox::Graphics::Managers::Vulkan::TextureManager::Get().bindlessTextureDescriptorSet->GetLayout();
@@ -23,7 +23,7 @@ namespace Fox {
 
 						// The shader binding table layout in RayTracingPipeline::CreateSBT depends on this order.
 						Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder builder(device, physicalDevice);
-						builder.AddShader("Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
+						builder.AddShader(shaderExecutionReordering ? "Shaders/raygen_ser.spv" : "Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
 							.AddShader("Shaders/miss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.AddShader("Shaders/closest_hit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
 							.AddShader("Shaders/shadowmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)

@@ -64,6 +64,35 @@ namespace Fox
 #endif
                 }
 
+                // A buffer in video memory, filled once through a staging copy. For data the GPU reads a lot
+                // (scene geometry, materials): the default host-visible memory is system RAM, and every
+                // shader read of it crosses PCIe. Not mappable, so Update() cannot be used on it.
+                static std::unique_ptr<ShaderStorageBuffer> CreateDeviceLocal(VkDevice device,
+                    VkPhysicalDevice physicalDevice,
+                    VkCommandPool commandPool,
+                    VkQueue queue,
+                    const std::string& name,
+                    const std::vector<T>& arr)
+                {
+                    auto result = std::make_unique<ShaderStorageBuffer>(device, physicalDevice, name, arr, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+                    const VkDeviceSize size = sizeof(T) * arr.size();
+                    Fox::Graphics::Vulkan::Buffer staging(device, physicalDevice, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                    std::memcpy(staging.Map(), arr.data(), size);
+                    staging.Unmap();
+
+                    VkBufferCopy region{};
+                    region.size = size;
+                    Fox::Graphics::Vulkan::CommandList commandList(device, commandPool);
+                    commandList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+                        .CopyBuffer(staging.Get(), result->buffer->Get(), { region })
+                        .End()
+                        .SubmitAndWait(queue);
+
+                    return result;
+                }
+
                 ShaderStorageBuffer(const ShaderStorageBuffer&) = delete;
                 ShaderStorageBuffer& operator=(const ShaderStorageBuffer&) = delete;
                 ShaderStorageBuffer(ShaderStorageBuffer&&) noexcept = default;

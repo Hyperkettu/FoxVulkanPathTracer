@@ -9,6 +9,7 @@ namespace Fox {
             void FrameResource::CreateGraphicsCommandResources(VkDevice device, uint32_t queueFamily) {
                 commandPool = std::make_unique<Fox::Graphics::Vulkan::CommandPool>(device, queueFamily);
                 commandList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, commandPool->Get());
+                presentCommandList = std::make_unique<Fox::Graphics::Vulkan::CommandList>(device, commandPool->Get());
             }
 
             void FrameResource::CreateSynchronizationObjects(VkDevice device, bool createFenceAsSignaled) {
@@ -23,6 +24,7 @@ namespace Fox {
             void FrameResource::Destroy(VkDevice device) {
                 camUBO = nullptr;
                 commandList = nullptr;
+                presentCommandList = nullptr;
                 commandPool = nullptr;
                 perFrameDescriptorSet = nullptr;
                 imageAvailableSemaphore = nullptr;

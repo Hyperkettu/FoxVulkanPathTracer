@@ -187,6 +187,7 @@
     <ClCompile Include="Graphics\Vulkan\PipelineLayout.cpp" />
     <ClCompile Include="Graphics\Vulkan\PostProcess.cpp" />
     <ClCompile Include="Graphics\Vulkan\ComputePass.cpp" />
+    <ClCompile Include="Graphics\Vulkan\GpuProfiler.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\GBuffer.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\Denoiser.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.cpp" />
@@ -263,6 +264,7 @@
     <ClInclude Include="Graphics\Vulkan\PipelineLayout.h" />
     <ClInclude Include="Graphics\Vulkan\PostProcess.h" />
     <ClInclude Include="Graphics\Vulkan\ComputePass.h" />
+    <ClInclude Include="Graphics\Vulkan\GpuProfiler.h" />
     <ClInclude Include="Graphics\Vulkan\DeviceContext.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\GBuffer.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.h" />
@@ -299,6 +301,12 @@
     <!-- Slang shaders. Each one is compiled to Shaders\<name>.spv by the CompileSlangShaders target below. -->
     <SlangShader Include="Shaders\raygen.slang">
       <Stage>raygeneration</Stage>
+    </SlangShader>
+    <!-- Same path tracer with shader execution reordering, used when the GPU supports it -->
+    <SlangShader Include="Shaders\raygen.slang">
+      <Stage>raygeneration</Stage>
+      <Suffix>_ser</Suffix>
+      <Defines>-DFOX_SER=1</Defines>
     </SlangShader>
     <SlangShader Include="Shaders\miss.slang">
       <Stage>miss</Stage>
@@ -348,6 +356,9 @@
   <ItemDefinitionGroup>
     <SlangShader>
       <Profile>spirv_1_5</Profile>
+      <!-- Variants of one source file: appended to the output name, and preprocessor defines -->
+      <Suffix></Suffix>
+      <Defines></Defines>
     </SlangShader>
   </ItemDefinitionGroup>
   <!-- Optional: NVIDIA DLSS Ray Reconstruction. Enabled automatically when the DLSS SDK has been
@@ -375,10 +386,10 @@
   </ImportGroup>
   <!-- Compiles the Slang shaders with the Vulkan SDK's slangc. Incremental: a shader is only
        rebuilt when it, or one of the shared SlangInclude files, is newer than its .spv output. -->
-  <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);@(SlangInclude)" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename).spv')">
+  <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);@(SlangInclude)" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename)%(Suffix).spv')">
     <Error Condition="'$(VULKAN_SDK)' == ''" Text="The VULKAN_SDK environment variable is not set. Install the Vulkan SDK (it provides the headers, SDL2, glm and the slangc shader compiler)." />
-    <Message Importance="high" Text="slangc %(SlangShader.Identity)" />
-    <Exec Command="&quot;$(VULKAN_SDK)\Bin\slangc.exe&quot; &quot;%(SlangShader.FullPath)&quot; -stage %(SlangShader.Stage) -entry main -profile %(SlangShader.Profile) -target spirv -o &quot;$(ProjectDir)Shaders\%(SlangShader.Filename).spv&quot;" />
+    <Message Importance="high" Text="slangc %(SlangShader.Identity) %(SlangShader.Defines)" />
+    <Exec Command="&quot;$(VULKAN_SDK)\Bin\slangc.exe&quot; &quot;%(SlangShader.FullPath)&quot; -stage %(SlangShader.Stage) -entry main -profile %(SlangShader.Profile) %(SlangShader.Defines) -target spirv -o &quot;$(ProjectDir)Shaders\%(SlangShader.Filename)%(SlangShader.Suffix).spv&quot;" />
   </Target>
   <!-- NGX loads the Ray Reconstruction model from the executable's folder -->
   <Target Name="CopyDlssRuntime" AfterTargets="Build" Condition="'$(FoxEnableDlss)'=='true'">

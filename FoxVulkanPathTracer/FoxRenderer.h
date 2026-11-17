@@ -87,6 +87,7 @@
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/DeviceContext.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ComputePass.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/GpuProfiler.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/GBuffer.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/Denoiser.h"

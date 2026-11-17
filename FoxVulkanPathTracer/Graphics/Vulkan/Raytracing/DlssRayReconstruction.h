@@ -15,8 +15,9 @@ namespace Fox {
 			namespace RayTracing {
 
 				// NVIDIA DLSS Ray Reconstruction (DLSS-RR): a neural network that denoises and anti-aliases
-				// the path traced image in one step, guided by the G-buffer. Runs in DLAA mode (output
-				// resolution = render resolution) with the newest transformer model (render preset F).
+				// the path traced image in one step, guided by the G-buffer, and upscales it from the render
+				// resolution to the display resolution (DLAA when both are equal). Uses the newest transformer
+				// model (render preset F).
 				//
 				// Only compiled when the DLSS SDK is present in ThirdParty/DLSS (see the readme). At runtime it
 				// needs an RTX GPU, a current driver and nvngx_dlssd.dll next to the executable; if any of that
@@ -31,7 +32,7 @@ namespace Fox {
 
 					const char* GetName() const override { return "DLSS Ray Reconstruction"; }
 
-					void Resize(const GBuffer& gbuffer) override;
+					void Resize(const GBuffer& gbuffer, const OutputSettings& output) override;
 					void Denoise(CommandList& commandList, const DenoiserFrameInfo& frame) override;
 
 					VkImageView GetOutputView() const override { return output->GetView(); }
@@ -48,7 +49,8 @@ namespace Fox {
 
 					DeviceContext context;
 					const GBuffer* gbuffer = nullptr;
-					VkExtent2D extent{};
+					VkExtent2D extent{};       // Render resolution (G-buffer)
+					VkExtent2D outputExtent{}; // Display resolution (reconstructed image)
 
 					NVSDK_NGX_Parameter* parameters = nullptr;
 					NVSDK_NGX_Handle* feature = nullptr;

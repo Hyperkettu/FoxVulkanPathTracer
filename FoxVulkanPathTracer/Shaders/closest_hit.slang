@@ -79,8 +79,9 @@ float2 TransformUV(float2 uv, Material material)
 [shader("closesthit")]
 void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    // The instance's custom index is the submesh index (see RayTracingScene::UploadGeometry)
-    Submesh submesh = gAllSubmeshes[InstanceID()];
+    // Each submesh is one geometry of its acceleration structure, and the instance's custom index is the
+    // index of its first submesh (see RayTracingScene::UploadGeometry)
+    Submesh submesh = gAllSubmeshes[InstanceID() + GeometryIndex()];
     Material material = gAllMaterials[submesh.materialIndex];
 
     uint baseIndex = submesh.indexOffset + PrimitiveIndex() * 3;
