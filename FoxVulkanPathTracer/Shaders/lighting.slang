@@ -33,7 +33,6 @@ struct EnvironmentCell
 };
 
 [[vk::binding(0, 1)]] ConstantBuffer<Environment> environment;
-[[vk::binding(1, 1)]] Sampler2D gTextures[];
 [[vk::binding(12, 0)]] StructuredBuffer<EnvironmentCell> gEnvironmentTable;
 
 // Equirectangular mapping: +Y is the top row of the map.

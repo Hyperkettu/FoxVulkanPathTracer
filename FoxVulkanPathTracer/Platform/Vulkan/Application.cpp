@@ -125,7 +125,9 @@ namespace Fox {
 							running = false;
 						}
 
-						inputManager->ProcessEvent(e);
+						if (!currentRHI->HandleEvent(e)) {
+							inputManager->ProcessEvent(e);
+						}
 					}
 
 					const auto now = Clock::now();

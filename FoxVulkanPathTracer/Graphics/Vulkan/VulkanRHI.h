@@ -19,6 +19,7 @@ namespace Fox {
 				void Resize(uint32_t width, uint32_t height) override;
 
 				void RegisterInput(Fox::Input::InputManager& input) override;
+				bool HandleEvent(const SDL_Event& event) override;
 
 			private:
 				// --- Device setup ---
@@ -58,6 +59,12 @@ namespace Fox {
 				glm::vec2 MouseInDisplayPixels() const;
 				Fox::Editor::TransformGizmo::View GizmoView() const;
 				void ReadPickResult(uint32_t frameSlot);
+
+				// --- User interface (Dear ImGui) ---
+				void InitializeUserInterface();
+				void BuildUserInterface();  // This frame's windows (the tree editor in edit mode)
+				void ApplySceneChanges();   // Rebuilds what the editor changed (waits for the GPU)
+				void RefreshTextureDescriptors();
 
 			private:
 				Fox::Graphics::RendererConfig config;
@@ -99,6 +106,7 @@ namespace Fox {
 				std::vector<std::string> optionalInstanceExtensions;
 				std::vector<std::string> optionalDeviceExtensions;
 				bool shaderExecutionReordering = false; // VK_NV_ray_tracing_invocation_reorder enabled
+				bool opacityMicromaps = false;          // VK_EXT_opacity_micromap enabled
 				bool vsync = true; // V key
 				std::unique_ptr<Fox::Graphics::Vulkan::PostProcessor> postProcessor;
 
@@ -137,6 +145,10 @@ namespace Fox {
 				Fox::Core::Connection mouseButtonReleaseBind;
 
 				// --- Editing ---
+				bool userInterface = false;      // ImGui is initialized
+				float uiScale = 0.0f;            // Sizes scale with the window height
+				Fox::Editor::TreeEditor treeEditor;
+				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written
 				bool editMode = false;
 				Fox::Editor::TransformGizmo gizmo;
 				std::unique_ptr<OverlayRenderer> overlay;

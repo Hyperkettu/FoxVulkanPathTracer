@@ -11,6 +11,7 @@ namespace Fox {
             PFN_vkCmdBuildAccelerationStructuresKHR Fox::Scene::RayTracing::RayTracingScene::vkCmdBuildAccelerationStructuresKHR;
             PFN_vkGetAccelerationStructureDeviceAddressKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureDeviceAddressKHR;
             PFN_vkGetAccelerationStructureBuildSizesKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureBuildSizesKHR;
+            bool Fox::Scene::RayTracing::RayTracingScene::opacityMicromapsEnabled = false;
 
             void CreateScratchBuffer(
                 VkDevice device,
@@ -91,6 +92,11 @@ namespace Fox {
                     vkFreeMemory(device, topLevelAccelerationStructure.memory, nullptr);
                 }
 
+                if (dynamicScratchBuffer != VK_NULL_HANDLE) {
+                    vkDestroyBuffer(device, dynamicScratchBuffer, nullptr);
+                    vkFreeMemory(device, dynamicScratchMemory, nullptr);
+                }
+
                 // Destroy BLASes
                 for (auto& blas : bottomLevelAccelerationStructure)
                 {
@@ -142,10 +148,17 @@ namespace Fox {
                         .indexData = { indexAddress }
                     };
 
+                    // Alpha tested surfaces are not opaque: rays run the any-hit shader on them, except where an
+                    // opacity micromap already knows the answer
+                    const bool alphaTested = materials[submesh.materialIndex].IsAlphaTested();
+                    if (auto opacity = opacityGeometries.find(i); opacity != opacityGeometries.end()) {
+                        triangles.pNext = &opacity->second->info;
+                    }
+
                     VkAccelerationStructureGeometryKHR geometry{
                         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
                         .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
-                        .flags = VK_GEOMETRY_OPAQUE_BIT_KHR
+                        .flags = alphaTested ? VkGeometryFlagsKHR(0) : VkGeometryFlagsKHR(VK_GEOMETRY_OPAQUE_BIT_KHR)
                     };
                     geometry.geometry.triangles = triangles;
 
@@ -349,11 +362,13 @@ namespace Fox {
                     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR
                 };
 
+                // Sized for the most instances there can be: dynamic meshes come and go, the structure stays
+                const uint32_t maxInstances = MAX_INSTANCES;
                 vkGetAccelerationStructureBuildSizesKHR(
                     device,
                     VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
                     &buildInfo,
-                    &instanceCount,
+                    &maxInstances,
                     &sizeInfo);
 
                 CreateAccelerationStructure(
@@ -615,7 +630,7 @@ namespace Fox {
                 return result;
             }
 
-            size_t RayTracingScene::AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const Fox::Graphics::Vulkan::Material& material,
+            size_t RayTracingScene::AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const std::vector<Fox::Graphics::Vulkan::Material>& meshMaterials,
                 const glm::mat4& transform, const std::string& name) {
                 SkinnedRecord skinned;
                 skinned.firstVertex = vertexOffset;
@@ -647,14 +662,142 @@ namespace Fox {
                     bindPose.push_back(skinVertex);
                 }
 
-                AddGeneratedSurface(mesh.vertices, mesh.indices, material, transform, name, true);
-                meshRecords.back().dynamic = true;
-                submeshes.back().previousPositions = skinned.firstSkinVertex + 1;
+                // One submesh per part, all over the mesh's vertex range (the shaders index vertices scene-wide)
+                std::vector<Fox::Graphics::Geometry::SkinnedMesh::Part> parts = mesh.parts;
+                if (parts.empty()) {
+                    parts.push_back({ 0, static_cast<uint32_t>(mesh.indices.size()), 0 });
+                }
+
+                MeshRecord record;
+                record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
+                record.dynamic = true;
+                for (const auto& part : parts) {
+                    const Fox::Graphics::Vulkan::Material& material = meshMaterials.at(part.material);
+                    if (KindOf(material) != Opaque) {
+                        throw std::runtime_error("Skinned meshes support opaque and alpha tested materials only");
+                    }
+
+                    Fox::Graphics::Vulkan::Submesh submesh{};
+                    submesh.vertexOffset = vertexOffset;
+                    submesh.vertexCount = skinned.vertexCount;
+                    submesh.indexOffset = indexOffset + part.firstIndex;
+                    submesh.indexCount = part.indexCount;
+                    submesh.materialIndex = materialOffset + part.material;
+                    submesh.previousPositions = skinned.firstSkinVertex + 1;
+                    submeshes.push_back(submesh);
+                    record.count[Opaque]++;
+                }
+
+                vertices.insert(vertices.end(), mesh.vertices.begin(), mesh.vertices.end());
+                for (uint32_t index : mesh.indices) {
+                    indices.push_back(vertexOffset + index);
+                }
+                for (Fox::Graphics::Vulkan::Material material : meshMaterials) {
+                    material.lightIndex = -1;
+                    materials.push_back(material);
+                }
+
+                vertexOffset += skinned.vertexCount;
+                indexOffset += static_cast<uint32_t>(mesh.indices.size());
+                materialOffset += static_cast<uint32_t>(meshMaterials.size());
+                meshRecords.push_back(record);
+
+                Placement placement;
+                placement.record = meshRecords.size() - 1;
+                placement.transform = Decompose(transform);
+                placement.name = name;
+                placements.push_back(std::move(placement));
 
                 skinned.object = placements.size() - 1;
                 skinned.record = meshRecords.size() - 1;
                 skinnedMeshes.push_back(std::move(skinned));
                 return skinnedMeshes.size() - 1;
+            }
+
+            void RayTracingScene::BuildOpacityMicromaps(uint32_t firstSubmesh, OpacityMicromapSet& set) {
+                set = OpacityMicromapSet{};
+                if (!opacityMicromapsEnabled || alphaMasks.empty()) {
+                    return;
+                }
+
+                // The texture coordinates the shaders use (KHR_texture_transform, as in TransformUV)
+                auto transformedUV = [](const Fox::Graphics::Vulkan::Vertex& vertex, const Fox::Graphics::Vulkan::Material& material) {
+                    glm::vec2 uv = glm::vec2(vertex.uv[0], vertex.uv[1]) * glm::vec2(material.uvScale[0], material.uvScale[1]);
+                    if (material.uvRotation != 0.0f) {
+                        const float s = std::sin(material.uvRotation), c = std::cos(material.uvRotation);
+                        uv = glm::vec2(c * uv.x + s * uv.y, -s * uv.x + c * uv.y);
+                    }
+                    return uv;
+                };
+
+                set.micromaps = std::make_unique<Fox::Graphics::Vulkan::RayTracing::OpacityMicromapBuilder>();
+
+                struct Pending { uint32_t submesh; size_t firstIndex; std::map<uint32_t, uint32_t> perLevel; };
+                std::vector<Pending> pending;
+                std::vector<int32_t> micromapIndices; // Per triangle of every alpha tested submesh
+                size_t triangleCount = 0;
+
+                const auto start = std::chrono::steady_clock::now();
+                for (uint32_t s = firstSubmesh; s < submeshes.size(); s++) {
+                    const auto& submesh = submeshes[s];
+                    const auto& material = materials[submesh.materialIndex];
+                    const auto mask = alphaMasks.find(material.baseColorTexture);
+                    if (!material.IsAlphaTested() || mask == alphaMasks.end()) {
+                        continue;
+                    }
+
+                    Pending entry{ s, micromapIndices.size(), {} };
+                    for (uint32_t t = 0; t + 2 < submesh.indexCount; t += 3) {
+                        const uint32_t base = submesh.indexOffset + t;
+                        const int32_t index = set.micromaps->AddTriangle(mask->second, material.baseColor[3], material.alphaCutoff,
+                            transformedUV(vertices[indices[base + 0]], material),
+                            transformedUV(vertices[indices[base + 1]], material),
+                            transformedUV(vertices[indices[base + 2]], material));
+                        micromapIndices.push_back(index);
+                        if (index >= 0) {
+                            entry.perLevel[set.micromaps->LevelOf(index)]++;
+                        }
+                    }
+                    triangleCount += submesh.indexCount / 3;
+                    pending.push_back(std::move(entry));
+                }
+
+                if (set.micromaps->EntryCount() == 0) {
+                    set.micromaps = nullptr;
+                    return;
+                }
+
+                const VkCommandPool pool = commandPool->Get();
+                set.micromaps->Build(device, physicalDevice, pool, queue);
+
+                // Which micromap entry each triangle uses, read by the acceleration structure builds (and refits)
+                set.indexBuffer = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(int32_t) * micromapIndices.size(),
+                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                std::memcpy(set.indexBuffer->Map(), micromapIndices.data(), sizeof(int32_t) * micromapIndices.size());
+                set.indexBuffer->Unmap();
+                const VkDeviceAddress indexAddress = GetBufferAddress(set.indexBuffer->Get());
+
+                for (const Pending& entry : pending) {
+                    auto geometry = std::make_unique<OpacityGeometry>();
+                    for (const auto& [level, count] : entry.perLevel) {
+                        geometry->usage.push_back({ count, level, VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT });
+                    }
+
+                    geometry->info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT;
+                    geometry->info.indexType = VK_INDEX_TYPE_UINT32;
+                    geometry->info.indexBuffer.deviceAddress = indexAddress + sizeof(int32_t) * entry.firstIndex;
+                    geometry->info.indexStride = sizeof(int32_t);
+                    geometry->info.baseTriangle = 0;
+                    geometry->info.usageCountsCount = static_cast<uint32_t>(geometry->usage.size());
+                    geometry->info.pUsageCounts = geometry->usage.data();
+                    geometry->info.micromap = set.micromaps->Get();
+                    opacityGeometries[entry.submesh] = std::move(geometry);
+                }
+
+                const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+                std::cout << "Opacity micromaps: " << triangleCount << " triangles, " << set.micromaps->EntryCount() << " entries ("
+                    << set.micromaps->DataSize() / 1024 << " KiB), " << seconds << " s\n";
             }
 
             void RayTracingScene::SetJointMatrices(size_t skinnedMesh, const std::vector<glm::mat4>& skinMatrices) {
@@ -769,8 +912,9 @@ namespace Fox {
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, 1, &beforeWrite, 0, nullptr, 0, nullptr);
 
-                if (motionSize > 0 && motionSize <= 65536) {
-                    vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), 0, motionSize, motion.data());
+                for (VkDeviceSize done = 0; done < motionSize; done += 65536) {
+                    vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), done, std::min<VkDeviceSize>(65536, motionSize - done),
+                        reinterpret_cast<const uint8_t*>(motion.data()) + done);
                 }
                 if (uploadLights) {
                     vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), 0, lightsSize, lights.data());
@@ -823,7 +967,7 @@ namespace Fox {
                 auto& instanceData = frameInstanceBuffers[frameSlot];
                 const VkDeviceSize instancesSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
                 if (!instanceData) {
-                    instanceData = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, instancesSize,
+                    instanceData = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(VkAccelerationStructureInstanceKHR) * MAX_INSTANCES,
                         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
@@ -1004,6 +1148,25 @@ namespace Fox {
                     lights.push_back(Fox::Graphics::Vulkan::Light{});
                 }
 
+                // What is here now is the static scene; dynamic meshes (RebuildDynamicMeshes) go after it
+                staticCounts.vertices = static_cast<uint32_t>(vertices.size());
+                staticCounts.indices = static_cast<uint32_t>(indices.size());
+                staticCounts.submeshes = static_cast<uint32_t>(submeshes.size());
+                staticCounts.materials = static_cast<uint32_t>(materials.size());
+                staticCounts.records = meshRecords.size();
+                staticCounts.placements = placements.size();
+                staticCounts.skinnedMeshes = skinnedMeshes.size();
+                staticCounts.bindPose = bindPose.size();
+                staticCounts.joints = jointCount;
+
+                if (submeshes.size() > MAX_SUBMESHES || materials.size() > MAX_MATERIALS) {
+                    throw std::runtime_error("The static scene has more submeshes or materials than the scene buffers hold");
+                }
+
+                // Buffers with room for the dynamic meshes. The arrays grow for the upload (zeros) and shrink back.
+                vertices.resize(staticCounts.vertices + DYNAMIC_VERTEX_CAPACITY);
+                indices.resize(staticCounts.indices + DYNAMIC_INDEX_CAPACITY);
+
                 // Acceleration structure build inputs
                 auto vertexBuffer = std::make_unique<Fox::Graphics::Vulkan::VertexBuffer>();
                 vertexBuffer->Create(device, physicalDevice, commandPool->Get(), queue, vertices, "Raytracing Vertex Buffer");
@@ -1018,12 +1181,27 @@ namespace Fox {
                 const VkCommandPool pool = commandPool->Get();
                 vertexSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Vertex SSBO", vertices);
                 indexSSBO = ShaderStorageBuffer<uint32_t>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Index SSBO", indices);
-                submeshSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Submesh SSBO", submeshes);
-                materialsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Materials", materials);
+
+                vertices.resize(staticCounts.vertices);
+                vertices.shrink_to_fit();
+                indices.resize(staticCounts.indices);
+                indices.shrink_to_fit();
+
+                std::vector<Fox::Graphics::Vulkan::Submesh> submeshCapacity = submeshes;
+                submeshCapacity.resize(MAX_SUBMESHES);
+                submeshSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Submesh>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Submesh SSBO", submeshCapacity);
+
+                std::vector<Fox::Graphics::Vulkan::Material> materialCapacity = materials;
+                materialCapacity.resize(MAX_MATERIALS);
+                materialsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Materials", materialCapacity);
+
                 lightsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Lights", lights);
 
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
+
+                // Opacity micromaps for alpha tested surfaces: before the BLAS, which reference them
+                BuildOpacityMicromaps(0, staticMicromaps);
 
                 // One BLAS per mesh and surface kind, shared by all placements of the mesh. Each submesh is one
                 // geometry of its BLAS: the closest hit shader finds the submesh as InstanceID() + GeometryIndex(),
@@ -1035,23 +1213,15 @@ namespace Fox {
                         }
                     }
                 }
+                staticCounts.blas = bottomLevelAccelerationStructure.size();
 
-                const uint32_t masks[SurfaceKindCount] = { INSTANCE_MASK_OPAQUE, INSTANCE_MASK_GLASS, INSTANCE_MASK_SOLID_GLASS };
                 for (size_t p = 0; p < placements.size(); p++) {
-                    Placement& placement = placements[p];
-                    const MeshRecord& record = meshRecords[placement.record];
-                    placement.previousMatrix = placement.transform.Matrix();
-                    for (int kind = 0; kind < SurfaceKindCount; kind++) {
-                        if (record.blas[kind] >= 0) {
-                            placement.instances.push_back(static_cast<uint32_t>(instances.size()));
-                            instancePlacements.push_back(static_cast<uint32_t>(p));
-                            AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), masks[kind]);
-                        }
-                    }
+                    AddPlacementInstances(p);
                 }
+                staticCounts.instances = instances.size();
 
-                // No motion yet: identity for every instance
-                std::vector<InstanceMotion> identity(std::max<size_t>(instances.size(), 1));
+                // No motion yet: identity for every instance (room for all the instances there can be)
+                std::vector<InstanceMotion> identity(MAX_INSTANCES);
                 for (InstanceMotion& motion : identity) {
                     motion.rows[0] = glm::vec4(1, 0, 0, 0);
                     motion.rows[1] = glm::vec4(0, 1, 0, 0);
@@ -1059,30 +1229,269 @@ namespace Fox {
                 }
                 instanceMotionSSBO = ShaderStorageBuffer<InstanceMotion>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Instance Motion", identity);
 
-                // Skinning: bind pose and joints as inputs, the previous positions start out at the bind pose.
-                // The buffers exist (with one unused entry) even without skinned meshes: shaders bind them.
-                std::vector<glm::vec4> previous;
-                previous.reserve(std::max<size_t>(bindPose.size(), 1));
-                for (const SkinVertex& vertex : bindPose) {
-                    previous.emplace_back(vertex.position[0], vertex.position[1], vertex.position[2], 1.0f);
-                }
-                if (previous.empty()) {
-                    previous.emplace_back(0.0f);
+                // Skinning: the previous positions start out at the bind pose. Room for every skinned vertex there
+                // can be; the shaders bind it even without skinned meshes.
+                std::vector<glm::vec4> previous(std::max<size_t>(bindPose.size(), 1) + DYNAMIC_VERTEX_CAPACITY, glm::vec4(0.0f));
+                for (size_t i = 0; i < bindPose.size(); i++) {
+                    previous[i] = glm::vec4(bindPose[i].position[0], bindPose[i].position[1], bindPose[i].position[2], 1.0f);
                 }
                 previousPositionsSSBO = ShaderStorageBuffer<glm::vec4>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Previous Skinned Positions", previous);
 
-                if (!skinnedMeshes.empty()) {
-                    std::vector<JointMatrix> joints;
-                    for (const SkinnedRecord& skinned : skinnedMeshes) {
-                        joints.insert(joints.end(), skinned.joints.begin(), skinned.joints.end());
+                CreateSkinningResources();
+            }
+
+            void RayTracingScene::AddPlacementInstances(size_t p) {
+                const uint32_t masks[SurfaceKindCount] = { INSTANCE_MASK_OPAQUE, INSTANCE_MASK_GLASS, INSTANCE_MASK_SOLID_GLASS };
+                Placement& placement = placements[p];
+                const MeshRecord& record = meshRecords[placement.record];
+                placement.previousMatrix = placement.transform.Matrix();
+                placement.instances.clear();
+                for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                    if (record.blas[kind] >= 0) {
+                        placement.instances.push_back(static_cast<uint32_t>(instances.size()));
+                        instancePlacements.push_back(static_cast<uint32_t>(p));
+                        AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), masks[kind]);
+                    }
+                }
+            }
+
+            void RayTracingScene::CreateSkinningResources() {
+                skinningPass = nullptr;
+                bindPoseSSBO = nullptr;
+                jointsSSBO = nullptr;
+                if (skinnedMeshes.empty()) {
+                    return;
+                }
+
+                std::vector<JointMatrix> joints;
+                for (const SkinnedRecord& skinned : skinnedMeshes) {
+                    joints.insert(joints.end(), skinned.joints.begin(), skinned.joints.end());
+                }
+
+                using Fox::Graphics::Vulkan::ShaderStorageBuffer;
+                const VkCommandPool pool = commandPool->Get();
+                bindPoseSSBO = ShaderStorageBuffer<SkinVertex>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Skin Bind Pose", bindPose);
+                jointsSSBO = ShaderStorageBuffer<JointMatrix>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Joint Matrices", joints);
+                skinningPass = std::make_unique<Fox::Graphics::Vulkan::RayTracing::SkinningPass>(device,
+                    bindPoseSSBO->GetBufferUnique(), jointsSSBO->GetBufferUnique(), vertexSSBO->GetBufferUnique(),
+                    vertexBuffers.back(), previousPositionsSSBO->GetBufferUnique());
+            }
+
+            void RayTracingScene::DestroyBLAS(BottomLevelAccelerationStructure& blas) {
+                if (blas.handle != VK_NULL_HANDLE) {
+                    vkDestroyAccelerationStructureKHR(device, blas.handle, nullptr);
+                    blas.handle = VK_NULL_HANDLE;
+                }
+                if (blas.buffer != VK_NULL_HANDLE) {
+                    vkDestroyBuffer(device, blas.buffer, nullptr);
+                    blas.buffer = VK_NULL_HANDLE;
+                }
+                if (blas.memory != VK_NULL_HANDLE) {
+                    vkFreeMemory(device, blas.memory, nullptr);
+                    blas.memory = VK_NULL_HANDLE;
+                }
+            }
+
+            void RayTracingScene::BuildDynamicBLAS(size_t first) {
+                if (first >= bottomLevelAccelerationStructure.size()) {
+                    return;
+                }
+
+                // Sizes, and scratch memory for building them and for refitting them every frame
+                VkDeviceSize scratchSize = 0;
+                for (size_t i = first; i < bottomLevelAccelerationStructure.size(); i++) {
+                    BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[i];
+                    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                        .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                        .flags = BlasBuildFlags(blas),
+                        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                        .geometryCount = uint32_t(blas.geometries.size()),
+                        .pGeometries = blas.geometries.data()
+                    };
+                    VkAccelerationStructureBuildSizesInfoKHR sizeInfo{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+                    vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, blas.primitiveCounts.data(), &sizeInfo);
+                    scratchSize = std::max({ scratchSize, sizeInfo.buildScratchSize, blas.dynamic ? sizeInfo.updateScratchSize : VkDeviceSize(0) });
+                    CreateAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizeInfo.accelerationStructureSize, blas.handle, blas.buffer, blas.memory);
+                }
+
+                if (scratchSize > dynamicScratchSize) {
+                    if (dynamicScratchBuffer != VK_NULL_HANDLE) {
+                        vkDestroyBuffer(device, dynamicScratchBuffer, nullptr);
+                        vkFreeMemory(device, dynamicScratchMemory, nullptr);
+                    }
+                    CreateScratchBuffer(device, physicalDevice, scratchSize, dynamicScratchBuffer, dynamicScratchMemory, "Dynamic BLAS Scratch");
+                    dynamicScratchSize = scratchSize;
+                }
+                const VkDeviceAddress scratchAddress = GetBufferAddress(dynamicScratchBuffer);
+                blasScratchAddress = scratchAddress; // The refits of skinned meshes use it too
+
+                Fox::Graphics::Vulkan::CommandList commandList(device, commandPool->Get());
+                commandList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+                for (size_t i = first; i < bottomLevelAccelerationStructure.size(); i++) {
+                    BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[i];
+                    VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                        .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                        .flags = BlasBuildFlags(blas),
+                        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                        .dstAccelerationStructure = blas.handle,
+                        .geometryCount = uint32_t(blas.geometries.size()),
+                        .pGeometries = blas.geometries.data(),
+                        .scratchData = {.deviceAddress = scratchAddress }
+                    };
+                    const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { blas.ranges.data() };
+                    vkCmdBuildAccelerationStructuresKHR(commandList.Get(), 1, &buildInfo, ranges);
+
+                    // The next build reuses the scratch memory
+                    VkMemoryBarrier barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                    vkCmdPipelineBarrier(commandList.Get(), VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        0, 1, &barrier, 0, nullptr, 0, nullptr);
+                }
+                commandList.End().SubmitAndWait(queue);
+
+                for (size_t i = first; i < bottomLevelAccelerationStructure.size(); i++) {
+                    BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[i];
+                    VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
+                        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+                        .accelerationStructure = blas.handle
+                    };
+                    blas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(device, &addressInfo);
+                }
+            }
+
+            std::vector<RayTracingScene::DynamicMeshHandle> RayTracingScene::RebuildDynamicMeshes(const std::vector<DynamicMesh>& meshes) {
+                // --- Does it fit? Checked before anything changes ---
+                size_t vertexCount = 0, indexCount = 0, partCount = 0, materialCount = 0;
+                for (const DynamicMesh& entry : meshes) {
+                    vertexCount += entry.mesh->vertices.size();
+                    indexCount += entry.mesh->indices.size();
+                    partCount += std::max<size_t>(entry.mesh->parts.size(), 1);
+                    materialCount += entry.materials.size();
+                }
+                if (vertexCount > DYNAMIC_VERTEX_CAPACITY || indexCount > DYNAMIC_INDEX_CAPACITY) {
+                    throw std::runtime_error("Too much geometry for the room reserved for dynamic meshes (" + std::to_string(vertexCount) + " vertices, "
+                        + std::to_string(indexCount / 3) + " triangles)");
+                }
+                if (staticCounts.submeshes + partCount > MAX_SUBMESHES || staticCounts.materials + materialCount > MAX_MATERIALS
+                    || staticCounts.instances + meshes.size() > MAX_INSTANCES) {
+                    throw std::runtime_error("Too many dynamic meshes, parts or materials");
+                }
+
+                // --- Back to the static scene ---
+                for (size_t i = staticCounts.blas; i < bottomLevelAccelerationStructure.size(); i++) {
+                    DestroyBLAS(bottomLevelAccelerationStructure[i]);
+                }
+                bottomLevelAccelerationStructure.resize(staticCounts.blas);
+
+                for (auto it = opacityGeometries.begin(); it != opacityGeometries.end();) {
+                    it = it->first >= staticCounts.submeshes ? opacityGeometries.erase(it) : std::next(it);
+                }
+                dynamicMicromaps = OpacityMicromapSet{};
+
+                vertices.resize(staticCounts.vertices);
+                indices.resize(staticCounts.indices);
+                submeshes.resize(staticCounts.submeshes);
+                materials.resize(staticCounts.materials);
+                meshRecords.resize(staticCounts.records);
+                placements.resize(staticCounts.placements);
+                skinnedMeshes.resize(staticCounts.skinnedMeshes);
+                bindPose.resize(staticCounts.bindPose);
+                jointCount = staticCounts.joints;
+                instances.resize(staticCounts.instances);
+                instanceBlasIndices.resize(staticCounts.instances);
+                instancePlacements.resize(staticCounts.instances);
+                vertexOffset = staticCounts.vertices;
+                indexOffset = staticCounts.indices;
+                materialOffset = staticCounts.materials;
+
+                // --- The new meshes ---
+                std::vector<DynamicMeshHandle> handles;
+                for (const DynamicMesh& entry : meshes) {
+                    DynamicMeshHandle handle;
+                    handle.skinnedMesh = AddSkinnedMesh(*entry.mesh, entry.materials, entry.transform.Matrix(), entry.name);
+                    handle.object = GetObjectOfSkinnedMesh(handle.skinnedMesh);
+                    placements[handle.object].transform = entry.transform; // Exactly, not decomposed from the matrix
+                    handles.push_back(handle);
+                }
+
+                // --- Upload what changed, in one go ---
+                {
+                    struct Upload { VkBuffer target; VkDeviceSize offset; const void* data; VkDeviceSize size; };
+                    std::vector<Upload> uploads;
+                    const VkDeviceSize vertexBytes = sizeof(Fox::Graphics::Vulkan::Vertex) * (vertices.size() - staticCounts.vertices);
+                    const VkDeviceSize vertexOffsetBytes = sizeof(Fox::Graphics::Vulkan::Vertex) * staticCounts.vertices;
+                    const VkDeviceSize indexBytes = sizeof(uint32_t) * (indices.size() - staticCounts.indices);
+                    const VkDeviceSize indexOffsetBytes = sizeof(uint32_t) * staticCounts.indices;
+
+                    std::vector<glm::vec4> previous(bindPose.size() - staticCounts.bindPose);
+                    for (size_t i = 0; i < previous.size(); i++) {
+                        const SkinVertex& vertex = bindPose[staticCounts.bindPose + i];
+                        previous[i] = glm::vec4(vertex.position[0], vertex.position[1], vertex.position[2], 1.0f);
                     }
 
-                    bindPoseSSBO = ShaderStorageBuffer<SkinVertex>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Skin Bind Pose", bindPose);
-                    jointsSSBO = ShaderStorageBuffer<JointMatrix>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Joint Matrices", joints);
-                    skinningPass = std::make_unique<Fox::Graphics::Vulkan::RayTracing::SkinningPass>(device,
-                        bindPoseSSBO->GetBufferUnique(), jointsSSBO->GetBufferUnique(), vertexSSBO->GetBufferUnique(),
-                        vertexBuffers.back(), previousPositionsSSBO->GetBufferUnique());
+                    if (vertexBytes > 0) {
+                        uploads.push_back({ vertexSSBO->GetBuffer().Get(), vertexOffsetBytes, vertices.data() + staticCounts.vertices, vertexBytes });
+                        uploads.push_back({ vertexBuffers.back()->Get(), vertexOffsetBytes, vertices.data() + staticCounts.vertices, vertexBytes });
+                    }
+                    if (indexBytes > 0) {
+                        uploads.push_back({ indexSSBO->GetBuffer().Get(), indexOffsetBytes, indices.data() + staticCounts.indices, indexBytes });
+                        uploads.push_back({ indexBuffers.back()->Get(), indexOffsetBytes, indices.data() + staticCounts.indices, indexBytes });
+                    }
+                    uploads.push_back({ submeshSSBO->GetBuffer().Get(), 0, submeshes.data(), sizeof(Fox::Graphics::Vulkan::Submesh) * submeshes.size() });
+                    uploads.push_back({ materialsSSBO->GetBuffer().Get(), 0, materials.data(), sizeof(Fox::Graphics::Vulkan::Material) * materials.size() });
+                    if (!previous.empty()) {
+                        uploads.push_back({ previousPositionsSSBO->GetBuffer().Get(), sizeof(glm::vec4) * staticCounts.bindPose, previous.data(), sizeof(glm::vec4) * previous.size() });
+                    }
+
+                    VkDeviceSize total = 0;
+                    for (const Upload& upload : uploads) {
+                        total += upload.size;
+                    }
+                    Fox::Graphics::Vulkan::Buffer staging(device, physicalDevice, std::max<VkDeviceSize>(total, 4), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                    uint8_t* mapped = static_cast<uint8_t*>(staging.Map());
+
+                    Fox::Graphics::Vulkan::CommandList commandList(device, commandPool->Get());
+                    commandList.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+                    VkDeviceSize at = 0;
+                    for (const Upload& upload : uploads) {
+                        std::memcpy(mapped + at, upload.data, upload.size);
+                        commandList.CopyBuffer(staging.Get(), upload.target, { VkBufferCopy{ at, upload.offset, upload.size } });
+                        at += upload.size;
+                    }
+                    staging.Unmap();
+                    commandList.End().SubmitAndWait(queue);
                 }
+
+                CreateSkinningResources();
+
+                // --- Opacity micromaps, then the bottom level structures that use them ---
+                BuildOpacityMicromaps(staticCounts.submeshes, dynamicMicromaps);
+
+                const VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
+                const VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
+                for (size_t r = staticCounts.records; r < meshRecords.size(); r++) {
+                    MeshRecord& record = meshRecords[r];
+                    for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                        if (record.count[kind] > 0) {
+                            record.blas[kind] = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.FirstOf(kind), record.count[kind], record.dynamic));
+                        }
+                    }
+                }
+                BuildDynamicBLAS(staticCounts.blas);
+
+                // --- Instances; the top level structure is rebuilt with the next frame ---
+                for (size_t p = staticCounts.placements; p < placements.size(); p++) {
+                    AddPlacementInstances(p);
+                }
+                for (size_t i = staticCounts.instances; i < instances.size(); i++) {
+                    instances[i].accelerationStructureReference = bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
+                }
+                tlasDirty = true;
+
+                return handles;
             }
 
             void RayTracingScene::TransformVertices(uint32_t first, uint32_t count, const glm::mat4& toWorld) {

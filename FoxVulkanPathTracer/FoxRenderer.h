@@ -24,6 +24,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+// Dear ImGui (ThirdParty/imgui): the editor windows
+#include "imgui.h"
+#include "backends/imgui_impl_sdl2.h"
+#include "backends/imgui_impl_vulkan.h"
+
 #include "STB_image/stb_image.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Util.h"
@@ -50,6 +55,7 @@
 #include "FoxVulkanPathTracer/Graphics/Geometry/Submesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/Vulkan/Mesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/SkinnedMesh.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/Spline.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/TreeGenerator.h"
 #include "FoxVulkanPathTracer/Animation/WindSkeleton.h"
 
@@ -63,6 +69,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/ShaderStorageBuffer.h"
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/OpacityMicromap.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"
@@ -113,8 +120,10 @@
 
 #include "FoxVulkanPathTracer/Scene/Scene.h"
 #include "FoxVulkanPathTracer/Scene/MainScene.h"
+#include "FoxVulkanPathTracer/Scene/TextureLibrary.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
+#include "FoxVulkanPathTracer/Editor/TreeEditor.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 

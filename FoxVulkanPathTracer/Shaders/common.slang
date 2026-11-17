@@ -81,13 +81,73 @@ struct Material
 
     int occlusionTexture;     // Red channel
     float occlusionStrength;
-    float padding0;
+    float alphaCutoff;        // > 0: alpha tested (leaves), surfaces where base colour alpha < this are holes
     float padding1;
 };
+
+// Mirrors Fox::Graphics::Vulkan::Vertex (Vertex.h)
+struct Vertex
+{
+    float4 position;
+    float4 normal;
+    float2 uv;
+    float2 padding;
+    float4 tangent; // xyz + handedness, all zero if the mesh has no tangents
+};
+
+[[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
+[[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
+
+// Every texture of the scene (bindless)
+[[vk::binding(1, 1)]] Sampler2D gTextures[];
+
+float4 SampleTexture(int index, float2 uv)
+{
+    return gTextures[NonUniformResourceIndex(index)].SampleLevel(uv, 0.0f);
+}
+
+// KHR_texture_transform: scale, then rotate (no offset)
+float2 TransformUV(float2 uv, Material material)
+{
+    uv *= material.uvScale;
+
+    if (material.uvRotation != 0.0f)
+    {
+        float s = sin(material.uvRotation);
+        float c = cos(material.uvRotation);
+        uv = float2(c * uv.x + s * uv.y, -s * uv.x + c * uv.y);
+    }
+
+    return uv;
+}
+
 
 // Shared by the closest hit shader and raygen (shadow rays through glass)
 [[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
 [[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
+
+// Alpha testing: is this point of a triangle a hole (alpha below the material's cutoff)? Used by the
+// any-hit shader and by shadow ray queries, for the parts of leaves the opacity micromaps leave undecided.
+// submeshIndex: InstanceID() + GeometryIndex(); barycentrics: of vertices 1 and 2.
+bool IsAlphaHole(uint submeshIndex, uint primitive, float2 barycentrics)
+{
+    Submesh submesh = gAllSubmeshes[submeshIndex];
+    Material material = gAllMaterials[submesh.materialIndex];
+    if (material.alphaCutoff <= 0.0f)
+        return false;
+
+    uint baseIndex = submesh.indexOffset + primitive * 3;
+    float2 uv0 = gAllVertices[gAllIndices[baseIndex + 0]].uv;
+    float2 uv1 = gAllVertices[gAllIndices[baseIndex + 1]].uv;
+    float2 uv2 = gAllVertices[gAllIndices[baseIndex + 2]].uv;
+    float2 uv = TransformUV(uv0 * (1.0f - barycentrics.x - barycentrics.y) + uv1 * barycentrics.x + uv2 * barycentrics.y, material);
+
+    float alpha = material.baseColor.a;
+    if (material.baseColorTexture >= 0)
+        alpha *= SampleTexture(material.baseColorTexture, uv).a;
+    return alpha < material.alphaCutoff;
+}
+
 
 // Mirrors Fox::Graphics::Vulkan::CameraUBO (ConstantBuffers.h).
 struct Camera

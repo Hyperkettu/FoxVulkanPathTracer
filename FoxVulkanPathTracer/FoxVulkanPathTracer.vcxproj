@@ -106,7 +106,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir);$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir);$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -190,9 +190,39 @@
     <ClCompile Include="Graphics\Vulkan\GpuProfiler.cpp" />
     <ClCompile Include="Graphics\Vulkan\OverlayRenderer.cpp" />
     <ClCompile Include="Editor\TransformGizmo.cpp" />
+    <ClCompile Include="Scene\TextureLibrary.cpp" />
+    <ClCompile Include="..\ThirdParty\imgui\imgui.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\imgui\imgui_draw.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\imgui\imgui_tables.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\imgui\imgui_widgets.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\imgui\backends\imgui_impl_vulkan.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\imgui\backends\imgui_impl_sdl2.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(VULKAN_SDK)\Include\SDL2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <ClCompile Include="Editor\TreeEditor.cpp" />
     <ClCompile Include="Graphics\Geometry\TreeGenerator.cpp" />
     <ClCompile Include="Animation\WindSkeleton.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\SkinningPass.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\OpacityMicromap.cpp">
+      <!-- Optimized even in Debug: classifying every micro-triangle takes ~20 s unoptimized -->
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">MaxSpeed</Optimization>
+      <BasicRuntimeChecks Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Default</BasicRuntimeChecks>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
+      <DebugInformationFormat Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">ProgramDatabase</DebugInformationFormat>
+      <SupportJustMyCode Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</SupportJustMyCode>
+      <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">AnySuitable</InlineFunctionExpansion>
+    </ClCompile>
     <ClCompile Include="Graphics\Vulkan\Raytracing\GBuffer.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\Denoiser.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.cpp" />
@@ -272,10 +302,14 @@
     <ClInclude Include="Graphics\Vulkan\GpuProfiler.h" />
     <ClInclude Include="Graphics\Vulkan\OverlayRenderer.h" />
     <ClInclude Include="Editor\TransformGizmo.h" />
+    <ClInclude Include="Scene\TextureLibrary.h" />
+    <ClInclude Include="Editor\TreeEditor.h" />
     <ClInclude Include="Graphics\Geometry\SkinnedMesh.h" />
     <ClInclude Include="Graphics\Geometry\TreeGenerator.h" />
+    <ClInclude Include="Graphics\Geometry\Spline.h" />
     <ClInclude Include="Animation\WindSkeleton.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\SkinningPass.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\OpacityMicromap.h" />
     <ClInclude Include="Graphics\Vulkan\DeviceContext.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\GBuffer.h" />
     <ClInclude Include="Graphics\Vulkan\Raytracing\AccumulationDenoiser.h" />
@@ -321,6 +355,9 @@
     </SlangShader>
     <SlangShader Include="Shaders\miss.slang">
       <Stage>miss</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\any_hit.slang">
+      <Stage>anyhit</Stage>
     </SlangShader>
     <SlangShader Include="Shaders\shadowmiss.slang">
       <Stage>miss</Stage>

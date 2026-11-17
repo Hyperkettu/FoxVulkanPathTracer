@@ -3,43 +3,8 @@
 
 #include "common.slang"
 
-// Mirrors Fox::Graphics::Vulkan::Vertex (Vertex.h)
-struct Vertex
-{
-    float4 position;
-    float4 normal;
-    float2 uv;
-    float2 padding;
-    float4 tangent; // xyz + handedness, all zero if the mesh has no tangents
-};
-
-[[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
-[[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
-
-[[vk::binding(1, 1)]] Sampler2D gTextures[];
-
 // Where the vertices of skinned meshes were in the previous frame, mesh space (see skinning.slang)
 [[vk::binding(15, 0)]] StructuredBuffer<float4> gPreviousSkinnedPositions;
-
-float4 SampleTexture(int index, float2 uv)
-{
-    return gTextures[NonUniformResourceIndex(index)].SampleLevel(uv, 0.0f);
-}
-
-// KHR_texture_transform: scale, then rotate (no offset)
-float2 TransformUV(float2 uv, Material material)
-{
-    uv *= material.uvScale;
-
-    if (material.uvRotation != 0.0f)
-    {
-        float s = sin(material.uvRotation);
-        float c = cos(material.uvRotation);
-        uv = float2(c * uv.x + s * uv.y, -s * uv.x + c * uv.y);
-    }
-
-    return uv;
-}
 
 [shader("closesthit")]
 void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attribs)

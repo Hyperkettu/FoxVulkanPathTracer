@@ -1,4 +1,4 @@
-﻿#include "FoxRenderer.h"
+#include "FoxRenderer.h"
 #include <cassert>
 #include <cstring>
 
@@ -27,11 +27,12 @@ namespace Fox {
                     VkPipelineLayout pipelineLayout,
                     const std::vector<VkPipelineShaderStageCreateInfo>& stages,
                     const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
-                    uint32_t maxRecursionDepth)
+                    uint32_t maxRecursionDepth,
+                    VkPipelineCreateFlags flags)
                     : device(device)
                     , physicalDevice(physicalDevice)
                 {
-					Create(pipelineLayout, stages, groups, maxRecursionDepth);
+					Create(pipelineLayout, stages, groups, maxRecursionDepth, flags);
                 }
 
                 RayTracingPipeline::~RayTracingPipeline()
@@ -53,10 +54,12 @@ namespace Fox {
                     VkPipelineLayout pipelineLayout,
                     const std::vector<VkPipelineShaderStageCreateInfo>& stages,
                     const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
-                    uint32_t maxRecursionDepth)
+                    uint32_t maxRecursionDepth,
+                    VkPipelineCreateFlags flags)
                 {
                     VkRayTracingPipelineCreateInfoKHR info{
                         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+                        .flags = flags,
                         .stageCount = uint32_t(stages.size()),
                         .pStages = stages.data(),
                         .groupCount = uint32_t(groups.size()),

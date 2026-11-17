@@ -21,6 +21,10 @@ namespace Fox {
 			virtual void Resize(uint32_t width, uint32_t height) = 0;
 			virtual void RegisterInput(Fox::Input::InputManager& input) = 0;
 
+			// Gives the user interface the first look at a window event. Returns true when the interface takes it
+			// (e.g. a click on an editor window), so the rest of the application should ignore it.
+			virtual bool HandleEvent(const SDL_Event& event) { return false; }
+
 		};
 
 

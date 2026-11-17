@@ -51,8 +51,13 @@ namespace Fox {
 				// other surfaces) in crevices finer than the geometry. Direct light from the sun is not affected.
 				int occlusionTexture = -1;
 				float occlusionStrength = 1.0f; // 0 = ignore the texture
-				float padding[2] = { 0.0f, 0.0f };
 
+				// Alpha testing (leaves): where base colour alpha is below this the surface is a hole. 0 = opaque.
+				// Alpha tested geometry gets opacity micromaps (see RayTracingScene::SetAlphaMask).
+				float alphaCutoff = 0.0f;
+				float padding = 0.0f;
+
+				bool IsAlphaTested() const { return alphaCutoff > 0.0f; }
 				bool IsSolidGlass() const { return transmission > 0.5f && ior > 0.0f; }
 				bool IsThinGlass() const { return transmission > 0.5f && ior <= 0.0f; }
 			};

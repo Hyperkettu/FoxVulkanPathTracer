@@ -18,7 +18,8 @@ namespace Fox {
                         VkPipelineLayout pipelineLayout,
                         const std::vector<VkPipelineShaderStageCreateInfo>& stages,
                         const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
-                        uint32_t maxRecursionDepth = 1);
+                        uint32_t maxRecursionDepth = 1,
+                        VkPipelineCreateFlags flags = 0);
 
                     ~RayTracingPipeline();
 
@@ -26,7 +27,8 @@ namespace Fox {
                         VkPipelineLayout pipelineLayout,
                         const std::vector<VkPipelineShaderStageCreateInfo>& stages,
                         const std::vector<VkRayTracingShaderGroupCreateInfoKHR>& groups,
-                        uint32_t maxRecursionDepth = 1);
+                        uint32_t maxRecursionDepth = 1,
+                        VkPipelineCreateFlags flags = 0);
 
                     void Bind(VkCommandBuffer cmd) const;
 

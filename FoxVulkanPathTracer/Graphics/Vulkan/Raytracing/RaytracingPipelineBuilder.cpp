@@ -21,6 +21,15 @@ namespace Fox
 
 					shaderStages.back().module = shaderModule;	
 
+					// An any-hit shader joins the hit group of the closest hit shader added just before it
+					if (stage == VK_SHADER_STAGE_ANY_HIT_BIT_KHR) {
+						if (shaderGroups.empty() || shaderGroups.back().type != VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR) {
+							throw std::runtime_error("An any-hit shader must follow a closest hit shader");
+						}
+						shaderGroups.back().anyHitShader = static_cast<uint32_t>(shaderStages.size() - 1);
+						return *this;
+					}
+
 					VkRayTracingShaderGroupCreateInfoKHR group{};
 					group.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 
@@ -52,7 +61,7 @@ namespace Fox
                 }
 
 				std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline> Fox::Graphics::Vulkan::RayTracing::RaytracingPipelineBuilder::Build() const {
-					return std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(device, physicalDevice, pipelineLayout, shaderStages, shaderGroups, maxRecursionDepth);
+					return std::make_unique<Fox::Graphics::Vulkan::RayTracing::RayTracingPipeline>(device, physicalDevice, pipelineLayout, shaderStages, shaderGroups, maxRecursionDepth, flags);
 				}
             }
         } 

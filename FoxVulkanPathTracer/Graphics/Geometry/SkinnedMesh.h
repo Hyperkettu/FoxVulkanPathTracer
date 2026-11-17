@@ -37,6 +37,14 @@ namespace Fox {
 				std::vector<uint32_t> indices;
 				std::vector<SkinWeights> skin;                       // Per vertex
 				std::vector<Bone> bones;
+
+				// Ranges of indices with their own material (e.g. bark and leaves). Empty: one part, all indices.
+				struct Part {
+					uint32_t firstIndex = 0;
+					uint32_t indexCount = 0;
+					uint32_t material = 0; // Into the materials given with the mesh
+				};
+				std::vector<Part> parts;
 			};
 		}
 	}

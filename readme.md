@@ -39,6 +39,11 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind.
+* **Leaves & Opacity Micromaps** The tree carries alpha tested leaf cards. Opacity micromaps (`VK_EXT_opacity_micromap`)
+  resolve most of each leaf's cutout in hardware; an any-hit shader alpha tests the rest.
+* **Tree Editor** Add, duplicate and remove trees while the scene renders, and change everything about each one: shape,
+  randomness, a spline cross-section for the trunk, a spline curve for its centre line, leaves, wind, and each tree's
+  own textures. Built with Dear ImGui.
 * **Scene Editing** Click an object to select it, then move, rotate or scale it with gizmos while the image keeps
   path tracing. Moved objects carry their lights along and get motion vectors, so the denoisers follow them.
 * **Real-time at 4K** 60 fps in 4K fullscreen with the default scene: about 4 ms of GPU time per frame on an RTX 5090
@@ -64,6 +69,9 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
    which is the default debugger working directory. `SDL2.dll` is picked up from the Vulkan SDK's `Bin` folder on `PATH`.
 
 `Debug` builds enable the Vulkan validation layers and print warnings and errors to the console.
+
+Dear ImGui 1.93.0 (MIT license) is included in `ThirdParty/imgui`: only the files the build uses, the core and the
+SDL2 and Vulkan backends.
 
 **Optional: DLSS Ray Reconstruction**
 
@@ -196,6 +204,108 @@ Ambient occlusion (`Material::occlusionTexture`, red channel) darkens light from
 than the geometry: sky light and light bouncing off other surfaces. Direct sunlight and lamps are not affected, as in
 glTF. The tree is an object like the others: move it with the gizmos and the wind keeps blowing in world space.
 
+### Tree editor
+
+In edit mode (`E`) the **Trees** window lists the scene's trees.
+
+* **Add tree** puts a new tree on the ground 12 m in front of the camera. **Duplicate** copies the selected tree's
+  settings to a new one, and **Remove** deletes the tree.
+* Clicking a tree in the scene selects it in the window. Clicking it in the list selects it for the gizmos.
+
+| Section | What it changes |
+| --- | --- |
+| Placement | Name, position, turn, scale, stand on the ground (the gizmos do the same) |
+| Trunk | Height, radius, taper, segments; the **cross-section** and **curve** editors (below) |
+| Branches | Levels, where branching starts, branches per segment, angle, length and thickness ratios, turn towards light |
+| Randomness | Seed (and **New** for a random one), plus a separate amount for every random choice |
+| Leaves | On/off, which branch level carries them, cards per segment, card size, droop, leaf relief |
+| Bark relief | Displacement depth, texture size, triangle size for the relief, radius below which branches stay smooth |
+| Materials | Bark and leaf textures of **this tree**, chosen from the images under `Textures/`, plus tint, roughness, alpha cutoff |
+| Wind | Direction, speed, gusts, flutter, response, damping, sway frequencies, maximum bend (takes effect immediately) |
+
+**Cross-section.** The trunk's rings follow a closed Catmull-Rom spline instead of a circle:
+
+* **Editing:** drag its control points on the canvas. **Add point** inserts one after the selected point, and
+  **Remove point** deletes the selected one.
+* **Presets:** round, oval, ribbed and buttressed.
+* **Blending:** *Shape at base* and *Shape at top* blend between the spline and a circle along the trunk, so a
+  buttressed base can round out higher up. *Shape on branches* passes some of the shape on to the branches.
+* **Spacing:** vertices are spaced evenly along the outline, and the bark texture repeats a whole number of times
+  around it, so there is no seam.
+
+**Curve.** The trunk's centre line is an open spline through horizontal offsets at evenly spaced heights, base to
+top:
+
+* **Views:** a front view (x) and a side view (z). Drag a point sideways in either view.
+* **Buttons:** **More points** and **Fewer points** resample the curve. **Straight**, **Lean** and **S-curve** are
+  presets.
+* **Trunk wander:** under Randomness, adds random bending on top of the curve.
+
+**Per-tree textures.** Each tree has its own six texture slots for bark and for leaves (colour, normal, roughness,
+metallic, occlusion, displacement):
+
+* **Conventions:** each surface has its own normal-map convention and displacement inversion setting.
+* **Loading:** textures load when first chosen and are then shared by every tree that uses them
+  (`Scene/TextureLibrary`), including the packed occlusion/roughness/metallic texture.
+* **Leaf shape:** the leaf colour's alpha builds the opacity micromaps, and the leaf texture's proportions set the
+  card shape.
+
+**How changes are applied.** While a control is being dragged the change waits for its release, unless *Live
+update* is on. Then the renderer waits for the GPU and regenerates the trees whose shape changed. With two trees a
+rebuild takes about 70–80 ms. It then rebuilds the trees on the GPU only:
+
+* **Static geometry stays:** the scene's buffers are created with room for about 2.5 million tree vertices and 12
+  million indices (the bar at the top of the window shows how much is used), so the static geometry is never touched.
+* **What is rebuilt:** the tree part of the buffers, the trees' skinning data, opacity micromaps and acceleration
+  structures.
+* **Micromaps:** classifications are kept between rebuilds, so only the first build classifies micro-triangles.
+
+### Leaves, alpha testing and opacity micromaps
+
+The tree's thinner branches (level 2 and up) carry leaf cards: two along each branch segment, and one at each tip.
+About 800 cards in all, about 130 000 triangles. Each card shows `leaf-albedo.png`, an oak twig, and is cut out by
+the texture's alpha. Each card is weighted to the bone of the branch it grows from, so it sways with it. The cards are
+subdivided 8 × 10, droop towards their tip, and are displaced by the leaf height map. They use every leaf texture:
+
+| Texture | Use |
+| --- | --- |
+| `leaf-albedo.png` | Base colour; its alpha cuts the card out (alpha cutoff 0.5) and builds the opacity micromaps |
+| `leaf_normal.png` | Normal map, DirectX convention (green down) |
+| `leaf-roughness.png`, `leaf-metallic.png`, `leaf_ambient_occlusion.png` | Packed into one texture: R occlusion, G roughness, B metallic |
+| `leaf_displacement.png` | Card relief; stored inverted relative to the normal map, so the height used is 1 − value |
+
+The normal map convention and the inverted displacement were found by comparing the slopes of the height map with the
+normal map, in the data rather than by eye.
+
+**Alpha testing.** A material with `alphaCutoff > 0` is alpha tested. Its geometry is built without the opaque flag,
+so rays run the any-hit shader (`Shaders/any_hit.slang`), which discards hits where alpha is below the cutoff. Shadow
+ray queries test such candidates themselves. Leaves therefore cast dappled shadows.
+
+**Opacity micromaps.** Calling the any-hit shader for every leaf candidate is slow, so each alpha tested triangle also
+gets a 4-state opacity micromap (`Graphics/Vulkan/Raytracing/OpacityMicromap`):
+
+* **Subdivision:** the triangle is split into micro-triangles about 2 texels across (4^7 = 16 384 per triangle on the
+  cards).
+* **Classification:** each micro-triangle is sampled densely against the alpha. It is marked opaque or transparent if
+  all samples agree, and *unknown* if it straddles a leaf's outline.
+* **Effect:** the hardware accepts opaque and skips transparent micro-triangles by itself. Only unknown ones run the
+  any-hit shader.
+
+Micro-triangle order follows the reference function in the Vulkan specification. The builder checks that every
+micro-triangle index is used exactly once.
+
+Triangles with identical texture coordinates share a micromap entry, and triangles that are entirely opaque or
+transparent use a special index with no data. All 130 560 leaf triangles therefore need only 100 entries (1.6 MB).
+Micromaps live in barycentric space, so they stay valid while the branches bend and the acceleration structure is
+refitted.
+
+On an RTX 5090, with leaves filling part of the view, the micromaps take about 10–15% off the trace pass. Set
+`FOX_NO_OPACITY_MICROMAPS=1` to compare (alpha testing then all happens in the any-hit shader; the image is the same).
+GPUs without the extension use that path automatically. Any glTF material can use the same machinery: set its
+`alphaCutoff`, and give the scene the texture's alpha with `RayTracingScene::SetAlphaMask`.
+
+Not modelled yet: light passing through leaves (translucency), so backlit leaves look darker than real ones.
+
 ### Editing the scene
 
 Press `E` for edit mode: the mouse pointer appears and the window title shows the gizmo mode and the selection.
@@ -240,7 +350,7 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `U` | Next upscaling mode (Native → Quality → Balanced → Performance → Ultra Performance). Chosen from the display size until pressed |
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
-| `E` | Edit mode: select, move, rotate and scale objects (see *Editing the scene*) |
+| `E` | Edit mode: select, move, rotate and scale objects, and the tree editor (see *Editing the scene*, *Tree editor*) |
 | `Esc` | Quit |
 
 The window title shows the active denoiser, the upscaling mode and render resolution, the paths per pixel, the frame rate

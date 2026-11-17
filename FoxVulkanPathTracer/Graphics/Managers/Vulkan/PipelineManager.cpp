@@ -26,9 +26,11 @@ namespace Fox {
 						builder.AddShader(shaderExecutionReordering ? "Shaders/raygen_ser.spv" : "Shaders/raygen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR)
 							.AddShader("Shaders/miss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.AddShader("Shaders/closest_hit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR)
+							.AddShader("Shaders/any_hit.spv", VK_SHADER_STAGE_ANY_HIT_BIT_KHR) // Alpha testing, same hit group
 							.AddShader("Shaders/shadowmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR)
 							.SetLayout(rayTracingPipelineLayout->Get())
-							.SetMaxRecursionDepth(MAX_RAY_RECURSION_DEPTH);
+							.SetMaxRecursionDepth(MAX_RAY_RECURSION_DEPTH)
+							.SetFlags(Fox::Scene::RayTracing::RayTracingScene::OpacityMicromapsEnabled() ? VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT : 0);
 
 						rayTracingPipelines[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = builder.Build();
 						rayTracingPipelineLayouts[Fox::Graphics::Managers::Vulkan::RayTracingPipelineCategory::MAIN_RAYTRACING_PIPELINE] = std::move(rayTracingPipelineLayout);

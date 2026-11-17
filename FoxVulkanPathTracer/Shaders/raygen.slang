@@ -83,14 +83,16 @@ HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
 
 #if FOX_SER
     if (reorder) {
-        HitObject hitObject = HitObject::TraceRay(tlas, RAY_FLAG_FORCE_OPAQUE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
+        HitObject hitObject = HitObject::TraceRay(tlas, RAY_FLAG_NONE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
         ReorderThread(hitObject);
         HitObject::Invoke(tlas, hitObject, payload);
         return payload;
     }
 #endif
 
-    TraceRay(tlas, RAY_FLAG_FORCE_OPAQUE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
+    // Opaque geometry is flagged as such in the acceleration structures; alpha tested geometry (leaves)
+    // runs the any-hit shader where its opacity micromap cannot decide
+    TraceRay(tlas, RAY_FLAG_NONE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
     return payload;
 }
 
@@ -112,9 +114,19 @@ float3 ShadowTransmittance(float3 origin, float3 direction, float distance, bool
 
     // Inline ray query: no shader is invoked and the path tracer's state stays in registers,
     // which makes this much cheaper than a TraceRay call for a yes/no answer.
-    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> query;
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> query;
     query.TraceRayInline(tlas, RAY_FLAG_NONE, throughSolidGlass ? INSTANCE_MASK_OPAQUE : INSTANCE_MASK_OPAQUE | INSTANCE_MASK_SOLID_GLASS, ray);
-    query.Proceed();
+
+    // Alpha tested surfaces (leaves) come back as candidates where their opacity micromap is undecided:
+    // test the texture here, as the any-hit shader does for traced rays
+    while (query.Proceed())
+    {
+        if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE
+            && !IsAlphaHole(query.CandidateInstanceID() + query.CandidateGeometryIndex(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics()))
+        {
+            query.CommitNonOpaqueTriangleHit();
+        }
+    }
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         return float3(0.0f);

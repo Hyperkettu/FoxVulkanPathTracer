@@ -14,6 +14,7 @@ rem Variant with shader execution reordering, used on GPUs that support it
 %SLANGC% miss.slang -stage miss %OPTIONS% -o miss.spv || goto :error
 %SLANGC% shadowmiss.slang -stage miss %OPTIONS% -o shadowmiss.spv || goto :error
 %SLANGC% closest_hit.slang -stage closesthit %OPTIONS% -o closest_hit.spv || goto :error
+%SLANGC% any_hit.slang -stage anyhit %OPTIONS% -o any_hit.spv || goto :error
 
 rem Tone mapping
 %SLANGC% tonemapping_mesh.slang -stage mesh %OPTIONS% -o tonemapping_mesh.spv || goto :error

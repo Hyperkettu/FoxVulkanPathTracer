@@ -22,6 +22,12 @@ namespace Fox
                         return *this;
                     }
 
+                    // e.g. VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT: without it micromaps are ignored
+                    RaytracingPipelineBuilder& SetFlags(VkPipelineCreateFlags pipelineFlags) {
+                        flags = pipelineFlags;
+                        return *this;
+                    }
+
                     RaytracingPipelineBuilder& SetMaxRecursionDepth(uint32_t maxDepth) {
                         maxRecursionDepth = maxDepth;
                         return *this;
@@ -65,6 +71,7 @@ namespace Fox
 					std::vector<VkShaderModule> shaderModules;
 					std::vector<VkRayTracingShaderGroupCreateInfoKHR> shaderGroups;
 					uint32_t maxRecursionDepth = 1;
+					VkPipelineCreateFlags flags = 0;
 
                 };
             }

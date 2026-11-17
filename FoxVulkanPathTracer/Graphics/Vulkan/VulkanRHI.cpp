@@ -169,6 +169,9 @@ namespace Fox {
 
 				RayTracing::RayTracingPipeline::RegisterExtensionFunctions(device);
 				Fox::Scene::RayTracing::RayTracingScene::RegisterExtensionFunctions(device);
+				if (opacityMicromaps) {
+					RayTracing::OpacityMicromapBuilder::RegisterExtensionFunctions(device);
+				}
 
 				raytracingScene = std::make_unique<Fox::Scene::RayTracing::MainRayTracingScene>(device, physicalDevice, graphicsQueue, graphicsQueueFamily);
 
@@ -197,6 +200,9 @@ namespace Fox {
 					Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get(), config.MAX_FRAMES_IN_FLIGHT);
 				BindGBuffer();
 
+				InitializeUserInterface();
+				textureVersion = raytracingScene->GetTextureLibrary().GetVersion();
+
 				std::cout << "Vulkan renderer initialized (" << capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ").\n";
 				return true;
 			}
@@ -209,6 +215,13 @@ namespace Fox {
 					keyInputBind.Disconnect();
 					mouseButtonPressBind.Disconnect();
 					mouseButtonReleaseBind.Disconnect();
+
+					if (userInterface) {
+						ImGui_ImplVulkan_Shutdown();
+						ImGui_ImplSDL2_Shutdown();
+						ImGui::DestroyContext();
+						userInterface = false;
+					}
 
 					for (auto& frameResource : frameResources) {
 						frameResource->Destroy(device);
@@ -369,6 +382,7 @@ namespace Fox {
 				vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 				vulkan13Features.pNext = &meshShaderFeatures;
 				vulkan13Features.maintenance4 = VK_TRUE;
+				vulkan13Features.synchronization2 = VK_TRUE; // Micromap build barriers
 
 				VkPhysicalDeviceVulkan12Features vulkan12Features{};
 				vulkan12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -418,6 +432,36 @@ namespace Fox {
 						vulkan12Features.pNext = &reorderFeatures;
 					}
 					std::cout << "Shader execution reordering: " << (shaderExecutionReordering ? "on" : "not supported") << "\n";
+				}
+
+				// Optional: opacity micromaps, so alpha tested geometry (leaves) is mostly resolved in hardware.
+				// Without them the any-hit shader alpha tests every candidate hit, which is correct but slower.
+				VkPhysicalDeviceOpacityMicromapFeaturesEXT micromapFeatures{};
+				micromapFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
+				{
+					const bool hasExtension = std::any_of(available.begin(), available.end(), [](const VkExtensionProperties& e) {
+						return std::strcmp(e.extensionName, VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME) == 0;
+					});
+
+					if (hasExtension) {
+						VkPhysicalDeviceFeatures2 features2{};
+						features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+						features2.pNext = &micromapFeatures;
+						vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+					}
+
+					opacityMicromaps = hasExtension && micromapFeatures.micromap == VK_TRUE;
+					// For comparisons: FOX_NO_OPACITY_MICROMAPS=1 leaves all alpha testing to the any-hit shader
+					if (SDL_getenv("FOX_NO_OPACITY_MICROMAPS")) opacityMicromaps = false;
+					if (opacityMicromaps) {
+						extensions.push_back(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME);
+						micromapFeatures.micromapCaptureReplay = VK_FALSE;
+						micromapFeatures.micromapHostCommands = VK_FALSE;
+						micromapFeatures.pNext = vulkan12Features.pNext;
+						vulkan12Features.pNext = &micromapFeatures;
+					}
+					Fox::Scene::RayTracing::RayTracingScene::EnableOpacityMicromaps(opacityMicromaps);
+					std::cout << "Opacity micromaps: " << (opacityMicromaps ? "on" : "not supported") << "\n";
 				}
 
 				optionalDeviceExtensions = RayTracing::GetDenoiserDeviceExtensions(instance, physicalDevice);
@@ -737,6 +781,10 @@ namespace Fox {
 				profiler->ReadResults(currentFrame);
 				ReadPickResult(currentFrame);
 
+				// Editor windows, and what they changed in the scene
+				BuildUserInterface();
+				ApplySceneChanges();
+
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				raytracingScene->Update(deltaTime);
 
@@ -941,7 +989,12 @@ namespace Fox {
 				}
 
 				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), displayExtent,
-					[this, displayExtent](CommandList& pass) { overlay->Record(pass, overlayVertices, currentFrame, displayExtent); });
+					[this, displayExtent](CommandList& pass) {
+						overlay->Record(pass, overlayVertices, currentFrame, displayExtent);
+						if (userInterface) {
+							ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), pass.Get());
+						}
+					});
 
 				profiler->Mark(commandList, "tonemap");
 
@@ -987,6 +1040,131 @@ namespace Fox {
 			// ------------------------------------------------------------------------------------
 			// Input
 			// ------------------------------------------------------------------------------------
+
+			void VulkanRHI::InitializeUserInterface() {
+				IMGUI_CHECKVERSION();
+				ImGui::CreateContext();
+				ImGuiIO& io = ImGui::GetIO();
+				io.IniFilename = nullptr; // No imgui.ini next to the executable
+				// No keyboard navigation: the keyboard stays with the camera and shortcuts (WASD, E, Z/X/C) unless
+				// a text field is being typed in
+
+				ImGui_ImplSDL2_InitForVulkan(static_cast<SDL_Window*>(config.windowHandle));
+
+				ImGui_ImplVulkan_InitInfo info{};
+				info.ApiVersion = VK_API_VERSION_1_4;
+				info.Instance = instance;
+				info.PhysicalDevice = physicalDevice;
+				info.Device = device;
+				info.QueueFamily = graphicsQueueFamily;
+				info.Queue = graphicsQueue;
+				info.DescriptorPoolSize = 16; // The backend makes its own pool (the font texture)
+				info.MinImageCount = 2;
+				info.ImageCount = std::max(swapchain->GetImageCount(), 2u);
+				info.PipelineInfoMain.RenderPass = Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get();
+				info.PipelineInfoMain.Subpass = 0;
+				info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+				if (!ImGui_ImplVulkan_Init(&info)) {
+					throw std::runtime_error("Failed to initialize the user interface");
+				}
+				userInterface = true;
+			}
+
+			void VulkanRHI::BuildUserInterface() {
+				if (!userInterface) {
+					return;
+				}
+
+				// Bigger on bigger windows: 1 at 1080 lines
+				const float scale = std::clamp(static_cast<float>(capabilities.currentExtent.height) / 1080.0f, 1.0f, 3.0f);
+				if (scale != uiScale) {
+					uiScale = scale;
+					ImGuiStyle style;
+					ImGui::StyleColorsDark(&style);
+					style.WindowRounding = 4.0f;
+					style.FrameRounding = 3.0f;
+					style.ScaleAllSizes(scale);
+					style.FontScaleDpi = scale;
+					ImGui::GetStyle() = style;
+				}
+
+				ImGui_ImplVulkan_NewFrame();
+				ImGui_ImplSDL2_NewFrame();
+				ImGui::NewFrame();
+
+				if (editMode) {
+					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					treeEditor.Draw(*raytracingScene, gizmo, camera->GetPosition(), camera->GetForward(), uiScale);
+				}
+
+				ImGui::Render();
+			}
+
+			void VulkanRHI::ApplySceneChanges() {
+				// While a slider is dragged the change waits for its release, unless live update is on
+				const bool dragging = userInterface && ImGui::IsAnyItemActive();
+				if (raytracingScene->HaveTreesChanged() && (treeEditor.LiveUpdate() || !dragging)) {
+					vkDeviceWaitIdle(device);
+					const auto start = std::chrono::steady_clock::now();
+					std::string error;
+					const bool succeeded = raytracingScene->ApplyTreeChanges(error);
+					const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+					treeEditor.Applied(*raytracingScene, gizmo, succeeded, error, seconds);
+					if (!succeeded) {
+						std::cout << "Trees: " << error << "\n";
+					}
+					else {
+						std::cout << "Trees: " << raytracingScene->GetTrees().size() << " rebuilt in " << seconds * 1000.0f << " ms\n";
+					}
+					sceneChanged = true;
+				}
+
+				// Textures loaded for new materials join the bindless array
+				if (raytracingScene->GetTextureLibrary().GetVersion() != textureVersion) {
+					vkDeviceWaitIdle(device);
+					RefreshTextureDescriptors();
+					textureVersion = raytracingScene->GetTextureLibrary().GetVersion();
+				}
+			}
+
+			void VulkanRHI::RefreshTextureDescriptors() {
+				auto& textureManager = Managers::TextureManager::Get();
+				auto& set = textureManager.bindlessTextureDescriptorSet;
+				const auto& textures = textureManager.GetBindlessTextureArray();
+
+				set->ClearWrites();
+				set->Reserve(static_cast<uint32_t>(textures.size()) + 1);
+				uint32_t index = 0;
+				for (const auto& texture : textures) {
+					set->SetBindlessTexture(1, index++, texture.get());
+				}
+				set->SetConstantBuffer(0, textureManager.environmentUBO);
+				set->Update();
+			}
+
+			bool VulkanRHI::HandleEvent(const SDL_Event& event) {
+				if (!userInterface) {
+					return false;
+				}
+				ImGui_ImplSDL2_ProcessEvent(&event);
+				if (!editMode) {
+					return false;
+				}
+
+				// Clicks, wheel and typing over the editor windows are theirs. Releases always go through, so
+				// nothing stays pressed.
+				const ImGuiIO& io = ImGui::GetIO();
+				switch (event.type) {
+				case SDL_MOUSEBUTTONDOWN:
+				case SDL_MOUSEWHEEL:
+					return io.WantCaptureMouse;
+				case SDL_KEYDOWN:
+				case SDL_TEXTINPUT:
+					return io.WantCaptureKeyboard;
+				default:
+					return false;
+				}
+			}
 
 			void VulkanRHI::SetEditMode(bool enabled) {
 				editMode = enabled;

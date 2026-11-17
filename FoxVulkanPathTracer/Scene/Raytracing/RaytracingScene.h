@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <glm/glm.hpp>
+#include <map>
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingInstance.h"
 
@@ -42,10 +43,22 @@ namespace Fox {
                 void AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material,
                     const std::string& name = "Sphere", uint32_t segments = 128);
 
+                // --- Alpha testing (leaves) ---
+
+                // CPU copy of the alpha channel of a texture (its bindless index). Alpha tested materials that use
+                // the texture as base colour get opacity micromaps built from it (when the GPU supports them).
+                void SetAlphaMask(int texture, Fox::Graphics::Vulkan::RayTracing::AlphaMask mask) { alphaMasks[texture] = std::move(mask); }
+                bool HasAlphaMask(int texture) const { return alphaMasks.count(texture) > 0; }
+
+                // Set by the renderer before the scene is created
+                static void EnableOpacityMicromaps(bool enabled) { opacityMicromapsEnabled = enabled; }
+                static bool OpacityMicromapsEnabled() { return opacityMicromapsEnabled; }
+
                 // --- Skinned meshes: vertices follow joint matrices that can change every frame ---
 
-                // Adds a skinned mesh as a movable object; returns its index for SetJointMatrices
-                size_t AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const Fox::Graphics::Vulkan::Material& material,
+                // Adds a skinned mesh as a movable object; returns its index for SetJointMatrices. One material per
+                // part of the mesh (SkinnedMesh::parts; one material when it has no parts).
+                size_t AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const std::vector<Fox::Graphics::Vulkan::Material>& materials,
                     const glm::mat4& transform, const std::string& name);
 
                 // Per joint of the mesh: pose * inverse(bind), in mesh space. Applied with the next RecordFrameUpdate,
@@ -83,6 +96,35 @@ namespace Fox {
                         return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation) * glm::scale(glm::mat4(1.0f), scale);
                     }
                 };
+
+                // --- Dynamic meshes: replaced while the scene renders (trees from the editor) ---
+                //
+                // The scene's buffers are created with room for them after the static geometry, so replacing them only
+                // rewrites that part: their vertices, indices, submeshes and materials, their skinning data, opacity
+                // micromaps and bottom level acceleration structures. Static geometry and every descriptor stay as
+                // they are (new textures aside). Call with the device idle.
+                struct DynamicMesh {
+                    const Fox::Graphics::Geometry::SkinnedMesh* mesh = nullptr;
+                    std::vector<Fox::Graphics::Vulkan::Material> materials; // One per part
+                    ObjectTransform transform;
+                    std::string name;
+                };
+                struct DynamicMeshHandle {
+                    size_t skinnedMesh = 0; // For SetJointMatrices
+                    size_t object = 0;      // For GetObjectTransform / SetObjectTransform
+                };
+                // Throws std::runtime_error (scene unchanged) when the meshes do not fit the reserved room
+                std::vector<DynamicMeshHandle> RebuildDynamicMeshes(const std::vector<DynamicMesh>& meshes);
+
+                // Room reserved for dynamic meshes, and how much of it is in use
+                static constexpr uint32_t DYNAMIC_VERTEX_CAPACITY = 2'500'000;
+                static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 12'000'000;
+                static constexpr uint32_t MAX_SUBMESHES = 65'536;
+                static constexpr uint32_t MAX_MATERIALS = 4'096;
+                static constexpr uint32_t MAX_INSTANCES = 4'096;
+                uint32_t GetDynamicVertexCount() const { return static_cast<uint32_t>(vertices.size()) - staticCounts.vertices; }
+                uint32_t GetDynamicIndexCount() const { return static_cast<uint32_t>(indices.size()) - staticCounts.indices; }
+
 
                 size_t GetObjectCount() const { return placements.size(); }
                 const std::string& GetObjectName(size_t object) const { return placements[object].name; }
@@ -258,6 +300,42 @@ namespace Fox {
                 VkDeviceAddress blasScratchAddress = 0; // Also used to refit deforming structures
 
                 void RecordSkinning(VkCommandBuffer cmd);
+
+                // Opacity micromaps of alpha tested submeshes, attached to their geometries in AddBLAS. One set for
+                // the static geometry, one replaced with the dynamic meshes.
+                static bool opacityMicromapsEnabled;
+                std::map<int, Fox::Graphics::Vulkan::RayTracing::AlphaMask> alphaMasks;
+                struct OpacityMicromapSet {
+                    std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::OpacityMicromapBuilder> micromaps;
+                    std::unique_ptr<Fox::Graphics::Vulkan::Buffer> indexBuffer;
+                };
+                OpacityMicromapSet staticMicromaps;
+                OpacityMicromapSet dynamicMicromaps;
+                struct OpacityGeometry {
+                    VkAccelerationStructureTrianglesOpacityMicromapEXT info{};
+                    std::vector<VkMicromapUsageEXT> usage;
+                };
+                std::map<uint32_t, std::unique_ptr<OpacityGeometry>> opacityGeometries; // By submesh
+                void BuildOpacityMicromaps(uint32_t firstSubmesh, OpacityMicromapSet& set);
+
+                // How much of each array is static geometry (set by the first upload)
+                struct StaticCounts {
+                    uint32_t vertices = 0, indices = 0, submeshes = 0, materials = 0;
+                    size_t records = 0, placements = 0, blas = 0, instances = 0;
+                    size_t skinnedMeshes = 0, bindPose = 0;
+                    uint32_t joints = 0;
+                };
+                StaticCounts staticCounts;
+
+                // Builds the bottom level structures from index first on (with their own scratch memory)
+                void BuildDynamicBLAS(size_t first);
+                VkBuffer dynamicScratchBuffer = VK_NULL_HANDLE;
+                VkDeviceMemory dynamicScratchMemory = VK_NULL_HANDLE;
+                VkDeviceSize dynamicScratchSize = 0;
+
+                void CreateSkinningResources();
+                void AddPlacementInstances(size_t placement);
+                void DestroyBLAS(BottomLevelAccelerationStructure& blas);
 
                 // Geometry stored once per mesh. Its submeshes are contiguous and grouped by kind (opaque,
                 // thin glass, solid glass), each group one BLAS. Each kind has its own visibility bit, so shadow
