@@ -63,6 +63,18 @@ namespace Fox {
 				ground.metallic = 0.0f;
 				AddGroundPlane(GROUND_HEIGHT, 2000.0f, ground);
 
+				// Solid glass ball resting on the ground in front of the camera. It refracts the scene behind it
+				// upside down, and the faint green of thick window glass builds up towards its centre.
+				Fox::Graphics::Vulkan::Material glass;
+				glass.roughness = 0.0f;
+				glass.metallic = 0.0f;
+				glass.transmission = 1.0f;
+				glass.ior = 1.5f;
+				const float glassAttenuation[3] = { 0.80f, 0.94f, 0.90f };
+				glass.SetAttenuation(glassAttenuation, 2.0f); // Colour left after 2 m of glass
+				const float ballRadius = 1.2f;
+				AddSphere(glm::vec3(21.0f, GROUND_HEIGHT + ballRadius, 10.0f), ballRadius, glass);
+
 				AddSun(SUN_DIRECTION, SUN_IRRADIANCE, SUN_ANGULAR_RADIUS);
 
 				Build();

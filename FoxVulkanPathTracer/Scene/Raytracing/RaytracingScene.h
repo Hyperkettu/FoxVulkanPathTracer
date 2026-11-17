@@ -33,6 +33,10 @@ namespace Fox {
                 // Adds a large horizontal quad at the given height, e.g. as the ground.
                 void AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material);
 
+                // Adds a sphere, e.g. a glass ball (a material with transmission and an ior, see Material.h).
+                // segments: subdivisions around the equator; the sphere is smooth shaded either way.
+                void AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material, uint32_t segments = 128);
+
                 // Adds a sun: a distant light with soft shadows.
                 //   directionToSun: where the sun is in the sky (does not need to be normalized)
                 //   irradiance:     light arriving at a surface facing the sun
@@ -48,7 +52,8 @@ namespace Fox {
 
                 // Instance visibility bits, must match the masks in Shaders/common.slang
                 static constexpr uint32_t INSTANCE_MASK_OPAQUE = 0x01;
-                static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;
+                static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
+                static constexpr uint32_t INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;
@@ -163,17 +168,31 @@ namespace Fox {
 
                 uint32_t lightCount = 0;
 
-                // Geometry stored once per mesh. Its submeshes are contiguous, opaque ones first, and become
-                // at most two BLAS: opaque surfaces and glass (glass has its own visibility bit, so shadow rays
-                // can pass through windows).
+                // Geometry stored once per mesh. Its submeshes are contiguous and grouped by kind (opaque,
+                // thin glass, solid glass), each group one BLAS. Each kind has its own visibility bit, so shadow
+                // rays can treat them differently (see IsOccluded in raygen.slang).
+                enum SurfaceKind { Opaque = 0, ThinGlass, SolidGlass, SurfaceKindCount };
+
                 struct MeshRecord {
                     const Fox::Graphics::Geometry::Vulkan::Mesh* mesh = nullptr; // nullptr for generated geometry
                     uint32_t firstSubmesh = 0;
-                    uint32_t opaqueCount = 0;
-                    uint32_t glassCount = 0;
-                    int opaqueBlas = -1;
-                    int glassBlas = -1;
+                    uint32_t count[SurfaceKindCount] = {};
+                    int blas[SurfaceKindCount] = { -1, -1, -1 };
+
+                    uint32_t FirstOf(int kind) const {
+                        uint32_t first = firstSubmesh;
+                        for (int k = 0; k < kind; k++) first += count[k];
+                        return first;
+                    }
                 };
+
+                static SurfaceKind KindOf(const Fox::Graphics::Vulkan::Material& material) {
+                    return material.IsSolidGlass() ? SolidGlass : material.IsThinGlass() ? ThinGlass : Opaque;
+                }
+
+                // A record for generated geometry with one submesh and one material, placed at the origin
+                void AddGeneratedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                    const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material);
                 std::vector<MeshRecord> meshRecords;
 
                 // Where each mesh is placed; one TLAS instance per placement and BLAS

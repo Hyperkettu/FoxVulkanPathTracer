@@ -352,6 +352,16 @@ namespace Fox {
                             currentMaterial.emissiveStrength = extensionNumber(mat.extensions, "KHR_materials_emissive_strength", "emissiveStrength", 1.0f);
                             currentMaterial.transmissionFactor = extensionNumber(mat.extensions, "KHR_materials_transmission", "transmissionFactor", 0.0f);
                             currentMaterial.specularFactor = extensionNumber(mat.extensions, "KHR_materials_specular", "specularFactor", 1.0f);
+                            currentMaterial.ior = extensionNumber(mat.extensions, "KHR_materials_ior", "ior", 1.5f);
+                            currentMaterial.thicknessFactor = extensionNumber(mat.extensions, "KHR_materials_volume", "thicknessFactor", 0.0f);
+                            currentMaterial.attenuationDistance = extensionNumber(mat.extensions, "KHR_materials_volume", "attenuationDistance", 0.0f);
+                            if (auto volume = mat.extensions.find("KHR_materials_volume"); volume != mat.extensions.end()
+                                && volume->second.IsObject() && volume->second.Has("attenuationColor")) {
+                                const auto& color = volume->second.Get("attenuationColor");
+                                for (int c = 0; c < 3 && c < static_cast<int>(color.ArrayLen()); c++) {
+                                    currentMaterial.attenuationColor[c] = static_cast<float>(color.Get(c).GetNumberAsDouble());
+                                }
+                            }
 
                             // KHR_texture_transform (tiling). Exporters write the same transform on every texture of a material.
                             auto transformIt = pbr.baseColorTexture.extensions.find("KHR_texture_transform");

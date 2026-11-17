@@ -8,7 +8,8 @@ static const float PI = 3.14159265359f;
 
 // Instance visibility bits, must match RayTracingScene::INSTANCE_MASK_* (RaytracingScene.h)
 static const uint INSTANCE_MASK_OPAQUE = 0x01;
-static const uint INSTANCE_MASK_GLASS = 0x02;
+static const uint INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
+static const uint INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
 static const uint INSTANCE_MASK_ALL = 0xFF;
 
 // What the closest hit shader reports back to the path tracer in raygen.slang: a description
@@ -24,12 +25,60 @@ struct HitPayload
     float3 baseColor;
     float metallic;
     float roughness;         // Perceptual roughness as authored (0 = mirror, 1 = fully rough)
-    float transmission;      // 1 = thin clear glass
+    float transmission;      // 1 = clear glass
+    float ior;               // Index of refraction of a solid; 0 = thin walled (a window pane)
+    float3 absorption;       // Per meter inside a solid
     float specularWeight;    // Scales the dielectric specular reflection
 
     float3 emission;         // Emitted radiance
     int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1
 };
+
+// Mirrors Fox::Graphics::Vulkan::Submesh (Vertex.h)
+struct Submesh
+{
+    uint vertexOffset;
+    uint indexOffset;
+    uint vertexCount;
+    uint indexCount;
+    uint materialIndex;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+};
+
+// Mirrors Fox::Graphics::Vulkan::Material (Material.h)
+struct Material
+{
+    float4 baseColor;
+
+    float3 emissive;
+    float normalScale;
+
+    float roughness;
+    float metallic;
+    float transmission;
+    float specularWeight;
+
+    int baseColorTexture;
+    int metallicRoughnessTexture;
+    int normalTexture;
+    int emissiveTexture;
+
+    float2 uvScale;
+    float uvRotation;
+    int lightIndex;
+
+    // Separate floats: a float3 would be aligned to 16 bytes here, unlike in C++
+    float ior;
+    float absorptionR;
+    float absorptionG;
+    float absorptionB;
+};
+
+// Shared by the closest hit shader and raygen (shadow rays through glass)
+[[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
+[[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
 
 // Mirrors Fox::Graphics::Vulkan::CameraUBO (ConstantBuffers.h).
 struct Camera

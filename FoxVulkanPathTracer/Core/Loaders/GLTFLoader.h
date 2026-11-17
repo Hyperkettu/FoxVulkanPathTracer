@@ -56,6 +56,10 @@ namespace Fox {
 
                     float transmissionFactor = 0.0f; // KHR_materials_transmission
                     float specularFactor = 1.0f;     // KHR_materials_specular
+                    float ior = 1.5f;                // KHR_materials_ior
+                    float thicknessFactor = 0.0f;    // KHR_materials_volume: > 0 turns a transmissive surface into a solid
+                    float attenuationColor[3] = { 1.0f, 1.0f, 1.0f };
+                    float attenuationDistance = 0.0f; // 0 = infinite: no absorption
 
                     // KHR_texture_transform of the base colour texture, applied to all textures of the material
                     float uvScale[2] = { 1.0f, 1.0f };

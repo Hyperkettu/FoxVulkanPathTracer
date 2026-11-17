@@ -120,6 +120,12 @@ namespace Fox {
                         mat.metallic = source.metallicFactor;
                         mat.transmission = source.transmissionFactor;
                         mat.specularWeight = source.specularFactor;
+
+                        // A volume turns a transmissive surface into a refracting solid (see Material::ior)
+                        if (source.thicknessFactor > 0.0f && source.transmissionFactor > 0.0f) {
+                            mat.ior = std::max(source.ior, 1.0f);
+                            mat.SetAttenuation(source.attenuationColor, source.attenuationDistance);
+                        }
                         mat.normalScale = source.normalScale;
 
                         mat.baseColorTexture = textureMap[source.baseColorTextureIndex];

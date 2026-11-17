@@ -560,15 +560,14 @@ namespace Fox {
                     rebased.push_back(submesh);
                 }
 
-                // Opaque submeshes first, then glass: each group becomes one BLAS
-                auto isGlass = [&](const Fox::Graphics::Vulkan::Submesh& submesh) {
-                    return meshMaterials[submesh.materialIndex - materialOffset].transmission > 0.5f;
-                };
-                for (const auto& submesh : rebased) {
-                    if (!isGlass(submesh)) { submeshes.push_back(submesh); record.opaqueCount++; }
-                }
-                for (const auto& submesh : rebased) {
-                    if (isGlass(submesh)) { submeshes.push_back(submesh); record.glassCount++; }
+                // Grouped by kind (opaque, thin glass, solid glass): each group becomes one BLAS
+                for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                    for (const auto& submesh : rebased) {
+                        if (KindOf(meshMaterials[submesh.materialIndex - materialOffset]) == kind) {
+                            submeshes.push_back(submesh);
+                            record.count[kind]++;
+                        }
+                    }
                 }
 
                 // Materials refer to the lights of the mesh's first placement (added right after this)
@@ -615,9 +614,41 @@ namespace Fox {
                 }
             }
 
+            void RayTracingScene::AddGeneratedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material) {
+                vertices.insert(vertices.end(), surfaceVertices.begin(), surfaceVertices.end());
+                for (uint32_t index : surfaceIndices) {
+                    indices.push_back(vertexOffset + index);
+                }
+
+                Fox::Graphics::Vulkan::Submesh submesh{};
+                submesh.vertexOffset = vertexOffset;
+                submesh.indexOffset = indexOffset;
+                submesh.vertexCount = static_cast<uint32_t>(surfaceVertices.size());
+                submesh.indexCount = static_cast<uint32_t>(surfaceIndices.size());
+                submesh.materialIndex = materialOffset;
+
+                MeshRecord record;
+                record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
+                record.count[KindOf(material)] = 1;
+                meshRecords.push_back(record);
+                placements.push_back({ meshRecords.size() - 1, glm::mat4(1.0f) });
+
+                submeshes.push_back(submesh);
+
+                Fox::Graphics::Vulkan::Material surfaceMaterial = material;
+                surfaceMaterial.lightIndex = -1;
+                materials.push_back(surfaceMaterial);
+
+                vertexOffset += submesh.vertexCount;
+                indexOffset += submesh.indexCount;
+                materialOffset += 1;
+            }
+
             void RayTracingScene::AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material) {
                 const float corners[4][2] = { { -1.0f, -1.0f }, { -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f } };
 
+                std::vector<Fox::Graphics::Vulkan::Vertex> planeVertices;
                 for (const auto& corner : corners) {
                     Fox::Graphics::Vulkan::Vertex vertex{};
                     vertex.position[0] = corner[0] * halfSize;
@@ -626,35 +657,66 @@ namespace Fox {
                     vertex.normal[1] = 1.0f;
                     vertex.uv[0] = corner[0] * 0.5f + 0.5f;
                     vertex.uv[1] = corner[1] * 0.5f + 0.5f;
-                    vertices.push_back(vertex);
+                    planeVertices.push_back(vertex);
                 }
 
-                for (uint32_t index : { 0u, 1u, 2u, 0u, 2u, 3u }) {
-                    indices.push_back(vertexOffset + index);
+                AddGeneratedSurface(planeVertices, { 0u, 1u, 2u, 0u, 2u, 3u }, material);
+            }
+
+            void RayTracingScene::AddSphere(const glm::vec3& center, float radius, const Fox::Graphics::Vulkan::Material& material, uint32_t segments) {
+                // UV sphere: rings of latitude from the north pole (+Y) to the south pole
+                const uint32_t columns = std::max(segments, 3u);
+                const uint32_t rows = std::max(segments / 2, 2u);
+
+                std::vector<Fox::Graphics::Vulkan::Vertex> sphereVertices;
+                sphereVertices.reserve((rows + 1) * (columns + 1));
+
+                for (uint32_t row = 0; row <= rows; row++) {
+                    const float v = static_cast<float>(row) / static_cast<float>(rows);
+                    const float theta = v * glm::pi<float>();
+
+                    for (uint32_t column = 0; column <= columns; column++) {
+                        const float u = static_cast<float>(column) / static_cast<float>(columns);
+                        const float phi = u * glm::two_pi<float>();
+
+                        // Outward unit normal; the tangent follows increasing u (towards increasing phi)
+                        const glm::vec3 normal(std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi));
+                        const glm::vec3 position = center + normal * radius;
+
+                        Fox::Graphics::Vulkan::Vertex vertex{};
+                        vertex.position[0] = position.x;
+                        vertex.position[1] = position.y;
+                        vertex.position[2] = position.z;
+                        vertex.normal[0] = normal.x;
+                        vertex.normal[1] = normal.y;
+                        vertex.normal[2] = normal.z;
+                        vertex.uv[0] = u;
+                        vertex.uv[1] = v;
+                        vertex.tangent[0] = -std::sin(phi);
+                        vertex.tangent[2] = std::cos(phi);
+                        vertex.tangent[3] = 1.0f;
+                        sphereVertices.push_back(vertex);
+                    }
                 }
 
-                Fox::Graphics::Vulkan::Submesh submesh{};
-                submesh.vertexOffset = vertexOffset;
-                submesh.indexOffset = indexOffset;
-                submesh.vertexCount = 4;
-                submesh.indexCount = 6;
-                submesh.materialIndex = materialOffset;
+                // Counter-clockwise seen from outside, so the triangle normals point outwards like the vertex
+                // normals: refraction decides from them whether a ray enters or leaves the glass
+                std::vector<uint32_t> sphereIndices;
+                sphereIndices.reserve(rows * columns * 6);
+                for (uint32_t row = 0; row < rows; row++) {
+                    for (uint32_t column = 0; column < columns; column++) {
+                        const uint32_t a = row * (columns + 1) + column; // Upper ring
+                        const uint32_t b = a + columns + 1;              // Lower ring
+                        if (row > 0) {
+                            sphereIndices.insert(sphereIndices.end(), { a, a + 1, b });
+                        }
+                        if (row < rows - 1) {
+                            sphereIndices.insert(sphereIndices.end(), { a + 1, b + 1, b });
+                        }
+                    }
+                }
 
-                MeshRecord record;
-                record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
-                record.opaqueCount = 1;
-                meshRecords.push_back(record);
-                placements.push_back({ meshRecords.size() - 1, glm::mat4(1.0f) });
-
-                submeshes.push_back(submesh);
-
-                Fox::Graphics::Vulkan::Material groundMaterial = material;
-                groundMaterial.lightIndex = -1;
-                materials.push_back(groundMaterial);
-
-                vertexOffset += 4;
-                indexOffset += 6;
-                materialOffset += 1;
+                AddGeneratedSurface(sphereVertices, sphereIndices, material);
             }
 
             void RayTracingScene::AddSun(const glm::vec3& directionToSun, const glm::vec3& irradiance, float angularRadius) {
@@ -697,25 +759,24 @@ namespace Fox {
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
 
-                // One BLAS per mesh for its opaque surfaces and one for its glass, shared by all placements of
-                // the mesh. Each submesh is one geometry of its BLAS: the closest hit shader finds the submesh as
-                // InstanceID() + GeometryIndex(), so an instance's custom index is the index of its first submesh.
+                // One BLAS per mesh and surface kind, shared by all placements of the mesh. Each submesh is one
+                // geometry of its BLAS: the closest hit shader finds the submesh as InstanceID() + GeometryIndex(),
+                // so an instance's custom index is the index of its first submesh.
                 for (MeshRecord& record : meshRecords) {
-                    if (record.opaqueCount > 0) {
-                        record.opaqueBlas = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.firstSubmesh, record.opaqueCount));
-                    }
-                    if (record.glassCount > 0) {
-                        record.glassBlas = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.firstSubmesh + record.opaqueCount, record.glassCount));
+                    for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                        if (record.count[kind] > 0) {
+                            record.blas[kind] = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.FirstOf(kind), record.count[kind]));
+                        }
                     }
                 }
 
+                const uint32_t masks[SurfaceKindCount] = { INSTANCE_MASK_OPAQUE, INSTANCE_MASK_GLASS, INSTANCE_MASK_SOLID_GLASS };
                 for (const Placement& placement : placements) {
                     const MeshRecord& record = meshRecords[placement.record];
-                    if (record.opaqueBlas >= 0) {
-                        AddInstance(static_cast<uint32_t>(record.opaqueBlas), placement.transform, record.firstSubmesh, INSTANCE_MASK_OPAQUE);
-                    }
-                    if (record.glassBlas >= 0) {
-                        AddInstance(static_cast<uint32_t>(record.glassBlas), placement.transform, record.firstSubmesh + record.opaqueCount, INSTANCE_MASK_GLASS);
+                    for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                        if (record.blas[kind] >= 0) {
+                            AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.transform, record.FirstOf(kind), masks[kind]);
+                        }
                     }
                 }
             }

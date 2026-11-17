@@ -22,7 +22,11 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Physically Based Shading** Layered glTF metallic-roughness BSDF: GGX microfacet specular (visible-normal importance sampling,
   height-correlated Smith, multiple-scattering energy compensation) over an energy-conserving diffuse layer, plus thin glass.
   Supports base colour, metallic-roughness, normal and emissive textures and `KHR_texture_transform`,
-  `KHR_materials_transmission`, `KHR_materials_specular`, `KHR_materials_emissive_strength`.
+  `KHR_materials_transmission`, `KHR_materials_specular`, `KHR_materials_emissive_strength`, `KHR_materials_ior`,
+  `KHR_materials_volume`.
+* **Refraction** Solid glass bends light where it enters and leaves, with exact dielectric Fresnel reflection, total
+  internal reflection, rough (frosted) glass through GGX microfacets and coloured absorption inside (Beer–Lambert).
+  The scene has a glass ball in the foreground.
 * **Lighting** Importance-sampled HDR environment map, emissive quads as area lights and a sun with soft shadows.
 * **Displacement Mapping** Surfaces are tessellated and displaced when a model loads, so the relief is real geometry
   (silhouettes, shadows, reflections). Height maps can be assigned per material; models without them (glTF has no slot
@@ -118,6 +122,33 @@ What makes it fast:
 The window title shows the GPU time per pass (trace, denoise, tone map). With vsync on (the default) the frame rate is
 capped at the display's refresh rate; press `V` to turn vsync off and see the real throughput.
 
+### Glass
+
+A material with `transmission` > 0 is glass, tinted by its base colour. It comes in two kinds (`Graphics/Vulkan/Material.h`):
+
+| Kind | Set by | Behaviour |
+| --- | --- | --- |
+| Thin walled (window panes) | `ior = 0` (default) | Light passes straight through |
+| Solid | `ior > 0`, e.g. 1.5 | Light refracts into and out of the solid and is absorbed inside |
+
+```cpp
+Fox::Graphics::Vulkan::Material glass;
+glass.roughness = 0.0f;        // > 0: frosted glass
+glass.transmission = 1.0f;
+glass.ior = 1.5f;              // Water 1.33, diamond 2.42
+const float color[3] = { 0.80f, 0.94f, 0.90f };
+glass.SetAttenuation(color, 2.0f); // The colour light keeps after 2 m inside the glass
+AddSphere(center, radius, glass);
+```
+
+glTF models get solid glass from `KHR_materials_volume` (a `thicknessFactor` above 0) together with
+`KHR_materials_transmission`. Solids must be closed meshes whose normals point outwards.
+
+Limitations: light is not focused through glass (no caustics). The sun's light passes through solid glass straight,
+tinted and absorbed, so a glass ball casts a light, coloured shadow rather than a bright focal spot. SVGF denoises the
+glass surface itself rather than the view through it (the view through a curved solid changes too much with the
+sub-pixel jitter for its history), so solids look softer with SVGF than with DLSS.
+
 ### Adding a denoiser
 
 Derive from `Denoiser` (`Graphics/Vulkan/Raytracing/Denoiser.h`), implement `Resize` / `Denoise` / `GetOutputView`, and register the class in
@@ -152,7 +183,8 @@ Below is the active development checklist for the renderer.
 ### 💡 Rendering & Lighting
 
 - [x] Multiple Importance Sampling (MIS) lighting
-- [ ] Refraction and Fresnel effects
+- [x] Refraction and Fresnel effects
+- [ ] Caustics (light focused through glass)
 - [x] Recursive BRDF evaluation / ray depth handling
 - [x] Normal mapping
 - [x] Displacement mapping

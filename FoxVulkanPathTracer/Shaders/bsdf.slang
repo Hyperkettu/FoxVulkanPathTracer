@@ -5,8 +5,11 @@
 //                   importance sampled with the distribution of visible normals, plus an energy
 //                   compensation term so rough metals do not darken (multiple scattering).
 //   - Diffuse:      Lambert, scaled by the energy the specular layer lets through.
-//   - Transmission: thin-walled glass. Light that is not reflected passes straight through, tinted
-//                   by the base colour (window panes; no refraction).
+//   - Transmission: glass, tinted by the base colour. Two kinds:
+//       thin walled  (ior 0): light that is not reflected passes straight through (window panes)
+//       solid        (ior > 0): the surface encloses glass. Light is reflected or refracted with the
+//                    exact dielectric Fresnel term, including total internal reflection; rough glass
+//                    refracts through GGX microfacets. Absorption inside is applied by the path tracer.
 //
 // Conventions: V points away from the surface towards the viewer, L towards the light,
 // N is the shading normal with dot(N, V) > 0. All functions work in world space.
@@ -29,6 +32,11 @@ struct Surface
     float3 F0;             // Specular reflectance at normal incidence
     float f90;             // Specular reflectance at grazing angles
     float3 transmitColor;  // Tint of light passing through (zero for opaque surfaces)
+    bool isSolid;          // Transmission refracts into a solid (see the header)
+    bool entering;         // Solids: V is outside, refracted light goes in
+    float eta;             // Solids: index of refraction on V's side / on the other side
+    float transmission;    // Share of the surface that is glass
+    float specularScale;   // Weight of the opaque specular layer (solid glass reflects through its own lobe)
     float roughness;       // Perceptual
     float alpha;           // GGX width = roughness^2
     bool isMirror;
@@ -48,6 +56,20 @@ struct Surface
 float3 FresnelSchlick(float cosTheta, float3 F0, float f90)
 {
     return F0 + (f90 - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
+}
+
+// Reflectance of a smooth boundary between dielectrics, unpolarized light. cosI: cosine of the incident
+// angle, eta: index of refraction on the incident side / on the other side. 1 = total internal reflection.
+float FresnelDielectric(float cosI, float eta)
+{
+    float sin2T = eta * eta * saturate(1.0f - cosI * cosI);
+    if (sin2T >= 1.0f)
+        return 1.0f;
+
+    float cosT = sqrt(1.0f - sin2T);
+    float rs = (eta * cosI - cosT) / (eta * cosI + cosT);
+    float rp = (cosI - eta * cosT) / (cosI + eta * cosT);
+    return 0.5f * (rs * rs + rp * rp);
 }
 
 // Analytic fit of the pre-integrated GGX environment BRDF (Karis, "Physically Based Shading on Mobile").
@@ -75,7 +97,17 @@ Surface MakeSurface(HitPayload hit, float3 N, float3 V)
     s.isMirror = s.roughness < MIRROR_ROUGHNESS;
     s.alpha = max(s.roughness * s.roughness, MIRROR_ROUGHNESS * MIRROR_ROUGHNESS);
 
-    s.F0 = lerp(float3(DIELECTRIC_F0 * hit.specularWeight), baseColor, metallic);
+    // Solids: the stored geometric normal points out of the solid (see closest_hit.slang)
+    s.isSolid = hit.ior > 0.0f && transmission > 0.0f;
+    s.entering = dot(hit.geometricNormal, V) >= 0.0f;
+    float ior = max(hit.ior, 1.0f);
+    s.eta = s.entering ? 1.0f / ior : ior;
+    s.transmission = transmission;
+    s.specularScale = s.isSolid ? 1.0f - transmission : 1.0f;
+
+    float iorF0 = (ior - 1.0f) / (ior + 1.0f);
+    float dielectricF0 = s.isSolid ? iorF0 * iorF0 : DIELECTRIC_F0;
+    s.F0 = lerp(float3(dielectricF0 * hit.specularWeight), baseColor, metallic);
     s.diffuseColor = baseColor * (1.0f - metallic) * (1.0f - transmission);
 
     float2 envBRDF = EnvironmentBRDF(s.roughness, s.NdotV);
@@ -86,14 +118,16 @@ Surface MakeSurface(HitPayload hit, float3 N, float3 V)
     // assuming the lost part is reflected with the same colour (Kulla & Conty / Filament).
     s.energyCompensation = 1.0f + s.F0 * (1.0f / max(envBRDF.x + envBRDF.y, 1e-3f) - 1.0f);
 
-    // What is not reflected by the specular layer is either transmitted or scattered diffusely
+    // What is not reflected by the specular layer is either transmitted or scattered diffusely.
+    // Solid glass has its own reflection (the refraction lobe chooses between the two by Fresnel).
     float3 belowSpecular = 1.0f - s.specularAlbedo;
     s.diffuseColor *= belowSpecular;
-    s.transmitColor = baseColor * transmission * belowSpecular;
+    s.transmitColor = baseColor * transmission * (s.isSolid ? 1.0f : belowSpecular);
+    s.specularAlbedo *= s.specularScale;
 
     float wSpecular = Luminance(s.specularAlbedo);
     float wDiffuse = Luminance(s.diffuseColor);
-    float wTransmission = Luminance(s.transmitColor);
+    float wTransmission = s.isSolid ? transmission : Luminance(s.transmitColor);
     float wSum = max(wSpecular + wDiffuse + wTransmission, 1e-6f);
 
     s.pSpecular = wSpecular / wSum;
@@ -184,7 +218,7 @@ float3 EvalBsdf(Surface s, float3 V, float3 L, out float pdf)
         float D = GGX_D(NdotH, s.alpha);
         float visibility = GGX_Visibility(NdotL, s.NdotV, s.alpha);
 
-        result += F * (D * visibility * NdotL) * s.energyCompensation;
+        result += F * (D * visibility * NdotL) * s.energyCompensation * s.specularScale;
         pdf += s.pSpecular * VisibleNormalPdf(s.NdotV, NdotH, s.alpha);
     }
 
@@ -199,7 +233,8 @@ struct BsdfSample
     float3 weight;     // BSDF * cosine / pdf: multiply the path throughput with this
     float pdf;         // Density of L (meaningless for delta lobes)
     bool isDelta;      // Perfect mirror or transmission: cannot be hit by light sampling
-    bool isTransmission;
+    bool isTransmission; // Went through the surface: straight (thin glass) or refracted (solid)
+    bool isRefraction;   // Refracted into or out of a solid
     bool valid;
 };
 
@@ -211,10 +246,52 @@ BsdfSample SampleBsdf(Surface s, float3 V, inout uint rng)
     result.pdf = 0.0f;
     result.isDelta = false;
     result.isTransmission = false;
+    result.isRefraction = false;
     result.valid = false;
 
     float lobe = NextRandomFloat(rng);
     float2 u = NextRandomFloat2(rng);
+
+    float3 tangent, bitangent;
+    BuildBasis(s.N, tangent, bitangent);
+
+    // Solid glass: reflect or refract, chosen by the Fresnel term of the (micro)facet
+    if (lobe < s.pTransmission && s.isSolid)
+    {
+        float3 H = s.N;
+        if (!s.isMirror)
+        {
+            float3 Ve = float3(dot(V, tangent), dot(V, bitangent), dot(V, s.N));
+            float3 He = SampleVisibleNormal(Ve, s.alpha, u);
+            H = tangent * He.x + bitangent * He.y + s.N * He.z;
+        }
+
+        float VdotH = dot(V, H);
+        if (VdotH <= 0.0f)
+            return result;
+
+        float F = FresnelDielectric(VdotH, s.eta);
+        float3 refracted = refract(-V, H, s.eta);
+        bool reflects = NextRandomFloat(rng) < F || dot(refracted, refracted) < 1e-6f;
+
+        result.L = reflects ? reflect(-V, H) : normalize(refracted);
+        float NdotL = dot(s.N, result.L);
+        if (reflects ? NdotL <= 0.0f : NdotL >= 0.0f)
+            return result;
+
+        // Choosing between the two by F cancels the Fresnel term. With visible normal sampling,
+        // what remains of the microfacet BTDF/BRDF is the masking of the outgoing direction.
+        float masking = s.isMirror ? 1.0f : GGX_G1(abs(NdotL), s.alpha);
+        float3 tint = reflects ? float3(s.transmission) : s.transmitColor;
+        result.weight = tint * (masking / s.pTransmission);
+
+        // Light sampling never evaluates this lobe, so a light it finds counts in full (as for a mirror)
+        result.isDelta = true;
+        result.isTransmission = !reflects;
+        result.isRefraction = !reflects;
+        result.valid = true;
+        return result;
+    }
 
     // Thin glass: continue straight through
     if (lobe < s.pTransmission)
@@ -227,15 +304,12 @@ BsdfSample SampleBsdf(Surface s, float3 V, inout uint rng)
         return result;
     }
 
-    float3 tangent, bitangent;
-    BuildBasis(s.N, tangent, bitangent);
-
     bool sampledSpecular = lobe < s.pTransmission + s.pSpecular;
 
     if (sampledSpecular && s.isMirror)
     {
         result.L = reflect(-V, s.N);
-        result.weight = FresnelSchlick(s.NdotV, s.F0, s.f90) / s.pSpecular;
+        result.weight = FresnelSchlick(s.NdotV, s.F0, s.f90) * (s.specularScale / s.pSpecular);
         result.isDelta = true;
         result.valid = dot(s.N, result.L) > 0.0f;
         return result;

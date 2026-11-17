@@ -13,46 +13,8 @@ struct Vertex
     float4 tangent; // xyz + handedness, all zero if the mesh has no tangents
 };
 
-// Mirrors Fox::Graphics::Vulkan::Submesh (Vertex.h)
-struct Submesh
-{
-    uint vertexOffset;
-    uint indexOffset;
-    uint vertexCount;
-    uint indexCount;
-    uint materialIndex;
-    uint pad0;
-    uint pad1;
-    uint pad2;
-};
-
-// Mirrors Fox::Graphics::Vulkan::Material (Material.h)
-struct Material
-{
-    float4 baseColor;
-
-    float3 emissive;
-    float normalScale;
-
-    float roughness;
-    float metallic;
-    float transmission;
-    float specularWeight;
-
-    int baseColorTexture;
-    int metallicRoughnessTexture;
-    int normalTexture;
-    int emissiveTexture;
-
-    float2 uvScale;
-    float uvRotation;
-    int lightIndex;
-};
-
 [[vk::binding(3, 0)]] StructuredBuffer<Vertex> gAllVertices;
 [[vk::binding(4, 0)]] StructuredBuffer<uint> gAllIndices;
-[[vk::binding(5, 0)]] StructuredBuffer<Submesh> gAllSubmeshes;
-[[vk::binding(6, 0)]] StructuredBuffer<Material> gAllMaterials;
 
 [[vk::binding(1, 1)]] Sampler2D gTextures[];
 
@@ -107,6 +69,11 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
 
     float3 localNormal = v0.normal.xyz * barycentrics.x + v1.normal.xyz * barycentrics.y + v2.normal.xyz * barycentrics.z;
     float3 N = dot(localNormal, localNormal) > 0.0f ? normalize(mul(localNormal, worldToObject)) : geometricNormal;
+
+    // The geometric normal faces the same way as the authored normals (outwards on closed meshes),
+    // whatever the triangle winding: refraction relies on it to tell entering from leaving a solid
+    if (dot(geometricNormal, N) < 0.0f)
+        geometricNormal = -geometricNormal;
 
     float2 uv0 = TransformUV(v0.uv, material);
     float2 uv1 = TransformUV(v1.uv, material);
@@ -182,6 +149,8 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
     payload.metallic = metallic;
     payload.roughness = roughness;
     payload.transmission = material.transmission;
+    payload.ior = material.ior;
+    payload.absorption = float3(material.absorptionR, material.absorptionG, material.absorptionB);
     payload.specularWeight = material.specularWeight;
     payload.emission = emission;
     payload.lightIndex = material.lightIndex;

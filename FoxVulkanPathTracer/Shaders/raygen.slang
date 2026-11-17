@@ -26,6 +26,10 @@
 static const int MAX_BOUNCES = 4;
 static const int ROULETTE_START_BOUNCE = 1;
 
+// Mirror reflections and refractions do not count as bounces, up to this many: light reaching a
+// surface through a glass ball has crossed two of them, and inside glass it may reflect a few times
+static const int MAX_DELTA_EVENTS = 6;
+
 // See EnvironmentSelectionProbability()
 static const float ENVIRONMENT_LIGHT_PROBABILITY = 0.5f;
 
@@ -36,8 +40,9 @@ static const float SPECULAR_DISTANCE_MAX_ROUGHNESS = 0.5f;
 // paths ("fireflies") would otherwise take very long to average out. Slightly darkens caustics.
 static const float INDIRECT_RADIANCE_CLAMP = 12.0f;
 
-// How many mirrors / glass panes in a row the G-buffer looks through
-static const int MAX_LOOK_THROUGH = 3;
+// How many mirrors / glass surfaces in a row the G-buffer looks through (a glass ball is two, and
+// the glossy ground under a ball reflects the ball again)
+static const int MAX_LOOK_THROUGH = 6;
 
 // Glossy surfaces up to this roughness count as mirrors for the G-buffer, as long as the
 // reflection dominates their look: the denoiser then keeps the edges of what is reflected.
@@ -78,8 +83,15 @@ HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
     return payload;
 }
 
-// Is anything between origin and the light? Windows do not block light: shadow rays skip glass.
-bool IsOccluded(float3 origin, float3 direction, float distance)
+// Fraction of a light's radiance that reaches origin from `direction` (0 = in shadow).
+//   - Opaque surfaces block it.
+//   - Thin glass (windows) lets it through unchanged.
+//   - Solid glass refracts: the light that gets through arrives from other directions, which the
+//     paths find themselves (a ray refracted through a glass ball reaches the sky). So shadow rays
+//     towards the sky are blocked by it. Analytic lights (the sun) cannot be found that way, since a
+//     scattered direction never hits them exactly: their shadow rays pass straight through solid glass
+//     (throughSolidGlass), tinted and absorbed by it. The light is not focused into caustics.
+float3 ShadowTransmittance(float3 origin, float3 direction, float distance, bool throughSolidGlass)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -90,10 +102,51 @@ bool IsOccluded(float3 origin, float3 direction, float distance)
     // Inline ray query: no shader is invoked and the path tracer's state stays in registers,
     // which makes this much cheaper than a TraceRay call for a yes/no answer.
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> query;
-    query.TraceRayInline(tlas, RAY_FLAG_NONE, INSTANCE_MASK_OPAQUE, ray);
+    query.TraceRayInline(tlas, RAY_FLAG_NONE, throughSolidGlass ? INSTANCE_MASK_OPAQUE : INSTANCE_MASK_OPAQUE | INSTANCE_MASK_SOLID_GLASS, ray);
     query.Proceed();
 
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+        return float3(0.0f);
+    if (!throughSolidGlass)
+        return float3(1.0f);
+
+    // Every crossing of a solid glass surface: as non-opaque candidates that are never committed,
+    // the query reports all of them
+    RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> glass;
+    glass.TraceRayInline(tlas, RAY_FLAG_NONE, INSTANCE_MASK_SOLID_GLASS, ray);
+
+    float3 transmittance = float3(1.0f);
+    float3 absorption = float3(0.0f);
+    float nearest = distance;
+    float farthest = 0.0f;
+    uint crossings = 0;
+
+    while (glass.Proceed())
+    {
+        Submesh submesh = gAllSubmeshes[glass.CandidateInstanceID() + glass.CandidateGeometryIndex()];
+        Material material = gAllMaterials[submesh.materialIndex];
+
+        // Tinted, minus what the surface reflects (at normal incidence)
+        float iorF0 = (material.ior - 1.0f) / (material.ior + 1.0f);
+        transmittance *= material.baseColor.rgb * (saturate(material.transmission) * (1.0f - iorF0 * iorF0));
+        absorption = max(absorption, float3(material.absorptionR, material.absorptionG, material.absorptionB));
+
+        float t = glass.CandidateTriangleRayT();
+        nearest = min(nearest, t);
+        farthest = max(farthest, t);
+        crossings++;
+
+        if (MaxComponent(transmittance) < 1e-3f)
+        {
+            glass.Abort();
+            return float3(0.0f);
+        }
+    }
+
+    // Distance travelled inside glass: between the first and the last crossing, or from the
+    // origin when it starts inside (an odd number of crossings)
+    float inside = crossings == 0 ? 0.0f : (crossings % 2 == 0 ? farthest - nearest : farthest);
+    return transmittance * exp(-absorption * inside);
 }
 
 // Offsets a ray origin off the surface, to the side the ray leaves towards
@@ -164,6 +217,7 @@ float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, 
     float3 radiance;
     float lightPdf;   // Including the choice between environment and analytic lights
     bool isDelta = false;
+    bool isEnvironment = false;
 
     if (NextRandomFloat(rng) < environmentProbability)
     {
@@ -175,6 +229,7 @@ float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, 
         distance = RAY_MAX_DISTANCE;
         radiance = EnvironmentRadiance(L);
         lightPdf = environmentPdf * environmentProbability;
+        isEnvironment = true;
     }
     else
     {
@@ -197,11 +252,15 @@ float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, 
     float3 bsdf = EvalBsdf(surface, V, L, bsdfPdf);
 
     // The shadow ray is the expensive part: skip it when the light could not contribute anyway
-    if (MaxComponent(bsdf * radiance) <= 0.0f || IsOccluded(OffsetRayOrigin(position, geometricNormal, L), L, distance))
+    if (MaxComponent(bsdf * radiance) <= 0.0f)
+        return float3(0.0f);
+
+    float3 transmittance = ShadowTransmittance(OffsetRayOrigin(position, geometricNormal, L), L, distance, !isEnvironment);
+    if (MaxComponent(transmittance) <= 0.0f)
         return float3(0.0f);
 
     float weight = isDelta ? 1.0f : PowerHeuristic(lightPdf, bsdfPdf);
-    return bsdf * radiance * (weight / lightPdf);
+    return bsdf * radiance * transmittance * (weight / lightPdf);
 }
 
 float3 ClampIndirect(float3 radiance)
@@ -222,9 +281,13 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
     bool sampledDelta = true; // Camera rays and mirror bounces: light sampling could not have found this
     bool isIndirect = false;  // True once the path has scattered diffusely or glossily
 
-    for (int bounce = 0; bounce <= MAX_BOUNCES; bounce++)
+    float3 mediumAbsorption = float3(0.0f); // Inside a solid: its absorption per meter
+
+    // bounce counts diffuse and glossy scattering; mirror reflections and refractions are extra
+    int bounce = 0;
+    for (int segment = 0; segment <= MAX_BOUNCES + MAX_DELTA_EVENTS; segment++)
     {
-        HitPayload hit = (bounce == 0 && hasFirstHit) ? firstHit : TraceSurface(origin, direction, bounce > 0);
+        HitPayload hit = (segment == 0 && hasFirstHit) ? firstHit : TraceSurface(origin, direction, segment > 0);
 
         // --- Left the scene: environment ---
         if (hit.hitT < 0.0f)
@@ -234,6 +297,9 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
             radiance += isIndirect ? ClampIndirect(contribution) : contribution;
             break;
         }
+
+        // Absorbed inside glass on the way here (Beer-Lambert)
+        throughput *= exp(-mediumAbsorption * hit.hitT);
 
         float3 position = origin + direction * hit.hitT;
         float3 V = -direction;
@@ -256,7 +322,7 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
             radiance += isIndirect ? ClampIndirect(contribution) : contribution;
         }
 
-        if (bounce == MAX_BOUNCES)
+        if (bounce == MAX_BOUNCES || segment == MAX_BOUNCES + MAX_DELTA_EVENTS)
             break;
 
         Surface surface = MakeSurface(hit, N, V);
@@ -270,25 +336,36 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
         if (!scatter.valid)
             break;
 
-        // Reflections must stay above the real surface, or light leaks through it
-        if (!scatter.isTransmission && dot(geometricNormal, scatter.L) <= 0.0f)
+        // Reflections must stay above the real surface and refractions below it, or light leaks through
+        if (scatter.isRefraction ? dot(geometricNormal, scatter.L) >= 0.0f
+            : !scatter.isTransmission && dot(geometricNormal, scatter.L) <= 0.0f)
             break;
 
         throughput *= scatter.weight;
 
-        // Passing straight through a window does not change how the direction was sampled
-        if (!scatter.isTransmission)
+        if (scatter.isRefraction)
         {
+            // Into the solid, or back out of it
+            mediumAbsorption = surface.entering ? hit.absorption : float3(0.0f);
+            sampledDelta = true;
+            isIndirect = isIndirect || !surface.isMirror;
+        }
+        else if (!scatter.isTransmission)
+        {
+            // (Passing straight through a window does not change how the direction was sampled)
             bsdfPdf = scatter.pdf;
             sampledDelta = scatter.isDelta;
             isIndirect = isIndirect || !scatter.isDelta;
         }
 
+        if (!scatter.isDelta)
+            bounce++;
+
         origin = OffsetRayOrigin(position, geometricNormal, scatter.L);
         direction = scatter.L;
 
         // Russian roulette: end dim paths early, boost the survivors to stay unbiased
-        if (bounce >= ROULETTE_START_BOUNCE)
+        if (segment >= ROULETTE_START_BOUNCE)
         {
             float survival = clamp(MaxComponent(throughput), 0.05f, 0.95f);
             if (NextRandomFloat(rng) >= survival)
@@ -338,6 +415,7 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
 
     float3 tint = float3(1.0f); // Colour picked up from the mirrors and panes on the way
     float pathLength = 0.0f;
+    float3 mediumAbsorption = float3(0.0f);
 
     // The last reflector passed, used when its reflection turns out to show only sky
     PrimarySurface reflector = result;
@@ -353,12 +431,19 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
         float3 position = origin + direction * hit.hitT;
         float3 V = -direction;
         pathLength += hit.hitT;
+        tint *= exp(-mediumAbsorption * hit.hitT);
 
         float3 geometricNormal, N;
         OrientNormals(hit, V, geometricNormal, N);
         Surface surface = MakeSurface(hit, N, V);
 
         bool isGlass = surface.pTransmission > 0.5f;
+
+        // Curved glass solids (a ball) are not looked through for denoisers that follow reflections
+        // (SVGF): the view through them shifts a lot with the sub-pixel jitter, which would make the
+        // filter reject its history every frame. The glass surface itself is stable to filter on.
+        bool opaqueToDenoiser = isGlass && surface.isSolid && followReflections;
+        isGlass = isGlass && !opaqueToDenoiser;
         bool isMirror = followReflections && surface.roughness < LOOK_THROUGH_ROUGHNESS
             && Luminance(surface.specularAlbedo) > Luminance(surface.diffuseColor);
 
@@ -373,7 +458,17 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
                 reflector.roughness = surface.roughness;
             }
 
+            // Through glass: straight on through a pane, refracted into and out of a solid (or reflected
+            // inside it, past the critical angle). The view through a glass ball is what gets denoised.
             float3 next = isGlass ? direction : reflect(direction, N);
+            if (isGlass && surface.isSolid)
+            {
+                float3 refracted = refract(direction, N, surface.eta);
+                bool totalInternalReflection = dot(refracted, refracted) < 1e-6f;
+                next = totalInternalReflection ? reflect(direction, N) : normalize(refracted);
+                if (!totalInternalReflection)
+                    mediumAbsorption = surface.entering ? hit.absorption : float3(0.0f);
+            }
             tint *= isGlass ? surface.transmitColor : FresnelSchlick(surface.NdotV, surface.F0, surface.f90);
 
             origin = OffsetRayOrigin(position, geometricNormal, next);
@@ -381,9 +476,18 @@ PrimarySurface FindPrimarySurface(float3 origin, float3 direction, HitPayload fi
             continue;
         }
 
+        // Out of look-through steps on glass or a mirror: describe the last mirror passed if there was
+        // one. Otherwise this surface, with its transmission or reflection as the albedo: denoisers
+        // divide by the albedo, and clear glass has no diffuse colour at all.
+        bool exhausted = isGlass || isMirror;
+        if (exhausted && reflector.distance >= 0.0f)
+            return reflector;
+
         result.normal = N;
         result.distance = pathLength;
-        result.diffuseAlbedo = surface.diffuseColor * tint;
+        result.diffuseAlbedo = (opaqueToDenoiser ? surface.transmitColor
+            : exhausted ? (isGlass ? surface.transmitColor : surface.specularAlbedo)
+            : surface.diffuseColor) * tint;
         result.specularAlbedo = surface.specularAlbedo * tint;
         result.roughness = surface.roughness;
 
