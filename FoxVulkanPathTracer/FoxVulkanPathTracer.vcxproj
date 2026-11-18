@@ -191,6 +191,71 @@
     <ClCompile Include="Graphics\Vulkan\OverlayRenderer.cpp" />
     <ClCompile Include="Editor\TransformGizmo.cpp" />
     <ClCompile Include="Scene\TextureLibrary.cpp" />
+    <ClCompile Include="..\ThirdParty\meshoptimizer\allocator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\clusterizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\indexanalyzer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\indexcodec.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\indexgenerator.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\meshletcodec.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\meshletutils.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\opacitymap.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\overdrawoptimizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\partition.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\quantization.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\rasterizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\remesher.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\simplifier.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\spatialorder.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\stripifier.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\tangentspace.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\vcacheoptimizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\vertexcodec.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\vertexfilter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\ThirdParty\meshoptimizer\vfetchoptimizer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="Graphics\Geometry\ClusterLod.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\ClusterLodPass.cpp" />
     <ClCompile Include="..\ThirdParty\imgui\imgui.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -218,6 +283,7 @@
     <ClCompile Include="Editor\TerrainEditor.cpp" />
     <ClCompile Include="Scene\SceneFile.cpp" />
     <ClCompile Include="Scene\SceneGraph.cpp" />
+    <ClCompile Include="Scene\WaterSimulation.cpp" />
     <ClCompile Include="Editor\SceneGraphEditor.cpp" />
     <ClCompile Include="Editor\EditorShell.cpp" />
     <ClCompile Include="Editor\ContentBrowser.cpp" />
@@ -321,7 +387,11 @@
     <ClInclude Include="Editor\EditorShell.h" />
     <ClInclude Include="Editor\ContentBrowser.h" />
     <ClInclude Include="Editor\MeshPainter.h" />
+    <ClInclude Include="Graphics\Geometry\ClusterLod.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\ClusterLodPass.h" />
+    <ClInclude Include="..\ThirdParty\meshoptimizer\meshoptimizer.h" />
     <ClInclude Include="Scene\SceneGraph.h" />
+    <ClInclude Include="Scene\WaterSimulation.h" />
     <ClInclude Include="Scene\SceneContent.h" />
     <ClInclude Include="Scene\ECS\Entity.h" />
     <ClInclude Include="Scene\ECS\Registry.h" />
@@ -415,6 +485,61 @@
     <SlangShader Include="Shaders\skinning.slang">
       <Stage>compute</Stage>
     </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_velocity</Suffix>
+      <Defines>-DPASS=0</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_outflow</Suffix>
+      <Defines>-DPASS=1</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_depth</Suffix>
+      <Defines>-DPASS=2</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_surface</Suffix>
+      <Defines>-DPASS=3</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_foam</Suffix>
+      <Defines>-DPASS=4</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_emit</Suffix>
+      <Defines>-DPASS=5</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\water.slang">
+      <Stage>compute</Stage>
+      <Suffix>_particles</Suffix>
+      <Defines>-DPASS=6</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\cluster_lod.slang">
+      <Stage>compute</Stage>
+      <Suffix>_select</Suffix>
+      <Defines>-DPASS=0</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\cluster_lod.slang">
+      <Stage>compute</Stage>
+      <Suffix>_prepare</Suffix>
+      <Defines>-DPASS=1</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\cluster_lod.slang">
+      <Stage>compute</Stage>
+      <Suffix>_refs</Suffix>
+      <Defines>-DPASS=2</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\cluster_lod.slang">
+      <Stage>compute</Stage>
+      <Suffix>_patch</Suffix>
+      <Defines>-DPASS=3</Defines>
+    </SlangShader>
     <SlangShader Include="Shaders\overlay_vert.slang">
       <Stage>vertex</Stage>
     </SlangShader>
@@ -428,6 +553,7 @@
   <ItemGroup>
     <!-- Shared includes (SlangInclude: editing one rebuilds every shader) and shader experiments that are not part of the build -->
     <SlangInclude Include="Shaders\common.slang" />
+    <SlangInclude Include="Shaders\water_waves.slang" />
     <SlangInclude Include="Shaders\denoise_common.slang" />
     <SlangInclude Include="Shaders\bsdf.slang" />
     <SlangInclude Include="Shaders\lighting.slang" />

@@ -12,6 +12,7 @@ namespace Fox {
 			using Fox::Scene::MeshComponent;
 			using Fox::Scene::TransformComponent;
 			using Fox::Scene::LightComponent;
+			using Fox::Scene::WaterComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -215,6 +216,69 @@ namespace Fox {
 				}
 			}
 
+			void DrawWater(Scene& scene, Entity entity, State&) {
+				WaterComponent& water = scene.GetSceneGraph().GetRegistry().Get<WaterComponent>(entity);
+
+				// Its extent: placed anew when let go
+				bool shape = ImGui::Checkbox("On", &water.enabled);
+				shape |= ImGui::DragFloat2("Size (m)", &water.size.x, 0.1f, 1.0f, 500.0f, "%.1f");
+				shape |= ImGui::SliderFloat("Cell size (m)", &water.cellSize, 0.05f, 1.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				const uint32_t width = std::clamp(static_cast<uint32_t>(std::round(water.size.x / std::max(water.cellSize, 0.02f))), 4u, 512u);
+				const uint32_t depth = std::clamp(static_cast<uint32_t>(std::round(water.size.y / std::max(water.cellSize, 0.02f))), 4u, 512u);
+				ImGui::TextDisabled("%u x %u cells. The water fills up to the entity's height; move it to change the level.", width, depth);
+				if (shape) {
+					scene.MarkStructureChanged();
+				}
+
+				ImGui::SeparatorText("Look");
+				bool look = ImGui::ColorEdit3("Colour in depth", &water.color.x);
+				ImGui::SetItemTooltip("What white light turns into after Clarity metres of water (absorption)");
+				look |= ImGui::DragFloat("Clarity (m)", &water.clarity, 0.05f, 0.1f, 100.0f, "%.2f");
+				look |= ImGui::SliderFloat("Roughness", &water.roughness, 0.0f, 0.3f, "%.3f");
+				look |= ImGui::SliderFloat("Ripples", &water.ripples, 0.0f, 2.0f, "%.2f");
+				ImGui::SetItemTooltip("The wind's ripples finer than the simulation's cells (capillary and short gravity waves)");
+
+				ImGui::SeparatorText("Motion");
+				look |= ImGui::SliderFloat("Wind (m/s)", &water.windSpeed, 0.0f, 25.0f, "%.1f");
+				look |= ImGui::SliderFloat("Wind towards", &water.windDirection, -180.0f, 180.0f, "%.0f deg");
+				if (look) {
+					scene.WaterLookChanged(entity);
+				}
+				ImGui::SliderFloat("Gusts", &water.gust, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat("Rain", &water.rain, 0.0f, 5.0f, "%.2f drops/m2/s", ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat("Drop size (m)", &water.dropSize, 0.05f, 2.0f, "%.2f");
+				ImGui::SliderFloat("Drop strength (m)", &water.dropStrength, 0.001f, 0.2f, "%.3f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat("Viscosity", &water.viscosity, 0.0f, 0.5f, "%.3f m2/s");
+				ImGui::SetItemTooltip("Eddy viscosity: how quickly the motion smooths out (the turbulence finer than a cell)");
+				ImGui::SliderFloat("Bed friction", &water.friction, 0.0f, 0.05f, "%.4f");
+				ImGui::Checkbox("Splash where clicked", &water.splashOnClick);
+				ImGui::SetItemTooltip("In edit mode, a click on the water splashes it (instead of selecting)");
+
+				ImGui::SeparatorText("Foam and spray");
+				ImGui::SliderFloat("Foam", &water.foam, 0.0f, 3.0f, "%.2f");
+				ImGui::SetItemTooltip("How much foam breaking and churning water makes: steep wave faces, converging flow, the shore, fast water, splashes");
+				ImGui::SliderFloat("Foam lifetime (s)", &water.foamLifetime, 0.5f, 30.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Time for foam to fade to a third (the bubbles burst)");
+				ImGui::SliderFloat("Spray", &water.spray, 0.0f, 3.0f, "%.2f");
+				ImGui::SetItemTooltip("How many droplets breaking water throws up (and the wind tears off crests above 9 m/s)");
+				ImGui::SliderFloat("Droplet size (m)", &water.dropletSize, 0.002f, 0.05f, "%.3f", ImGuiSliderFlags_Logarithmic);
+				int droplets = static_cast<int>(water.sprayDroplets);
+				if (ImGui::SliderInt("Droplets in flight", &droplets, 0, 65536, "%d", ImGuiSliderFlags_Logarithmic)) {
+					water.sprayDroplets = static_cast<uint32_t>(std::max(droplets, 0));
+				}
+				ImGui::SetItemTooltip("Room for droplets at once (0: no spray). Changing it places the water anew");
+				if (ImGui::IsItemDeactivatedAfterEdit()) {
+					scene.MarkStructureChanged();
+				}
+
+				if (water.placed && water.simulation) {
+					ImGui::TextDisabled("Simulated in %u steps a frame", water.simulation->LastSubsteps());
+				}
+				else {
+					ImGui::TextDisabled("Not in the scene yet: it rebuilds once no control is held");
+				}
+			}
+
 			const ComponentEditor COMPONENT_EDITORS[] = {
 				{
 					"Transform", false,
@@ -266,6 +330,26 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.RemoveLightComponent(entity); },
 					DrawLight,
+				},
+				{
+					"Water", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<WaterComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Water")) {
+							scene.GetSceneGraph().GetRegistry().Add<WaterComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						auto& registry = scene.GetSceneGraph().GetRegistry();
+						if (WaterComponent* water = registry.TryGet<WaterComponent>(entity)) {
+							water->enabled = false; // Taken out (and its surface hidden) before the component goes
+						}
+						scene.Update(0.0f);
+						registry.Remove<WaterComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawWater,
 				},
 			};
 		}
@@ -491,6 +575,10 @@ namespace Fox {
 			if (const LightComponent* light = graph.GetRegistry().TryGet<LightComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s%s", LightComponent::TypeName(light->type), light->enabled ? "" : " (off)");
+			}
+			if (const WaterComponent* water = graph.GetRegistry().TryGet<WaterComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("Water%s", water->enabled ? "" : " (off)");
 			}
 
 			if (open && !leaf) {

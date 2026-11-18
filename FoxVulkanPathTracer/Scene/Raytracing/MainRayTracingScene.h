@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <memory>
+#include <random>
 
 namespace Fox {
 
@@ -116,6 +117,16 @@ namespace Fox {
                 // The entity rendered as a ray tracing scene object; null for the ground, terrain or nothing
                 Entity GetEntityOfObject(int object) const;
 
+                // --- Water (WaterComponent, Scene/WaterSimulation.h) ---
+
+                // A new entity with water, centred at position (its height is the water level)
+                Entity AddWater(const glm::vec3& position, Entity parent = {});
+                // The look of a water entity changed (colour, clarity, roughness): no rebuild
+                void WaterLookChanged(Entity entity);
+                // A click in edit mode: splashes the water it lands on (with splashing on); false if it hits none
+                bool SplashWater(const glm::vec3& origin, const glm::vec3& direction);
+                void RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) override;
+
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
                     const bool changed = objectsChanged;
@@ -181,6 +192,19 @@ namespace Fox {
 
                 // Moves and shows / hides the placed meshes as their entities are now
                 void SyncMeshes();
+                // Water: drops (rain and wind gusts) and a rebuild once moved water has come to rest
+                void UpdateWater(float dt);
+                void PlaceWater(Entity entity, Fox::Scene::WaterComponent& water);
+                struct PendingWater {
+                    Entity entity;
+                    std::vector<float> bed, depth;
+                    Fox::Scene::WaterSimulation::Grid grid;
+                    uint32_t droplets = 0;
+                };
+                std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
+                float frameTime = 0.0f;
+                float waterMovedFor = -1.0f;            // Seconds since water was last moved (-1: not moving)
+                std::mt19937 waterRandom{ 4242u };
                 // The placed lights as their entities are now
                 void SyncLights();
                 bool objectsChanged = false;

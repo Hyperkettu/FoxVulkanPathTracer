@@ -3,6 +3,9 @@
 
 #include "common.slang"
 #include "terrain.slang"
+#include "water_waves.slang"
+
+[[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
 
 // Where the vertices of skinned meshes were in the previous frame, mesh space (see skinning.slang)
 [[vk::binding(15, 0)]] StructuredBuffer<float4> gPreviousSkinnedPositions;
@@ -143,13 +146,30 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
         }
     }
 
+    // --- Water: the wind's ripples, finer than its simulation, and foam ---
+    float transmission = material.transmission;
+    if (material.layerMaterial == WATER_MATERIAL)
+    {
+        float3 position = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+        float footprint = length(position - camera.camPos) * 2.0f * camera.tanHalfFov / max(camera.resolution.y, 1.0f);
+        float2 wind = float2(material.uvScale[0], material.uvScale[1]);
+        N = WaterRipples(N, position, wind, material.normalScale, camera.time, footprint, roughness);
+
+        // Foam is a froth of bubbles: it scatters light every way, so it is white, rough and opaque
+        float foamAmount = v0.padding.x * barycentrics.x + v1.padding.x * barycentrics.y + v2.padding.x * barycentrics.z;
+        float coverage = WaterFoamCoverage(foamAmount, position, wind, camera.time, footprint);
+        baseColor = lerp(baseColor, float3(0.92f, 0.93f, 0.94f), coverage);
+        roughness = lerp(roughness, 0.85f, coverage);
+        transmission *= 1.0f - coverage;
+    }
+
     payload.hitT = RayTCurrent();
     payload.geometricNormal = geometricNormal;
     payload.shadingNormal = N;
     payload.baseColor = baseColor;
     payload.metallic = metallic;
     payload.roughness = roughness;
-    payload.transmission = material.transmission;
+    payload.transmission = transmission;
     payload.ior = material.ior;
     payload.absorption = float3(material.absorptionR, material.absorptionG, material.absorptionB);
     payload.specularWeight = material.specularWeight;

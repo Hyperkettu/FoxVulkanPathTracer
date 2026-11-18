@@ -55,6 +55,7 @@
 #include "FoxVulkanPathTracer/Graphics/Geometry/Submesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/Vulkan/Mesh.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/SkinnedMesh.h"
+#include "FoxVulkanPathTracer/Graphics/Geometry/ClusterLod.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/Spline.h"
 #include "FoxVulkanPathTracer/Graphics/Geometry/TreeGenerator.h"
 #include "FoxVulkanPathTracer/Animation/WindSkeleton.h"
@@ -70,6 +71,7 @@
 
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/OpacityMicromap.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/ClusterLodPass.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"
@@ -128,6 +130,7 @@
 #include "FoxVulkanPathTracer/Scene/ECS/Registry.h"
 #include "FoxVulkanPathTracer/Scene/ECS/Components.h"
 #include "FoxVulkanPathTracer/Scene/SceneGraph.h"
+#include "FoxVulkanPathTracer/Scene/WaterSimulation.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 #include "FoxVulkanPathTracer/Editor/SceneGraphEditor.h"

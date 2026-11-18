@@ -293,6 +293,104 @@ Limits: every distinct tree takes room in the space reserved for dynamic geometr
 vertices: about half a dozen detailed trees), so variants are few and instances many. Up to 16,384 top level instances:
 half for models and spheres, the rest for trees.
 
+### Cluster level of detail (trees)
+
+On GPUs with `VK_NV_cluster_acceleration_structure` (NVIDIA RTX, recent drivers) trees are traced with continuous
+level of detail, after Nanite, through cluster acceleration structures (RTX Mega Geometry). `FOX_NO_CLUSTER_LOD=1`
+traces them at full detail as before, for comparisons; GPUs without the extension do that anyway.
+
+When a tree is generated, its mesh is cut into clusters of up to 128 triangles (`Graphics/Geometry/ClusterLod`, with
+[meshoptimizer](https://github.com/zeux/meshoptimizer), vendored in `ThirdParty/meshoptimizer`). Neighbouring
+clusters are grouped and each group is simplified to about half its triangles with its border locked, then cut into
+new clusters: the next level. Repeating that builds a graph from the full tree (about 2 200 clusters, 310 000
+triangles) up to a single cluster, in about 0.2 s. Each group records the error its simplification made and a bounding
+sphere. Leaf cards are not simplified that way (it would wreck their cutouts): their levels keep every other card and
+enlarge the kept ones so the canopy covers as much.
+
+Every frame (`Graphics/Vulkan/Raytracing/ClusterLodPass`, `Shaders/cluster_lod.slang`):
+
+1. Each instance picks its clusters: those whose own error is under the threshold seen from the camera while their
+   group's is not. Groups share their error and bounds and errors grow up the graph, so the picked clusters always
+   cover the tree once, without cracks. The CPU narrows the candidates per instance to the levels its distance can use.
+2. Every cluster some instance picked is instantiated from its template (built once, in the bind pose) with its
+   vertices as the wind left them this frame. A cluster is built once however many instances use it.
+3. Each instance gets a bottom level structure made of its clusters' structures (no triangles: fast), patched into
+   its top level instance before the top level build.
+
+Hit shading needs no changes: each cluster is a submesh, the instance's custom index its tree's first cluster and
+the geometry index the cluster. **Render > Tree Detail** sets the error allowed, in pixels of the displayed image (1 by
+default; larger is coarser and faster). The window title shows how many clusters were built and traced, and the GPU
+times break the scene update down (skin, lod select, clusters, instances, tlas).
+
+Measured on an RTX 3070 Laptop with a painted forest of 238 trees (7 variants), same view, 1280x840:
+
+| | Full detail | Cluster level of detail |
+| --- | --- | --- |
+| Skinning (+ refits) | 25 ms | 4 ms |
+| Selection, cluster and instance structures | | 7 ms |
+| Trace | 99 ms | 42 ms |
+| GPU frame | 144 ms | 63 ms |
+
+Limits: the cluster structures take memory: about 525 MiB for those 7 variants (templates, a structure for every
+cluster there is, and instance structures for up to 524 288 clusters; past that budget every tree gets coarser for a
+while). Clustered leaves are alpha tested by the any-hit shader, without opacity micromaps. The level of detail is
+chosen for the camera: reflections and shadows see the same clusters.
+
+### Water
+
+**Create > Water** makes an entity with a Water component: a rectangle of water centred where the entity is, filled
+up to its height and then left to flow. It lies on the ground (the terrain or the ground plane, sampled when it is
+placed): it fills hollows, runs down slopes and leaves dry land dry, so the shore is wherever the water meets the
+ground. On flat ground it stands as a sheet whose edges show; in a terrain basin it makes a lake.
+
+**Motion** (`Scene/WaterSimulation`, `Shaders/water.slang`): the shallow water equations, the Navier-Stokes equations
+averaged over the depth, on a staggered grid on the GPU. Each step the velocity is carried along by itself
+(semi-Lagrangian advection), spread by viscosity, pushed down the slope of the surface by gravity (the pressure
+term), slowed by bed friction and driven by the wind's stress; then each cell's depth changes by what flows in and
+out, with each cell's outflow limited to what it holds. Steps are small enough for waves (sqrt(g h)) to cross at most
+a third of a cell, so a frame takes a few. The grid's edges are walls. Rain drops, the wind's gusts and clicks in edit
+mode (with **Splash where clicked** on) add dips with a ring around them, which the water carries away as waves. The
+volume is read back every second and what rounding took is put back, so the water level holds.
+
+**Look**: water is a dielectric with an index of refraction of 1.333. The path tracer reflects and refracts it by
+Fresnel and absorbs light along each path through it (**Colour in depth** after **Clarity** metres: shallow water
+looks clear, deep water blue-green), and the sun lights the bed through it. The wind's ripples finer than the
+simulation's cells (1.5 cm to 60 cm, `Shaders/water_waves.slang`) are added to the shading normal: waves spread
+around the wind, each travelling at its own speed (omega^2 = g k + (sigma / rho) k^3: capillary and gravity waves),
+the short ones rising in a light breeze and the long ones with more wind. Waves too fine to show at the distance turn
+into roughness instead of flickering. The surface keeps where it was a frame ago, for motion vectors.
+
+| Setting | What it does |
+| --- | --- |
+| Size, Cell size | Extent and resolution (at most 512 cells a side); changing them places the water anew |
+| Colour in depth, Clarity | Absorption: the colour white light keeps after that many metres |
+| Roughness, Ripples | Micro roughness of the surface; strength of the fine wind ripples |
+| Wind, Wind towards, Gusts | The wind: its stress drives the flow, its gusts ruffle the surface, its ripples shade it |
+| Rain, Drop size, Drop strength | Raindrops per square metre and second |
+| Viscosity, Bed friction | How quickly motion smooths out, and how much the bed slows it (shallow water more) |
+| Foam, Foam lifetime | How much foam breaking water makes; seconds for it to fade to a third |
+| Spray, Droplet size, Droplets in flight | How many droplets are thrown up, their radius, and room for them at once (0: none) |
+
+**Foam** is a field on the grid, made where the water breaks or churns: steep wave faces (about to break), converging
+flow (wave fronts, bores), water running against the shore, fast turbulent water, drops and splashes, and spray falling
+back. The current carries it (semi-Lagrangian) and it fades as its bubbles burst. Each surface vertex takes its amount;
+the closest hit shader turns it into coverage, patchy streaks over noise drifting with the wind (a little foam is a few
+specks, a lot a sheet), and where it covers the water is white, rough and opaque: a froth scatters light every way.
+
+**Spray** is droplets thrown up where foam is made, faster where the water breaks harder, and torn off the crests by
+wind above 9 m/s (spume). They fly under gravity and quadratic air drag towards the wind (the small ones drift
+furthest) and land back as foam. Each droplet is a small octahedron in a second surface whose acceleration structure is
+built anew every frame; droplets not in flight have NaN corners, which the build skips. Spray is white: many droplets
+smaller than a pixel scatter light between them (and clear glass that small would trap rays by total internal
+reflection until they ran out of bounces, and look black).
+
+Moving the entity places the water anew once it stops (the simulation starts over). `FOX_WATER_DEBUG=1` logs the
+depth range, volume and steps every second.
+
+Limits: a vertical wave front cannot break (the equations have one height per point: breaking shows as foam and spray
+instead), spray does not collide with objects, and light refracted through the surface is not focused into caustics on
+the bed.
+
 ### Leaves, alpha testing and opacity micromaps
 
 The tree's thinner branches (level 2 and up) carry leaf cards: two along each branch segment, and one at each tip.

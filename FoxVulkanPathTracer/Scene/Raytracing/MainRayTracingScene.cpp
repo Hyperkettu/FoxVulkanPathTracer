@@ -143,10 +143,34 @@ namespace Fox {
 					light->index = RayTracingScene::AddLight(light->uploaded);
 					light->placed = true;
 				}
+				// Water: its surface (written by its simulation every frame), placed now; the simulations need the
+				// scene's buffers, made by Build
+				pendingWater.clear();
+				for (Entity entity : entities) {
+					if (Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(entity)) {
+						water->placed = false;
+						water->simulation = nullptr;
+						if (water->enabled && graph.IsActiveInHierarchy(entity)) {
+							PlaceWater(entity, *water);
+						}
+					}
+				}
 				objectEntities.resize(GetObjectCount());
 
 				Build();
 				structureChanged = false;
+
+				for (PendingWater& pending : pendingWater) {
+					Fox::Scene::WaterComponent& water = registry.Get<Fox::Scene::WaterComponent>(pending.entity);
+					const SimulatedRange range = GetSimulatedRange(water.surface);
+					const SimulatedRange spray = water.hasSpray ? GetSimulatedRange(water.spraySurface) : SimulatedRange{};
+					water.simulation = std::make_shared<Fox::Scene::WaterSimulation>(device, physicalDevice, commandPool->Get(), queue,
+						pending.grid, pending.bed, pending.depth, range.firstVertex, range.firstPrevious,
+						GetVertexStorageBuffer(), GetBuildVertexBuffer(), GetPreviousPositionsBuffer(),
+						pending.droplets, spray.firstVertex, spray.firstPrevious);
+					water.placed = true;
+				}
+				pendingWater.clear();
 
 				// Dynamic content: trees. Their objects went with the rest; until they are placed again they have none.
 				registry.Each<MeshComponent>([](Entity, MeshComponent& mesh) {
@@ -385,6 +409,15 @@ namespace Fox {
 						MeshChanged(nullptr, &type);
 					}
 					RemoveLightComponent(e);
+					if (Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(e); water && water->placed) {
+						SetObjectVisible(GetSurfaceObject(water->surface), false); // Out of sight until the rebuild takes it out
+						if (water->hasSpray) {
+							SetObjectVisible(GetSurfaceObject(water->spraySurface), false);
+						}
+						water->simulation = nullptr;
+						water->placed = false;
+						structureChanged = true;
+					}
 				}
 				graph.DestroyEntity(entity);
 			}
@@ -406,6 +439,11 @@ namespace Fox {
 					}
 					if (LightComponent* light = registry.TryGet<LightComponent>(e)) {
 						light->placed = false; // A light of its own, with the rebuild
+						structureChanged = true;
+					}
+					if (Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(e)) {
+						water->placed = false; // Water of its own, with the rebuild
+						water->simulation = nullptr;
 						structureChanged = true;
 					}
 				}
@@ -444,6 +482,7 @@ namespace Fox {
 				graph.UpdateTransforms();
 				SyncMeshes();
 				SyncLights();
+				UpdateWater(dt);
 
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to. Instances of a tree
 				// share its deformation: it is computed once, for its first placement.
@@ -672,6 +711,23 @@ namespace Fox {
 				}
 
 				tree.mesh = std::make_shared<Fox::Graphics::Geometry::SkinnedMesh>(Fox::Graphics::Geometry::GenerateTree(settings));
+
+				// Cluster level of detail: part 0 is the bark, part 1 the leaf cards
+				tree.lod = nullptr;
+				if (ClusterLodEnabled()) {
+					tree.lod = std::make_shared<Fox::Graphics::Geometry::ClusterLod>(Fox::Graphics::Geometry::BuildClusterLod(*tree.mesh, { false, true }));
+					const auto& lod = *tree.lod;
+					std::cout << "Cluster LOD: " << lod.clusters.size() << " clusters in " << lod.levels.size() << " levels, "
+						<< lod.TriangleCount() << " triangles, " << lod.addedVertices << " vertices added (leaf cards), " << lod.buildSeconds * 1000.0f << " ms\n";
+					for (size_t l = 0; l < lod.levels.size(); l++) {
+						uint32_t triangles = 0;
+						for (uint32_t c = 0; c < lod.levels[l].clusterCount; c++) {
+							triangles += lod.clusters[lod.levels[l].firstCluster + c].triangleCount;
+						}
+						std::cout << "  level " << l << ": " << lod.levels[l].clusterCount << " clusters, " << triangles << " triangles, error "
+							<< lod.levels[l].minSelfError << "\n";
+					}
+				}
 				tree.skeleton = std::make_unique<Fox::Animation::WindSkeleton>(tree.mesh->bones, tree.wind);
 				tree.regenerate = false;
 				tree.generationSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
@@ -706,6 +762,7 @@ namespace Fox {
 
 						DynamicMesh mesh;
 						mesh.mesh = tree.mesh.get();
+						mesh.lod = tree.lod.get();
 						mesh.materials = MaterialsFor(tree.look);
 						mesh.transform = graph.GetWorldTransform(users[t][0]);
 						mesh.name = graph.GetName(users[t][0]);
@@ -799,6 +856,224 @@ namespace Fox {
 				}
 				modelBottoms[key] = bottom;
 				return bottom;
+			}
+
+			// --- Water ---
+
+			void MainRayTracingScene::PlaceWater(Entity entity, Fox::Scene::WaterComponent& water) {
+				const glm::mat4 world = graph.GetRegistry().Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+				const glm::vec3 center(world[3]);
+				water.placedMatrix = world;
+
+				Fox::Scene::WaterSimulation::Grid grid;
+				grid.cellSize = std::max(water.cellSize, 0.02f);
+				grid.width = std::clamp(static_cast<uint32_t>(std::round(water.size.x / grid.cellSize)), 4u, 512u);
+				grid.depth = std::clamp(static_cast<uint32_t>(std::round(water.size.y / grid.cellSize)), 4u, 512u);
+				grid.cellSize = std::max(water.size.x / grid.width, water.size.y / grid.depth); // Whole cells over the size
+				grid.origin = glm::vec3(center.x - 0.5f * grid.width * grid.cellSize, center.y, center.z - 0.5f * grid.depth * grid.cellSize);
+
+				// The bed under every cell, and the water up to the entity's height
+				PendingWater pending;
+				pending.entity = entity;
+				pending.grid = grid;
+				const uint32_t cells = grid.width * grid.depth;
+				pending.bed.resize(cells);
+				pending.depth.resize(cells);
+				std::vector<Fox::Graphics::Vulkan::Vertex> surfaceVertices(cells);
+				for (uint32_t j = 0; j < grid.depth; j++) {
+					for (uint32_t i = 0; i < grid.width; i++) {
+						const uint32_t c = j * grid.width + i;
+						const float x = grid.origin.x + (i + 0.5f) * grid.cellSize, z = grid.origin.z + (j + 0.5f) * grid.cellSize;
+						const float bed = GetGroundHeightAt(x, z);
+						pending.bed[c] = bed;
+						pending.depth[c] = std::max(center.y - bed, 0.0f);
+						Fox::Graphics::Vulkan::Vertex& vertex = surfaceVertices[c];
+						vertex = {};
+						vertex.position[0] = x;
+						vertex.position[1] = pending.depth[c] > 0.0f ? center.y : bed - 0.05f;
+						vertex.position[2] = z;
+						vertex.position[3] = 1.0f;
+						vertex.normal[1] = 1.0f;
+						vertex.uv[0] = (i + 0.5f) / grid.width;
+						vertex.uv[1] = (j + 0.5f) / grid.depth;
+					}
+				}
+				std::vector<uint32_t> surfaceIndices;
+				surfaceIndices.reserve(static_cast<size_t>(grid.width - 1) * (grid.depth - 1) * 6);
+				for (uint32_t j = 0; j + 1 < grid.depth; j++) {
+					for (uint32_t i = 0; i + 1 < grid.width; i++) {
+						const uint32_t a = j * grid.width + i, b = a + 1, c = a + grid.width, d = c + 1;
+						surfaceIndices.insert(surfaceIndices.end(), { a, c, b, b, c, d }); // Facing up
+					}
+				}
+
+				water.surface = AddSimulatedSurface(surfaceVertices, surfaceIndices, water.ToMaterial(), graph.GetName(entity));
+
+				// Spray: a little octahedron per droplet, inactive (NaN corners) until thrown
+				water.hasSpray = water.sprayDroplets > 0;
+				if (water.hasSpray) {
+					const uint32_t droplets = std::min(water.sprayDroplets, 65536u);
+					std::vector<Fox::Graphics::Vulkan::Vertex> dropletVertices(static_cast<size_t>(droplets) * 6);
+					for (auto& vertex : dropletVertices) {
+						vertex = {};
+						vertex.position[0] = std::numeric_limits<float>::quiet_NaN(); // Inactive until thrown
+						vertex.position[1] = center.y;
+						vertex.position[2] = center.z;
+						vertex.position[3] = 1.0f;
+						vertex.normal[1] = 1.0f;
+					}
+					// Corners +x, -x, +y, -y, +z, -z
+					const uint32_t faces[8][3] = { { 2, 4, 0 }, { 2, 0, 5 }, { 2, 5, 1 }, { 2, 1, 4 }, { 3, 0, 4 }, { 3, 5, 0 }, { 3, 1, 5 }, { 3, 4, 1 } };
+					std::vector<uint32_t> dropletIndices;
+					dropletIndices.reserve(static_cast<size_t>(droplets) * 24);
+					for (uint32_t d = 0; d < droplets; d++) {
+						for (const auto& face : faces) {
+							for (uint32_t corner : face) {
+								dropletIndices.push_back(d * 6 + corner);
+							}
+						}
+					}
+					// A droplet is clear water, but spray is many of them, smaller than a pixel: light bounces between them
+					// and scatters every way, so it looks white. (Clear glass this small also traps a path tracer's rays
+					// by total internal reflection until they run out of bounces, and turns black.)
+					Fox::Graphics::Vulkan::Material droplet;
+					droplet.baseColor[0] = droplet.baseColor[1] = droplet.baseColor[2] = 0.9f;
+					droplet.roughness = 0.3f;
+					droplet.metallic = 0.0f;
+					droplet.transmission = 0.0f;
+					droplet.ior = 1.333f;
+					water.spraySurface = AddSimulatedSurface(dropletVertices, dropletIndices, droplet, graph.GetName(entity) + " spray");
+					pending.droplets = droplets;
+				}
+				pendingWater.push_back(std::move(pending));
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddWater(const glm::vec3& position, Entity parent) {
+				const Entity entity = graph.CreateEntity("Water", parent);
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+				graph.GetRegistry().Add<Fox::Scene::WaterComponent>(entity);
+				structureChanged = true;
+				return entity;
+			}
+
+			void MainRayTracingScene::WaterLookChanged(Entity entity) {
+				const Fox::Scene::WaterComponent* water = graph.GetRegistry().TryGet<Fox::Scene::WaterComponent>(entity);
+				if (water && water->placed) {
+					SetMaterial(GetSurfaceMaterial(water->surface), water->ToMaterial());
+				}
+			}
+
+			bool MainRayTracingScene::SplashWater(const glm::vec3& origin, const glm::vec3& direction) {
+				bool splashed = false;
+				graph.GetRegistry().Each<Fox::Scene::WaterComponent>([&](Entity, Fox::Scene::WaterComponent& water) {
+					if (splashed || !water.placed || !water.splashOnClick || !water.simulation || std::abs(direction.y) < 1e-6f) {
+						return;
+					}
+					// Where the ray meets the water's level, if that is over it
+					const auto& grid = water.simulation->GetGrid();
+					const float t = (grid.origin.y - origin.y) / direction.y;
+					if (t <= 0.0f) {
+						return;
+					}
+					const glm::vec3 point = origin + direction * t;
+					const float x = point.x - grid.origin.x, z = point.z - grid.origin.z;
+					if (x < 0.0f || z < 0.0f || x > grid.width * grid.cellSize || z > grid.depth * grid.cellSize) {
+						return;
+					}
+					water.simulation->AddDrop(x, z, std::max(0.8f, 4.0f * grid.cellSize), 0.2f);
+					splashed = true;
+				});
+				return splashed;
+			}
+
+			void MainRayTracingScene::UpdateWater(float dt) {
+				frameTime = dt;
+				auto& registry = graph.GetRegistry();
+				std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+				bool moved = false;
+				registry.Each<Fox::Scene::WaterComponent>([&](Entity entity, Fox::Scene::WaterComponent& water) {
+					// Turned on or off (itself or what it is under): placed anew
+					const bool wanted = water.enabled && graph.IsActiveInHierarchy(entity);
+					if (wanted != water.placed) {
+						if (water.placed) {
+							SetObjectVisible(GetSurfaceObject(water.surface), false);
+							if (water.hasSpray) {
+								SetObjectVisible(GetSurfaceObject(water.spraySurface), false);
+							}
+							water.simulation = nullptr;
+							water.placed = false;
+						}
+						structureChanged = true;
+						return;
+					}
+					if (!water.placed || !water.simulation) {
+						return;
+					}
+					if (registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix != water.placedMatrix) {
+						moved = true;
+					}
+
+					// Rain, and the gusts of the wind (cat's paws): little dips that the water spreads as waves. Their
+					// number follows a Poisson process over the water's area.
+					const auto& grid = water.simulation->GetGrid();
+					const float area = grid.width * grid.cellSize * grid.depth * grid.cellSize;
+					auto scatter = [&](float rate, float radius, float amount) {
+						float expected = rate * area * dt;
+						while (expected > 0.0f) {
+							if (unit(waterRandom) < std::min(expected, 1.0f)) {
+								water.simulation->AddDrop(unit(waterRandom) * grid.width * grid.cellSize, unit(waterRandom) * grid.depth * grid.cellSize,
+									radius * (0.6f + 0.8f * unit(waterRandom)), amount * (0.5f + unit(waterRandom)));
+							}
+							expected -= 1.0f;
+						}
+					};
+					scatter(water.rain, water.dropSize, water.dropStrength);
+					// Wind ruffles the water in proportion to the square of its speed (its pressure on the surface)
+					const float wind = water.windSpeed;
+					scatter(0.004f * wind * wind * water.gust, std::max(1.5f, 6.0f * grid.cellSize), 0.0004f * wind * wind);
+				});
+
+				// Moved water is placed anew once it has stayed put for a moment (not on every step of a drag)
+				if (moved) {
+					waterMovedFor = 0.0f;
+				}
+				else if (waterMovedFor >= 0.0f) {
+					waterMovedFor += dt;
+					if (waterMovedFor > 0.3f) {
+						waterMovedFor = -1.0f;
+						structureChanged = true;
+					}
+				}
+			}
+
+			void MainRayTracingScene::RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) {
+				(void)frameSlot;
+				graph.GetRegistry().Each<Fox::Scene::WaterComponent>([&](Entity, Fox::Scene::WaterComponent& water) {
+					if (!water.placed || !water.simulation) {
+						return;
+					}
+					// Wind stress over the water's density: (air density / water density) * drag coefficient * speed^2
+					const float stress = (1.2f / 1000.0f) * 1.3e-3f * water.windSpeed * water.windSpeed;
+					const float angle = glm::radians(water.windDirection);
+					Fox::Scene::WaterSimulation::Parameters parameters;
+					parameters.viscosity = water.viscosity;
+					parameters.friction = water.friction;
+					parameters.wind = glm::vec2(std::cos(angle), std::sin(angle)) * stress;
+					parameters.gust = water.gust;
+					parameters.windSpeed = water.windSpeed;
+					parameters.windAngle = angle;
+					parameters.foamAmount = water.foam;
+					parameters.foamLifetime = water.foamLifetime;
+					parameters.sprayAmount = water.spray;
+					parameters.dropletSize = water.dropletSize;
+					water.simulation->Record(cmd, frameTime, parameters);
+					MarkSurfaceDeformed(water.surface);
+					if (water.hasSpray) {
+						MarkSurfaceDeformed(water.spraySurface, true); // Droplets fly far: built anew every frame
+					}
+				});
 			}
 
 			size_t MainRayTracingScene::CountUsers(const Tree* tree) const {

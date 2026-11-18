@@ -108,6 +108,8 @@ namespace Fox {
 				std::vector<std::string> optionalDeviceExtensions;
 				bool shaderExecutionReordering = false; // VK_NV_ray_tracing_invocation_reorder enabled
 				bool opacityMicromaps = false;          // VK_EXT_opacity_micromap enabled
+				bool clusterLod = false;                // VK_NV_cluster_acceleration_structure enabled
+				float shaderTime = 0.0f;                // Seconds, for animated surfaces (water)
 				bool vsync = true; // V key
 				std::unique_ptr<Fox::Graphics::Vulkan::PostProcessor> postProcessor;
 

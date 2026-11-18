@@ -14,6 +14,7 @@
 //   TransformComponent  where it is, relative to its parent (on by default)
 //   MeshComponent       it is rendered: a glTF model, a sphere or a generated tree
 //   LightComponent      it gives light: a directional light (the sun), a point light or a spot light
+//   WaterComponent      it is a body of water, simulated (shallow water equations) and refracting
 //
 // Adding a component type (e.g. physics or audio):
 //   1. the struct here
@@ -23,6 +24,8 @@
 namespace Fox {
 
 	namespace Scene {
+
+		class WaterSimulation;
 
 		using Transform = Fox::Scene::RayTracing::RayTracingScene::ObjectTransform;
 
@@ -79,6 +82,66 @@ namespace Fox {
 				case Type::Sphere: return "Sphere";
 				default: return "Tree";
 				}
+			}
+		};
+
+		// The entity is a body of water (Scene/WaterSimulation.h): a rectangle of water on the ground, centred where
+		// the entity is, filled up to its height, then left to flow (over the terrain, into hollows) and stirred by
+		// wind, rain and splashes. Its rotation and scale are not used.
+		struct WaterComponent {
+			bool enabled = true;
+			glm::vec2 size{ 30.0f, 30.0f }; // Metres along x and z
+			float cellSize = 0.2f;          // Metres; at most 512 cells a side
+
+			// Its look: clear water is a dielectric (index of refraction 1.333) that absorbs red first
+			glm::vec3 color{ 0.62f, 0.85f, 0.86f }; // What white light is tinted to after `clarity` metres in it
+			float clarity = 3.0f;                   // Metres
+			float roughness = 0.02f;
+			float ripples = 1.0f;     // Strength of the wind's ripples finer than the simulation (shading)
+
+			// Its motion
+			float viscosity = 0.001f;  // m^2/s (eddy viscosity: the turbulence the grid cannot resolve; water itself: 1e-6)
+			float friction = 0.003f;   // Bed friction
+			float windSpeed = 6.0f;    // m/s, 10 m above the water
+			float windDirection = 30.0f; // Degrees: where it blows to, from +x towards +z
+			float gust = 0.6f;         // 0..1
+			float rain = 0.0f;         // Drops per square metre and second
+			float dropSize = 0.4f;     // Metres (the ring it makes; at least two cells)
+			float dropStrength = 0.02f; // Metres
+			bool splashOnClick = true; // Clicking it in edit mode splashes it
+
+			// Foam and spray
+			float foam = 1.0f;         // How much foam breaking and churning water makes
+			float foamLifetime = 6.0f; // Seconds for foam to fade to a third
+			float spray = 1.0f;        // How many droplets are thrown up
+			float dropletSize = 0.01f; // Metres (radius)
+			uint32_t sprayDroplets = 16384; // Room for droplets in flight (0: no spray)
+
+			// Set by the scene
+			bool placed = false;
+			size_t surface = 0;
+			size_t spraySurface = 0;
+			bool hasSpray = false;
+			std::shared_ptr<WaterSimulation> simulation;
+			glm::mat4 placedMatrix{ 1.0f };
+
+			Fox::Graphics::Vulkan::Material ToMaterial() const {
+				Fox::Graphics::Vulkan::Material material;
+				material.baseColor[0] = material.baseColor[1] = material.baseColor[2] = 1.0f;
+				material.roughness = roughness;
+				material.metallic = 0.0f;
+				material.transmission = 1.0f;
+				material.ior = 1.333f;
+				const float tint[3] = { color.r, color.g, color.b };
+				material.SetAttenuation(tint, clarity);
+				// Water (Shaders/water_waves.slang): the wind (m/s, x and z) and the ripples' strength in fields water
+				// has no other use for
+				material.layerMaterial = -2;
+				const float angle = glm::radians(windDirection);
+				material.uvScale[0] = std::cos(angle) * windSpeed;
+				material.uvScale[1] = std::sin(angle) * windSpeed;
+				material.normalScale = ripples;
+				return material;
 			}
 		};
 

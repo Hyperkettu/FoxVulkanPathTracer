@@ -35,6 +35,10 @@ namespace Fox {
                 virtual void Initialize() = 0;
                 virtual void Update(float dt) = 0;
 
+                // Simulations that write geometry (water) record their work here, before the structures are
+                // updated (RecordFrameUpdate calls it)
+                virtual void RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) {}
+
                 // Places the mesh in the scene as a movable object. The same mesh can be added several times with
                 // different transforms: its geometry and acceleration structures are stored once and instanced.
                 void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name = "Mesh");
@@ -58,12 +62,38 @@ namespace Fox {
                 static void EnableOpacityMicromaps(bool enabled) { opacityMicromapsEnabled = enabled; }
                 static bool OpacityMicromapsEnabled() { return opacityMicromapsEnabled; }
 
+                // Cluster level of detail for skinned meshes that come with one (trees); set by the renderer
+                static void EnableClusterLod(bool enabled) { clusterLodEnabled = enabled; }
+                static bool ClusterLodEnabled() { return clusterLodEnabled; }
+
+                // Where the clusters are seen from, before each frame's RecordFrameUpdate. pixelScale: image height
+                // / (2 tan(vertical fov / 2)); threshold: pixels of geometric error allowed (larger: coarser, faster)
+                void SetClusterLodView(const glm::vec3& cameraPosition, float pixelScale) {
+                    clusterView.cameraPosition = cameraPosition;
+                    clusterView.pixelScale = pixelScale;
+                }
+                void SetClusterLodThreshold(float pixels) { clusterThreshold = std::max(pixels, 0.05f); }
+                float GetClusterLodThreshold() const { return clusterThreshold; }
+                bool HasClusterMeshes() const { return !clusterMeshes.empty(); }
+                // A frame or two old
+                Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::Stats GetClusterLodStats() const {
+                    return clusterPass ? clusterPass->GetStats() : Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::Stats{};
+                }
+                void ReadClusterLodStats(uint32_t frameSlot) {
+                    if (!clusterPass) return;
+                    clusterPass->ReadStats(frameSlot);
+                    // Near the instance structures' budget: coarser everywhere for a while; back as there is room again
+                    const float used = static_cast<float>(clusterPass->GetStats().clustersSelected) / static_cast<float>(std::max(clusterPass->GetBottomLevelBudget(), 1u));
+                    if (used > 0.85f) clusterOverload = std::min(clusterOverload * 1.5f, 1024.0f);
+                    else if (used < 0.5f) clusterOverload = std::max(clusterOverload / 1.1f, 1.0f);
+                }
+
                 // --- Skinned meshes: vertices follow joint matrices that can change every frame ---
 
                 // Adds a skinned mesh as a movable object; returns its index for SetJointMatrices. One material per
                 // part of the mesh (SkinnedMesh::parts; one material when it has no parts).
                 size_t AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const std::vector<Fox::Graphics::Vulkan::Material>& materials,
-                    const glm::mat4& transform, const std::string& name);
+                    const glm::mat4& transform, const std::string& name, const Fox::Graphics::Geometry::ClusterLod* lod = nullptr);
 
                 // Per joint of the mesh: pose * inverse(bind), in mesh space. Applied with the next RecordFrameUpdate,
                 // which deforms the mesh on the GPU and refits its acceleration structure.
@@ -117,6 +147,8 @@ namespace Fox {
                     std::string name;
                     std::vector<ObjectTransform> moreTransforms; // More placements of the same mesh
                     std::vector<std::string> moreNames;
+                    // Its cluster level of detail (indexes mesh's vertices); traced through clusters when the GPU can
+                    const Fox::Graphics::Geometry::ClusterLod* lod = nullptr;
                 };
                 struct DynamicMeshHandle {
                     size_t skinnedMesh = 0;         // For SetJointMatrices
@@ -142,6 +174,26 @@ namespace Fox {
 
                 // The surface's material index (its extra materials follow it)
                 uint32_t GetSurfaceMaterial(size_t surface) const { return editableSurfaces[surface].material; }
+
+                // --- Simulated surfaces: vertices a GPU simulation writes every frame (water) ---
+                //
+                // An editable surface whose vertices (and their previous positions, for motion vectors) a compute
+                // shader writes in RecordSimulations. Each frame it is deformed (MarkSurfaceDeformed) its structure
+                // is refitted, and now and then built anew. Not movable. Returns the surface.
+                size_t AddSimulatedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                    const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material, const std::string& name);
+                struct SimulatedRange {
+                    uint32_t firstVertex = 0;   // In the scene's vertex buffers
+                    uint32_t vertexCount = 0;
+                    uint32_t firstPrevious = 0; // In the previous positions buffer
+                };
+                SimulatedRange GetSimulatedRange(size_t surface) const;
+                // rebuild: built anew this frame (for geometry that moves too much to refit, e.g. particles)
+                void MarkSurfaceDeformed(size_t surface, bool rebuild = false);
+                // The buffers a simulation writes (valid after Build)
+                VkBuffer GetVertexStorageBuffer() const { return vertexSSBO ? vertexSSBO->GetBuffer().Get() : VK_NULL_HANDLE; }
+                VkBuffer GetBuildVertexBuffer() const { return vertexBuffers.empty() ? VK_NULL_HANDLE : vertexBuffers.back()->Get(); }
+                VkBuffer GetPreviousPositionsBuffer() const { return previousPositionsSSBO ? previousPositionsSSBO->GetBuffer().Get() : VK_NULL_HANDLE; }
                 // The surface's object (for its name; it cannot be moved)
                 size_t GetSurfaceObject(size_t surface) const { return editableSurfaces[surface].object; }
 
@@ -154,8 +206,8 @@ namespace Fox {
 
                 // Room reserved for dynamic meshes, and how much of it is in use
                 static constexpr uint32_t DYNAMIC_VERTEX_CAPACITY = 2'500'000;
-                static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 12'000'000;
-                static constexpr uint32_t MAX_SUBMESHES = 65'536;
+                static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 24'000'000; // Cluster levels: about twice a mesh's triangles
+                static constexpr uint32_t MAX_SUBMESHES = 131'072;              // One per cluster of a mesh traced through clusters
                 static constexpr uint32_t MAX_MATERIALS = 4'096;
                 static constexpr uint32_t MAX_INSTANCES = 16'384; // Painted forests: one per tree
                 uint32_t GetDynamicVertexCount() const { return static_cast<uint32_t>(vertices.size()) - staticCounts.vertices; }
@@ -186,7 +238,8 @@ namespace Fox {
                 // Records what moved objects need on the GPU before this frame is traced: the top level
                 // acceleration structure, the lights they carry and the motion of every instance since the
                 // previous frame (instanceMotionSSBO, for motion vectors). frameSlot: the frame in flight.
-                void RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot);
+                // mark: optional GPU profiler marks between its steps
+                void RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot, const std::function<void(const char*)>& mark = {});
 
                 // Per acceleration structure instance: world space now -> world space in the previous frame
                 struct InstanceMotion {
@@ -376,10 +429,29 @@ namespace Fox {
                 };
                 StaticCounts staticCounts;
 
+                // Meshes traced through clusters (dynamic only): their clusters go to the cluster pass
+                struct ClusterMesh {
+                    uint32_t firstCluster = 0; // In clusterContent
+                    uint32_t clusterCount = 0;
+                    std::vector<Fox::Graphics::Geometry::ClusterLod::Level> levels; // firstCluster: global
+                    glm::vec4 bounds{ 0.0f }; // Around every cluster's bounds (mesh space)
+                };
+                std::vector<ClusterMesh> clusterMeshes;
+                Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::Content clusterContent;
+                std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::ClusterLodPass> clusterPass;
+                Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::View clusterView;
+                float clusterThreshold = 1.0f;
+                float clusterOverload = 1.0f; // Threshold multiplier while the selection nears the budget
+                static bool clusterLodEnabled;
+                static constexpr uint32_t NO_BLAS = UINT32_MAX; // Instances whose structure the cluster pass makes each frame
+                void RecordClusterLod(VkCommandBuffer cmd, uint32_t frameSlot, VkBuffer tlasInstances, const std::function<void(const char*)>& mark);
+
                 // Editable surfaces and their pending uploads (RecordEdits)
                 struct EditableSurface {
                     size_t record = 0;
                     size_t object = 0;
+                    uint32_t firstPrevious = 0; // Simulated: its previous positions
+                    uint32_t deformations = 0;  // Simulated: refits since it was last built
                     uint32_t firstVertex = 0; // In the scene's vertex buffers
                     uint32_t vertexCount = 0;
                     uint32_t material = 0;
@@ -424,6 +496,7 @@ namespace Fox {
                     uint32_t count[SurfaceKindCount] = {};
                     int blas[SurfaceKindCount] = { -1, -1, -1 };
                     bool dynamic = false; // Skinned: its acceleration structures are refitted every frame
+                    int clusterMesh = -1; // Traced through clusters (clusterMeshes): no structures of its own; one submesh per cluster
 
                     uint32_t FirstOf(int kind) const {
                         uint32_t first = firstSubmesh;

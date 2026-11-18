@@ -57,8 +57,14 @@ namespace Fox {
                     uint32_t maxRecursionDepth,
                     VkPipelineCreateFlags flags)
                 {
+                    // Trees traced through cluster acceleration structures need the pipeline to allow them
+                    VkRayTracingPipelineClusterAccelerationStructureCreateInfoNV clusters{
+                        .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CLUSTER_ACCELERATION_STRUCTURE_CREATE_INFO_NV,
+                        .allowClusterAccelerationStructure = VK_TRUE
+                    };
                     VkRayTracingPipelineCreateInfoKHR info{
                         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+                        .pNext = Fox::Scene::RayTracing::RayTracingScene::ClusterLodEnabled() ? &clusters : nullptr,
                         .flags = flags,
                         .stageCount = uint32_t(stages.size()),
                         .pStages = stages.data(),

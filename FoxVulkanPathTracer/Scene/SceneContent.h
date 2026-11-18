@@ -49,6 +49,7 @@ namespace Fox {
 			// Set by the scene
 			bool regenerate = true; // The shape (or a texture the geometry depends on) changed
 			std::shared_ptr<Fox::Graphics::Geometry::SkinnedMesh> mesh;
+			std::shared_ptr<Fox::Graphics::Geometry::ClusterLod> lod; // Cluster level of detail of mesh (when the GPU has cluster structures)
 			std::unique_ptr<Fox::Animation::WindSkeleton> skeleton;
 			Fox::Scene::RayTracing::RayTracingScene::DynamicMeshHandle handle;
 			bool placed = false;

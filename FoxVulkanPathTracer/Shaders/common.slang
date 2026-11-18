@@ -82,7 +82,7 @@ struct Material
     int occlusionTexture;     // Red channel
     float occlusionStrength;
     float alphaCutoff;        // > 0: alpha tested (leaves), surfaces where base colour alpha < this are holes
-    int layerMaterial;        // >= 0: terrain, its first layer material (see terrain.slang)
+    int layerMaterial;        // >= 0: terrain, its first layer material (see terrain.slang); -2: water (see water_waves.slang)
 };
 
 // Mirrors Fox::Graphics::Vulkan::Vertex (Vertex.h)
@@ -174,6 +174,7 @@ struct Camera
 
     int2 pickPixel;         // Report the object seen at this pixel in gPickResult; negative: none
     uint pickSlot;          // Entry of gPickResult to write (the frame in flight)
+    float time;             // Seconds since start (animated surfaces: water)
 };
 
 // Core PCG hash function (transforms a 32-bit state)

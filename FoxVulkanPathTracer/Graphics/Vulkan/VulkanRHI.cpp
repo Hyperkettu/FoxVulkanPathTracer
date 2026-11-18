@@ -464,6 +464,32 @@ namespace Fox {
 					std::cout << "Opacity micromaps: " << (opacityMicromaps ? "on" : "not supported") << "\n";
 				}
 
+				// Optional: cluster acceleration structures (NVIDIA RTX Mega Geometry), for the trees' continuous level of
+				// detail (Graphics/Geometry/ClusterLod.h). Without them trees use one acceleration structure at full detail.
+				VkPhysicalDeviceClusterAccelerationStructureFeaturesNV clusterFeatures{};
+				clusterFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CLUSTER_ACCELERATION_STRUCTURE_FEATURES_NV;
+				{
+					const bool hasExtension = std::any_of(available.begin(), available.end(), [](const VkExtensionProperties& e) {
+						return std::strcmp(e.extensionName, VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME) == 0;
+					});
+					if (hasExtension) {
+						VkPhysicalDeviceFeatures2 features2{};
+						features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+						features2.pNext = &clusterFeatures;
+						vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+					}
+					clusterLod = hasExtension && clusterFeatures.clusterAccelerationStructure == VK_TRUE;
+					// For comparisons: FOX_NO_CLUSTER_LOD=1 traces trees at full detail, as before
+					if (SDL_getenv("FOX_NO_CLUSTER_LOD")) clusterLod = false;
+					if (clusterLod) {
+						extensions.push_back(VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+						clusterFeatures.pNext = vulkan12Features.pNext;
+						vulkan12Features.pNext = &clusterFeatures;
+					}
+					Fox::Scene::RayTracing::RayTracingScene::EnableClusterLod(clusterLod);
+					std::cout << "Cluster level of detail: " << (clusterLod ? "on" : "not supported") << "\n";
+				}
+
 				optionalDeviceExtensions = RayTracing::GetDenoiserDeviceExtensions(instance, physicalDevice);
 				AppendSupportedExtensions(extensions, optionalDeviceExtensions, available);
 
@@ -740,6 +766,11 @@ namespace Fox {
 				if (titleTimer > 0.0f) {
 					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps" << (vsync ? "" : " (vsync off)");
 				}
+				if (raytracingScene->HasClusterMeshes()) {
+					// Trees' level of detail: distinct clusters built this frame, and clusters traced over all instances
+					const auto lod = raytracingScene->GetClusterLodStats();
+					title << " - trees " << lod.instances << ": " << lod.clustersBuilt << " clusters built, " << lod.clustersSelected << " traced";
+				}
 
 				// The frame rate is capped by vsync; the GPU time shows the actual cost and headroom
 				if (profiler && profiler->GetFrameMilliseconds() > 0.0f) {
@@ -797,6 +828,7 @@ namespace Fox {
 				// Block until the GPU has finished the work that last used this frame slot
 				frameResource.renderFence->Wait();
 				profiler->ReadResults(currentFrame);
+				raytracingScene->ReadClusterLodStats(currentFrame);
 				ReadPickResult(currentFrame);
 
 				// Editor windows, and what they changed in the scene
@@ -917,6 +949,8 @@ namespace Fox {
 				// Object picking: the pixel under the mouse, in render resolution
 				cam.pickPixel = glm::ivec2(-1, -1);
 				cam.pickSlot = currentFrame;
+				shaderTime += deltaTime;
+				cam.time = shaderTime;
 				if (pickRequested) {
 					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
 					cam.pickPixel = glm::ivec2(pickMouse / display * glm::vec2(extent.width, extent.height));
@@ -961,8 +995,18 @@ namespace Fox {
 
 				commandList.Begin();
 
-				// Objects moved since the last frame: acceleration structure, lights, motion
-				raytracingScene->RecordFrameUpdate(commandList.Get(), currentFrame);
+				// Trees' level of detail is chosen for this view: errors in pixels of the displayed image
+				{
+					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					const float pixelScale = static_cast<float>(capabilities.currentExtent.height) / (2.0f * std::tan(camera->GetFov() * 0.5f));
+					raytracingScene->SetClusterLodView(camera->GetPosition(), pixelScale);
+				}
+
+				// Objects moved since the last frame: acceleration structure, lights, motion (timed as "scene": skinning,
+				// the trees' cluster structures and the top level build)
+				profiler->BeginFrame(commandList, currentFrame);
+				raytracingScene->RecordFrameUpdate(commandList.Get(), currentFrame, [&](const char* name) { profiler->Mark(commandList, name); });
+				profiler->Mark(commandList, "scene");
 
 				commandList
 					// 1. Path trace into the G-buffer. The previous frame may still be reading these images.
@@ -973,8 +1017,6 @@ namespace Fox {
 					.BindDescriptorSets(raytracingPipelineLayout, 0,
 						{ frameResource.perFrameDescriptorSet->Get(), Managers::TextureManager::Get().bindlessTextureDescriptorSet->Get() },
 						rayTracing);
-
-				profiler->BeginFrame(commandList, currentFrame);
 
 				commandList.Raytrace(
 					raytracingPipeline->GetRaygenRegion(),
@@ -1338,6 +1380,12 @@ namespace Fox {
 						return; // Sculpting or painting
 					}
 					if (!gizmo.MouseDown(mouse, GizmoView(), raytracingScene->GetSceneGraph())) {
+						// Not a gizmo handle: a click on water (with splashing on) splashes it; anywhere else selects
+						glm::vec3 origin, direction;
+						Fox::Editor::TransformGizmo::MouseRay(GizmoView(), mouse, origin, direction);
+						if (raytracingScene->SplashWater(origin, direction)) {
+							return;
+						}
 						pickRequested = true;
 						pickMouse = mouse;
 					}

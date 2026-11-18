@@ -220,6 +220,8 @@ namespace Fox {
 					}, "", true, -1, "ball mesh");
 				}
 				shell.Add("Create/Tree", [&] { gizmo.Select(scene.AddTree(spawn)); }, "", true, -1, "plant mesh");
+				shell.Add("Create/Water", [&] { gizmo.Select(scene.AddWater(spawn + glm::vec3(0.0f, 0.8f, 0.0f))); }, "", true, -1,
+					"lake pond river sea ocean fluid simulation");
 				shell.Separator("Create");
 				shell.Add("Create/Light/Directional Light", [&] {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Directional, spawn + glm::vec3(0.0f, 20.0f, 0.0f)));
@@ -265,6 +267,12 @@ namespace Fox {
 						"", true, mode == upscalingMode ? 1 : 0, "upscaling quality dlss");
 				}
 				shell.Add("Render/Resolution/Next", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_U); }); }, "U", true, -1, "upscaling");
+				for (float pixels : { 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f }) {
+					char label[64];
+					std::snprintf(label, sizeof(label), "Render/Tree Detail/%g pixel%s of error", pixels, pixels == 1.0f ? "" : "s");
+					shell.Add(label, [this, pixels] { raytracingScene->SetClusterLodThreshold(pixels); }, "",
+						raytracingScene->HasClusterMeshes(), raytracingScene->GetClusterLodThreshold() == pixels ? 1 : 0, "lod level of detail clusters nanite quality");
+				}
 				shell.Add("Render/Vsync", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_V); }); }, "V", true, vsync ? 1 : 0, "frame rate");
 				shell.Separator("Render");
 				char samples[64];

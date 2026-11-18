@@ -260,6 +260,45 @@ namespace Fox {
 					return light;
 				}
 
+				json WaterToJson(const Fox::Scene::WaterComponent& water) {
+					return {
+						{ "enabled", water.enabled }, { "size", water.size }, { "cellSize", water.cellSize },
+						{ "color", water.color }, { "clarity", water.clarity }, { "roughness", water.roughness }, { "ripples", water.ripples },
+						{ "viscosity", water.viscosity }, { "friction", water.friction },
+						{ "windSpeed", water.windSpeed }, { "windDirection", water.windDirection }, { "gust", water.gust },
+						{ "rain", water.rain }, { "dropSize", water.dropSize }, { "dropStrength", water.dropStrength },
+						{ "splashOnClick", water.splashOnClick },
+						{ "foam", water.foam }, { "foamLifetime", water.foamLifetime }, { "spray", water.spray },
+						{ "dropletSize", water.dropletSize }, { "sprayDroplets", water.sprayDroplets },
+					};
+				}
+
+				Fox::Scene::WaterComponent WaterFromJson(const json& j) {
+					Fox::Scene::WaterComponent water;
+					water.enabled = j.value("enabled", water.enabled);
+					water.size = j.value("size", water.size);
+					water.cellSize = j.value("cellSize", water.cellSize);
+					water.color = j.value("color", water.color);
+					water.clarity = j.value("clarity", water.clarity);
+					water.roughness = j.value("roughness", water.roughness);
+					water.ripples = j.value("ripples", water.ripples);
+					water.viscosity = j.value("viscosity", water.viscosity);
+					water.friction = j.value("friction", water.friction);
+					water.windSpeed = j.value("windSpeed", water.windSpeed);
+					water.windDirection = j.value("windDirection", water.windDirection);
+					water.gust = j.value("gust", water.gust);
+					water.rain = j.value("rain", water.rain);
+					water.dropSize = j.value("dropSize", water.dropSize);
+					water.dropStrength = j.value("dropStrength", water.dropStrength);
+					water.splashOnClick = j.value("splashOnClick", water.splashOnClick);
+					water.foam = j.value("foam", water.foam);
+					water.foamLifetime = j.value("foamLifetime", water.foamLifetime);
+					water.spray = j.value("spray", water.spray);
+					water.dropletSize = j.value("dropletSize", water.dropletSize);
+					water.sprayDroplets = j.value("sprayDroplets", water.sprayDroplets);
+					return water;
+				}
+
 				// How each component type is saved: under "components", by its key. A component type that is saved
 				// gets an entry here (see Scene/ECS/Components.h).
 				struct ComponentSerializer {
@@ -310,6 +349,20 @@ namespace Fox {
 						},
 						[](SceneGraph& graph, Entity entity, const json& j) {
 							graph.GetRegistry().Add<LightComponent>(entity, LightFromJson(j));
+						},
+					},
+					{
+						"water",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::WaterComponent* water = graph.GetRegistry().TryGet<Fox::Scene::WaterComponent>(entity);
+							if (!water) {
+								return false;
+							}
+							j = WaterToJson(*water);
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::WaterComponent>(entity, WaterFromJson(j));
 						},
 					},
 				};

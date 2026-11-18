@@ -12,6 +12,7 @@ namespace Fox {
             PFN_vkGetAccelerationStructureDeviceAddressKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureDeviceAddressKHR;
             PFN_vkGetAccelerationStructureBuildSizesKHR Fox::Scene::RayTracing::RayTracingScene::vkGetAccelerationStructureBuildSizesKHR;
             bool Fox::Scene::RayTracing::RayTracingScene::opacityMicromapsEnabled = false;
+            bool Fox::Scene::RayTracing::RayTracingScene::clusterLodEnabled = false;
 
             void CreateScratchBuffer(
                 VkDevice device,
@@ -400,7 +401,7 @@ namespace Fox {
                     0, 1, &barrier, 0, nullptr, 0, nullptr);
 
                 for (size_t i = 0; i < instances.size(); ++i) {
-                    instances[i].accelerationStructureReference = bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
+                    instances[i].accelerationStructureReference = instanceBlasIndices[i] == NO_BLAS ? 0 : bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
                 }
 
                 UploadInstanceBuffer();
@@ -707,7 +708,7 @@ namespace Fox {
             }
 
             size_t RayTracingScene::AddSkinnedMesh(const Fox::Graphics::Geometry::SkinnedMesh& mesh, const std::vector<Fox::Graphics::Vulkan::Material>& meshMaterials,
-                const glm::mat4& transform, const std::string& name) {
+                const glm::mat4& transform, const std::string& name, const Fox::Graphics::Geometry::ClusterLod* lod) {
                 SkinnedRecord skinned;
                 skinned.firstVertex = vertexOffset;
                 skinned.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
@@ -747,7 +748,86 @@ namespace Fox {
                 MeshRecord record;
                 record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
                 record.dynamic = true;
-                for (const auto& part : parts) {
+                const bool clustered = lod && clusterLodEnabled && !lod->clusters.empty();
+                if (clustered) {
+                    // One submesh per cluster (the shaders find a hit's triangle as for any submesh: the instance's
+                    // custom index is the first, the geometry index the cluster), the levels' triangles as its indices
+                    ClusterMesh clusterMesh;
+                    clusterMesh.firstCluster = static_cast<uint32_t>(clusterContent.clusters.size());
+                    clusterMesh.clusterCount = static_cast<uint32_t>(lod->clusters.size());
+                    record.clusterMesh = static_cast<int>(clusterMeshes.size());
+
+                    const uint32_t localVertexBase = static_cast<uint32_t>(clusterContent.localVertexIds.size());
+                    const uint32_t localIndexBase = static_cast<uint32_t>(clusterContent.localIndices.size());
+                    for (uint32_t v : lod->localVertices) {
+                        clusterContent.localVertexIds.push_back(vertexOffset + v);
+                        clusterContent.bindPositions.insert(clusterContent.bindPositions.end(), mesh.vertices[v].position, mesh.vertices[v].position + 3);
+                    }
+                    clusterContent.localIndices.insert(clusterContent.localIndices.end(), lod->localIndices.begin(), lod->localIndices.end());
+
+                    glm::vec3 center(0.0f);
+                    for (const auto& cluster : lod->clusters) {
+                        center += glm::vec3(cluster.selfBounds);
+                    }
+                    center /= static_cast<float>(lod->clusters.size());
+                    float radius = 0.0f;
+                    for (uint32_t j = 0; j < lod->clusters.size(); j++) {
+                        const auto& cluster = lod->clusters[j];
+                        const Fox::Graphics::Vulkan::Material& material = meshMaterials.at(parts.at(cluster.part).material);
+                        if (KindOf(material) != Opaque) {
+                            throw std::runtime_error("Skinned meshes support opaque and alpha tested materials only");
+                        }
+
+                        Fox::Graphics::Vulkan::Submesh submesh{};
+                        submesh.vertexOffset = vertexOffset;
+                        submesh.vertexCount = skinned.vertexCount;
+                        submesh.indexOffset = indexOffset + cluster.firstIndex;
+                        submesh.indexCount = cluster.triangleCount * 3;
+                        submesh.materialIndex = materialOffset + parts[cluster.part].material;
+                        submesh.previousPositions = skinned.firstSkinVertex + 1;
+                        submesh.pad1 = 1; // A cluster: no structure or micromaps of its own
+                        submeshes.push_back(submesh);
+
+                        Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::GpuCluster gpu{};
+                        gpu.selfBounds = cluster.selfBounds;
+                        gpu.parentBounds = cluster.parentBounds;
+                        gpu.selfError = cluster.selfError;
+                        gpu.parentError = cluster.parentError >= 3.0e38f ? 3.0e38f : cluster.parentError;
+                        gpu.gatherFirst = localVertexBase + cluster.firstVertex;
+                        gpu.gatherCount = cluster.vertexCount;
+                        clusterContent.clusters.push_back(gpu);
+
+                        // Its build: 8 bit indices into its gathered vertices (addresses as offsets until the upload)
+                        VkClusterAccelerationStructureBuildTriangleClusterInfoNV info{};
+                        info.clusterID = static_cast<uint32_t>(clusterContent.templates.size());
+                        info.triangleCount = cluster.triangleCount;
+                        info.vertexCount = cluster.vertexCount;
+                        info.indexType = VK_CLUSTER_ACCELERATION_STRUCTURE_INDEX_FORMAT_8BIT_NV;
+                        info.baseGeometryIndexAndGeometryFlags.geometryIndex = j;
+                        info.baseGeometryIndexAndGeometryFlags.geometryFlags = cluster.foliage ? 0u : VK_CLUSTER_ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT_NV;
+                        info.indexBufferStride = 1;
+                        info.vertexBufferStride = sizeof(float) * 3;
+                        info.indexBuffer = localIndexBase + cluster.firstIndex;
+                        info.vertexBuffer = (localVertexBase + cluster.firstVertex) * sizeof(float) * 3;
+                        clusterContent.templates.push_back(info);
+
+                        clusterContent.maxTrianglesPerCluster = std::max(clusterContent.maxTrianglesPerCluster, cluster.triangleCount);
+                        clusterContent.maxVerticesPerCluster = std::max(clusterContent.maxVerticesPerCluster, cluster.vertexCount);
+                        clusterContent.totalTriangles += cluster.triangleCount;
+                        radius = std::max(radius, glm::length(glm::vec3(cluster.selfBounds) - center) + cluster.selfBounds.w);
+                        if (cluster.parentError < 3.0e38f) {
+                            radius = std::max(radius, glm::length(glm::vec3(cluster.parentBounds) - center) + cluster.parentBounds.w);
+                        }
+                    }
+                    clusterMesh.bounds = glm::vec4(center, radius);
+                    for (auto level : lod->levels) {
+                        level.firstCluster += clusterMesh.firstCluster;
+                        clusterMesh.levels.push_back(level);
+                    }
+                    clusterContent.maxClustersPerMesh = std::max(clusterContent.maxClustersPerMesh, clusterMesh.clusterCount);
+                    clusterMeshes.push_back(std::move(clusterMesh));
+                }
+                for (const auto& part : clustered ? std::vector<Fox::Graphics::Geometry::SkinnedMesh::Part>{} : parts) {
                     const Fox::Graphics::Vulkan::Material& material = meshMaterials.at(part.material);
                     if (KindOf(material) != Opaque) {
                         throw std::runtime_error("Skinned meshes support opaque and alpha tested materials only");
@@ -765,7 +845,8 @@ namespace Fox {
                 }
 
                 vertices.insert(vertices.end(), mesh.vertices.begin(), mesh.vertices.end());
-                for (uint32_t index : mesh.indices) {
+                const std::vector<uint32_t>& meshIndices = clustered ? lod->indices : mesh.indices;
+                for (uint32_t index : meshIndices) {
                     indices.push_back(vertexOffset + index);
                 }
                 for (Fox::Graphics::Vulkan::Material material : meshMaterials) {
@@ -774,7 +855,7 @@ namespace Fox {
                 }
 
                 vertexOffset += skinned.vertexCount;
-                indexOffset += static_cast<uint32_t>(mesh.indices.size());
+                indexOffset += static_cast<uint32_t>(meshIndices.size());
                 materialOffset += static_cast<uint32_t>(meshMaterials.size());
                 meshRecords.push_back(record);
 
@@ -818,7 +899,7 @@ namespace Fox {
                     const auto& submesh = submeshes[s];
                     const auto& material = materials[submesh.materialIndex];
                     const auto mask = alphaMasks.find(material.baseColorTexture);
-                    if (!material.IsAlphaTested() || mask == alphaMasks.end()) {
+                    if (!material.IsAlphaTested() || mask == alphaMasks.end() || submesh.pad1 == 1) {
                         continue;
                     }
 
@@ -968,7 +1049,7 @@ namespace Fox {
                 lightsDirty = lightsDirty || !placement.localLights.empty();
             }
 
-            void RayTracingScene::RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot) {
+            void RayTracingScene::RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot, const std::function<void(const char*)>& mark) {
                 // Instance motion since the previous frame (for motion vectors), and lights of moved objects.
                 // Small, so they are written into the command buffer (vkCmdUpdateBuffer, up to 64 KiB).
                 std::vector<InstanceMotion> motion(instancePlacements.size());
@@ -1029,15 +1110,20 @@ namespace Fox {
                     0, 1, &afterWrite, 0, nullptr, 0, nullptr);
 
                 // Edited surfaces (terrain), materials and textures
+                // Simulations writing geometry (water), then what the edits and simulations changed
+                RecordSimulations(cmd, frameSlot);
                 RecordEdits(cmd, frameSlot);
 
                 // Deform the skinned meshes every frame (also when their joints did not change: the previous
                 // positions must catch up, or a mesh that stopped would keep its last motion vectors)
                 if (skinningPass) {
                     RecordSkinning(cmd);
+                    if (mark) mark("skin");
                 }
 
-                if (!tlasDirty) {
+                // Cluster instances get new structures every frame (their level of detail, the wind)
+                const bool clusters = clusterPass && !clusterMeshes.empty();
+                if (!tlasDirty && !clusters) {
                     return;
                 }
                 tlasDirty = false;
@@ -1063,11 +1149,15 @@ namespace Fox {
                 const VkDeviceSize instancesSize = sizeof(VkAccelerationStructureInstanceKHR) * instances.size();
                 if (!instanceData) {
                     instanceData = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(VkAccelerationStructureInstanceKHR) * MAX_INSTANCES,
-                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, // The cluster pass writes its instances' addresses
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 }
                 std::memcpy(instanceData->Map(), instances.data(), instancesSize);
                 instanceData->Unmap();
+                if (clusters) {
+                    RecordClusterLod(cmd, frameSlot, instanceData->Get(), mark);
+                }
 
                 VkAccelerationStructureGeometryInstancesDataKHR instancesData{
                     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
@@ -1103,6 +1193,7 @@ namespace Fox {
                     VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
 
                 vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
+                if (mark) mark("tlas");
 
                 VkMemoryBarrier afterBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
                     VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR };
@@ -1347,6 +1438,82 @@ namespace Fox {
                 CreateSkinningResources();
             }
 
+            void RayTracingScene::RecordClusterLod(VkCommandBuffer cmd, uint32_t frameSlot, VkBuffer tlasInstances, const std::function<void(const char*)>& mark) {
+                using Instance = Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::Instance;
+
+                // Per instance: the levels whose clusters its distance could pick. A level can only be in the cut if
+                // some cluster is fine enough seen from as far as the mesh reaches, while its parent is still too
+                // coarse seen from as near (cluster bounds lie inside the mesh's bounds). The GPU then tests only
+                // these clusters, each against its own bounds.
+                auto candidates = [&](const ClusterMesh& mesh, const glm::mat4& toWorld, float scale, float threshold, uint32_t& first, uint32_t& count) {
+                    const glm::vec3 center = glm::vec3(toWorld * glm::vec4(glm::vec3(mesh.bounds), 1.0f));
+                    const float distance = glm::length(center - clusterView.cameraPosition);
+                    const float radius = mesh.bounds.w * scale;
+                    const float nearest = std::max(distance - radius, 0.01f), farthest = std::max(distance + radius, 0.01f);
+                    const float toPixels = scale * clusterView.pixelScale;
+                    int low = -1, high = -1;
+                    for (int l = 0; l < static_cast<int>(mesh.levels.size()); l++) {
+                        const auto& level = mesh.levels[l];
+                        const bool fineEnough = level.minSelfError * toPixels / farthest <= threshold;
+                        const bool parentTooCoarse = level.maxParentError >= 3.0e38f || level.maxParentError * toPixels / nearest > threshold;
+                        if (fineEnough && parentTooCoarse) {
+                            low = low < 0 ? l : low;
+                            high = l;
+                        }
+                    }
+                    if (low < 0) {
+                        low = high = static_cast<int>(mesh.levels.size()) - 1; // Coarser than everything: the top
+                    }
+                    first = mesh.levels[low].firstCluster;
+                    count = mesh.levels[high].firstCluster + mesh.levels[high].clusterCount - first;
+                };
+
+                struct Entry {
+                    size_t placement;
+                    float scale;
+                };
+                std::vector<Entry> entries;
+                for (size_t p = staticCounts.placements; p < placements.size(); p++) {
+                    const Placement& placement = placements[p];
+                    if (meshRecords[placement.record].clusterMesh >= 0 && placement.visible && !placement.instances.empty()) {
+                        const glm::vec3 s = glm::abs(placement.transform.scale);
+                        entries.push_back({ p, std::max(s.x, std::max(s.y, s.z)) });
+                    }
+                }
+                if (entries.empty()) {
+                    return;
+                }
+
+                // Within the room for cluster lists: if every instance's candidates do not fit, coarser everywhere
+                std::vector<Instance> list(entries.size());
+                float threshold = clusterThreshold * clusterOverload;
+                uint32_t total = 0;
+                for (int attempt = 0; attempt < 12; attempt++, threshold *= 2.0f) {
+                    total = 0;
+                    for (size_t e = 0; e < entries.size(); e++) {
+                        const Placement& placement = placements[entries[e].placement];
+                        const ClusterMesh& mesh = clusterMeshes[meshRecords[placement.record].clusterMesh];
+                        const glm::mat4 toWorld = placement.transform.Matrix();
+                        Instance& instance = list[e];
+                        for (int row = 0; row < 3; row++) {
+                            instance.rows[row] = glm::vec4(toWorld[0][row], toWorld[1][row], toWorld[2][row], toWorld[3][row]);
+                        }
+                        instance.scale = entries[e].scale;
+                        instance.threshold = threshold;
+                        candidates(mesh, toWorld, entries[e].scale, threshold, instance.firstCandidate, instance.candidateCount);
+                        instance.workBase = total;
+                        instance.refBase = total;
+                        instance.tlasInstance = placement.instances[0];
+                        instance.pad = 0;
+                        total += instance.candidateCount;
+                    }
+                    if (total <= clusterPass->GetRefCapacity()) {
+                        break;
+                    }
+                }
+                clusterPass->Record(cmd, frameSlot, list, total, tlasInstances, clusterView, mark);
+            }
+
             void RayTracingScene::AddPlacementInstances(size_t p) {
                 const uint32_t masks[SurfaceKindCount] = { INSTANCE_MASK_OPAQUE, INSTANCE_MASK_GLASS, INSTANCE_MASK_SOLID_GLASS };
                 Placement& placement = placements[p];
@@ -1354,6 +1521,14 @@ namespace Fox {
                 placement.previousMatrix = placement.transform.Matrix();
                 placement.instances.clear();
                 placement.masks.clear();
+                if (record.clusterMesh >= 0) {
+                    // One instance; its bottom level structure is the cluster pass's, remade every frame
+                    placement.instances.push_back(static_cast<uint32_t>(instances.size()));
+                    placement.masks.push_back(INSTANCE_MASK_OPAQUE);
+                    instancePlacements.push_back(static_cast<uint32_t>(p));
+                    AddInstance(NO_BLAS, placement.previousMatrix, record.firstSubmesh, placement.visible ? INSTANCE_MASK_OPAQUE : 0u);
+                    return;
+                }
                 for (int kind = 0; kind < SurfaceKindCount; kind++) {
                     if (record.blas[kind] >= 0) {
                         placement.instances.push_back(static_cast<uint32_t>(instances.size()));
@@ -1474,9 +1649,10 @@ namespace Fox {
                 // --- Does it fit? Checked before anything changes ---
                 size_t vertexCount = 0, indexCount = 0, partCount = 0, materialCount = 0, placementCount = 0;
                 for (const DynamicMesh& entry : meshes) {
+                    const bool clustered = entry.lod && clusterLodEnabled && !entry.lod->clusters.empty();
                     vertexCount += entry.mesh->vertices.size();
-                    indexCount += entry.mesh->indices.size();
-                    partCount += std::max<size_t>(entry.mesh->parts.size(), 1);
+                    indexCount += clustered ? entry.lod->indices.size() : entry.mesh->indices.size();
+                    partCount += clustered ? entry.lod->clusters.size() : std::max<size_t>(entry.mesh->parts.size(), 1);
                     materialCount += entry.materials.size();
                     placementCount += 1 + entry.moreTransforms.size();
                 }
@@ -1516,12 +1692,14 @@ namespace Fox {
                 vertexOffset = staticCounts.vertices;
                 indexOffset = staticCounts.indices;
                 materialOffset = staticCounts.materials;
+                clusterMeshes.clear();
+                clusterContent = {};
 
                 // --- The new meshes ---
                 std::vector<DynamicMeshHandle> handles;
                 for (const DynamicMesh& entry : meshes) {
                     DynamicMeshHandle handle;
-                    handle.skinnedMesh = AddSkinnedMesh(*entry.mesh, entry.materials, entry.transform.Matrix(), entry.name);
+                    handle.skinnedMesh = AddSkinnedMesh(*entry.mesh, entry.materials, entry.transform.Matrix(), entry.name, entry.lod);
                     handle.object = GetObjectOfSkinnedMesh(handle.skinnedMesh);
                     placements[handle.object].transform = entry.transform; // Exactly, not decomposed from the matrix
 
@@ -1595,6 +1773,9 @@ namespace Fox {
                 const VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());
                 for (size_t r = staticCounts.records; r < meshRecords.size(); r++) {
                     MeshRecord& record = meshRecords[r];
+                    if (record.clusterMesh >= 0) {
+                        continue; // The cluster pass makes its structures, per instance and frame
+                    }
                     for (int kind = 0; kind < SurfaceKindCount; kind++) {
                         if (record.count[kind] > 0) {
                             record.blas[kind] = static_cast<int>(AddBLAS(vertexAddress, indexAddress, record.FirstOf(kind), record.count[kind], record.dynamic));
@@ -1608,9 +1789,24 @@ namespace Fox {
                     AddPlacementInstances(p);
                 }
                 for (size_t i = staticCounts.instances; i < instances.size(); i++) {
-                    instances[i].accelerationStructureReference = bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
+                    instances[i].accelerationStructureReference = instanceBlasIndices[i] == NO_BLAS ? 0 : bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
                 }
                 tlasDirty = true;
+
+                // --- The clusters, to the cluster pass ---
+                if (clusterLodEnabled) {
+                    clusterContent.instanceCount = 0;
+                    for (size_t p = staticCounts.placements; p < placements.size(); p++) {
+                        clusterContent.instanceCount += meshRecords[placements[p].record].clusterMesh >= 0 ? 1 : 0;
+                    }
+                    if (!clusterPass && !clusterMeshes.empty()) {
+                        Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::RegisterExtensionFunctions(device);
+                        clusterPass = std::make_unique<Fox::Graphics::Vulkan::RayTracing::ClusterLodPass>(device, physicalDevice, commandPool->Get(), queue);
+                    }
+                    if (clusterPass) {
+                        clusterPass->Upload(clusterContent, vertexSSBO->GetBuffer().Get());
+                    }
+                }
 
                 return handles;
             }
@@ -1671,7 +1867,7 @@ namespace Fox {
                 surface.material = materialOffset;
 
                 Fox::Graphics::Vulkan::Material surfaceMaterial = material;
-                surfaceMaterial.layerMaterial = extraMaterials.empty() ? -1 : static_cast<int>(materialOffset + 1);
+                surfaceMaterial.layerMaterial = extraMaterials.empty() ? material.layerMaterial : static_cast<int>(materialOffset + 1);
                 AddGeneratedSurface(surfaceVertices, surfaceIndices, surfaceMaterial, transform, name, false);
                 meshRecords.back().dynamic = true; // Its acceleration structure can be refitted
                 surface.record = meshRecords.size() - 1;
@@ -1684,6 +1880,41 @@ namespace Fox {
 
                 editableSurfaces.push_back(surface);
                 return editableSurfaces.size() - 1;
+            }
+
+            size_t RayTracingScene::AddSimulatedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material, const std::string& name) {
+                // Previous positions (for motion vectors) where the skinned meshes keep theirs: room after the static bind pose
+                const uint32_t firstPrevious = static_cast<uint32_t>(bindPose.size());
+                for (const Fox::Graphics::Vulkan::Vertex& vertex : surfaceVertices) {
+                    SkinVertex placeholder{};
+                    std::memcpy(placeholder.position, vertex.position, sizeof(placeholder.position));
+                    placeholder.weights[0] = 1.0f;
+                    bindPose.push_back(placeholder);
+                }
+
+                const size_t surface = AddEditableSurface(surfaceVertices, surfaceIndices, material, {}, glm::mat4(1.0f), name);
+                editableSurfaces[surface].firstPrevious = firstPrevious;
+                submeshes[meshRecords[editableSurfaces[surface].record].firstSubmesh].previousPositions = firstPrevious + 1;
+                return surface;
+            }
+
+            RayTracingScene::SimulatedRange RayTracingScene::GetSimulatedRange(size_t surface) const {
+                const EditableSurface& s = editableSurfaces[surface];
+                return { s.firstVertex, s.vertexCount, s.firstPrevious };
+            }
+
+            void RayTracingScene::MarkSurfaceDeformed(size_t surface, bool rebuild) {
+                // A refit keeps the tree of boxes and only resizes them: as the surface moves it gets looser,
+                // so it is built anew every few seconds
+                EditableSurface& s = editableSurfaces[surface];
+                if (rebuild || ++s.deformations >= 240) {
+                    s.deformations = 0;
+                    s.rebuild = true;
+                }
+                else {
+                    s.refit = true;
+                }
             }
 
             void RayTracingScene::UpdateSurfaceVertices(size_t surfaceIndex, uint32_t first, const Fox::Graphics::Vulkan::Vertex* data, uint32_t count) {
@@ -1834,6 +2065,42 @@ namespace Fox {
                 }
 
                 // --- Bottom level structures of the edited surfaces: refitted, or built anew ---
+                // They share one scratch buffer, sized first for all of them: replacing it between two builds
+                // would free memory an earlier build in this command buffer (or a frame in flight) still uses
+                {
+                    VkDeviceSize needed = 0;
+                    for (const EditableSurface& surface : editableSurfaces) {
+                        if (!surface.refit && !surface.rebuild) {
+                            continue;
+                        }
+                        for (int blasIndex : meshRecords[surface.record].blas) {
+                            if (blasIndex < 0) {
+                                continue;
+                            }
+                            BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[blasIndex];
+                            VkAccelerationStructureBuildGeometryInfoKHR sizeQuery{
+                                .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+                                .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+                                .flags = BlasBuildFlags(blas),
+                                .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+                                .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
+                                .pGeometries = blas.geometries.data()
+                            };
+                            VkAccelerationStructureBuildSizesInfoKHR sizes{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+                            vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &sizeQuery, blas.primitiveCounts.data(), &sizes);
+                            needed = std::max({ needed, sizes.buildScratchSize, sizes.updateScratchSize });
+                        }
+                    }
+                    if (needed > editScratchSize) {
+                        if (editScratchBuffer != VK_NULL_HANDLE) {
+                            vkDeviceWaitIdle(device); // Frames in flight may still be building with it (rare: it only grows)
+                            vkDestroyBuffer(device, editScratchBuffer, nullptr);
+                            vkFreeMemory(device, editScratchMemory, nullptr);
+                        }
+                        CreateScratchBuffer(device, physicalDevice, needed, editScratchBuffer, editScratchMemory, "Edit BLAS Scratch");
+                        editScratchSize = needed;
+                    }
+                }
                 for (EditableSurface& surface : editableSurfaces) {
                     if (!surface.refit && !surface.rebuild) {
                         continue;
@@ -1848,28 +2115,6 @@ namespace Fox {
                         }
                         BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[blasIndex];
                         const VkBuildAccelerationStructureFlagsKHR flags = BlasBuildFlags(blas);
-
-                        // Scratch memory of its own, for the larger of building and refitting
-                        VkAccelerationStructureBuildGeometryInfoKHR sizeQuery{
-                            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-                            .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                            .flags = flags,
-                            .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-                            .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
-                            .pGeometries = blas.geometries.data()
-                        };
-                        VkAccelerationStructureBuildSizesInfoKHR sizes{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
-                        vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &sizeQuery, blas.primitiveCounts.data(), &sizes);
-                        const VkDeviceSize scratchSize = std::max(sizes.buildScratchSize, sizes.updateScratchSize);
-                        if (scratchSize > editScratchSize) {
-                            // Grows on the first edit after a rebuild of the scene, before anything has used it
-                            if (editScratchBuffer != VK_NULL_HANDLE) {
-                                vkDestroyBuffer(device, editScratchBuffer, nullptr);
-                                vkFreeMemory(device, editScratchMemory, nullptr);
-                            }
-                            CreateScratchBuffer(device, physicalDevice, scratchSize, editScratchBuffer, editScratchMemory, "Edit BLAS Scratch");
-                            editScratchSize = scratchSize;
-                        }
 
                         // The previous frame's rays and builds must be done with the structure and the scratch memory
                         VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
