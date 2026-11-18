@@ -18,7 +18,7 @@ namespace Fox {
 		// Only the Hierarchy is open at first; the Window menu opens the rest.
 		class EditorShell {
 		public:
-			enum class Window { Hierarchy, Inspector, ContentBrowser, Environment, Trees, Terrain, Camera, Controls, Count };
+			enum class Window { Hierarchy, Inspector, ContentBrowser, Environment, Trees, Terrain, MeshPaint, Camera, Controls, Count };
 
 			static const char* WindowTitle(Window window);
 			bool IsOpen(Window window) const { return open[static_cast<int>(window)]; }
@@ -69,7 +69,7 @@ namespace Fox {
 			const Command* DrawMatches(const std::vector<const Command*>& matches, float width, bool followSelection);
 			std::vector<const Command*> FindMatches() const;
 
-			bool open[static_cast<int>(Window::Count)] = { true, false, false, false, false, false, false, false };
+			bool open[static_cast<int>(Window::Count)] = { true }; // The Hierarchy
 			bool placeNow[static_cast<int>(Window::Count)] = {};
 
 			std::vector<Command> commands;

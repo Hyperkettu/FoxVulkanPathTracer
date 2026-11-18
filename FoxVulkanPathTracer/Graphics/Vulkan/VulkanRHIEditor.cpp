@@ -112,6 +112,24 @@ namespace Fox {
 				else {
 					terrainEditor.SetBrushActive(false); // The brush shows in its window: no painting without it
 				}
+				if (shell.IsOpen(Window::MeshPaint)) {
+					shell.Place(Window::MeshPaint, uiScale);
+					meshPainter.Draw(scene, GizmoView(), shell.OpenFlag(Window::MeshPaint), uiScale);
+				}
+				else {
+					meshPainter.SetActive(false); // The brush shows in its window: no painting without it
+				}
+
+				// One brush at a time: turning one on turns the other off
+				if (meshPainter.IsActive() && !painterWasActive) {
+					terrainEditor.SetBrushActive(false);
+				}
+				else if (terrainEditor.IsBrushActive() && !terrainBrushWasActive) {
+					meshPainter.SetActive(false);
+				}
+				painterWasActive = meshPainter.IsActive();
+				terrainBrushWasActive = terrainEditor.IsBrushActive();
+
 				if (shell.IsOpen(Window::Controls)) {
 					shell.Place(Window::Controls, uiScale);
 					DrawControls();
@@ -161,11 +179,18 @@ namespace Fox {
 				shell.Add("Edit/Duplicate", [this, &scene, selected] { gizmo.Select(scene.DuplicateEntity(selected)); }, "Ctrl+D", hasSelection, -1, "copy entity");
 				shell.Add("Edit/Delete", [&] { RunKeyCommand(SDL_SCANCODE_DELETE); }, "Delete", hasSelection, -1, "remove entity");
 				shell.Add("Edit/Deselect", [&] { gizmo.Select({}); }, "", hasSelection, -1, "selection");
+				shell.Add("Edit/Duplicate as Instance", [this, &scene, selected] { gizmo.Select(scene.DuplicateEntity(selected, true)); }, "",
+					hasSelection, -1, "copy tree instance shared");
+				shell.Add("Edit/Drop to Ground", [this, &scene, selected] { Fox::Editor::MeshPainter::DropToGround(scene, selected); }, "",
+					hasSelection, -1, "snap floor terrain height");
 				shell.Separator("Edit");
 				shell.Add("Edit/Move Tool", [&] { RunKeyCommand(SDL_SCANCODE_Z); }, "Z", true, gizmo.GetMode() == Mode::Translate, "gizmo translate");
 				shell.Add("Edit/Rotate Tool", [&] { RunKeyCommand(SDL_SCANCODE_X); }, "X", true, gizmo.GetMode() == Mode::Rotate, "gizmo turn");
 				shell.Add("Edit/Scale Tool", [&] { RunKeyCommand(SDL_SCANCODE_C); }, "C", true, gizmo.GetMode() == Mode::Scale, "gizmo size");
 				shell.Separator("Edit");
+				shell.Add("Edit/Mesh Paint/Brush On", [&] { RunKeyCommand(SDL_SCANCODE_M); }, "M", true, meshPainter.IsActive() ? 1 : 0,
+					"paint scatter foliage forest trees models");
+				shell.Add("Edit/Mesh Paint/Mesh Paint Window", [&shell] { shell.SetOpen(Window::MeshPaint, true); }, "", true, -1, "paint scatter");
 				shell.Add("Edit/Terrain Brush/Brush On", [&] {
 					shell.SetOpen(Window::Terrain, true);
 					RunKeyCommand(SDL_SCANCODE_B);
@@ -218,6 +243,7 @@ namespace Fox {
 				windowItem(Window::Environment, "Environment", "", "ground plane");
 				windowItem(Window::Trees, "Trees", "", "tree editor");
 				windowItem(Window::Terrain, "Terrain", "", "sculpt paint");
+				windowItem(Window::MeshPaint, "Mesh Paint", "", "scatter paint trees models density foliage");
 				windowItem(Window::Camera, "Camera Paths", "", "flight keys");
 				shell.Separator("Window");
 				shell.Add("Window/Close All", [&shell] {
@@ -279,6 +305,7 @@ namespace Fox {
 					{ "Ctrl+D", "Duplicate the selected entity" },
 					{ "Ctrl+S", "Save the scene" },
 					{ "B, [ ]", "Terrain brush on / off, its radius" },
+					{ "M, [ ]", "Mesh paint brush on / off, its radius; Ctrl + left mouse erases" },
 					{ "K, P", "Camera path: add a key from the view, fly the path" },
 					{ "N, U, V", "Next denoiser, render resolution, vsync" },
 					{ "1 / 2", "Exposure down / up" },

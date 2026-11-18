@@ -136,6 +136,9 @@ namespace Fox {
 			const ImVec2 display = ImGui::GetIO().DisplaySize;
 			ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.35f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 			ImGui::SetNextWindowSize(ImVec2(480.0f * uiScale, 0.0f), ImGuiCond_Appearing);
+			if (saveAsFocus) {
+				ImGui::SetNextWindowFocus(); // The typing goes to it right away
+			}
 			if (ImGui::Begin("Save Scene As", &saveAsOpen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
 				ImGui::TextDisabled("Path from the working directory; Scenes/default.json is what the renderer starts with");
 				if (saveAsFocus) {

@@ -1472,20 +1472,22 @@ namespace Fox {
 
             std::vector<RayTracingScene::DynamicMeshHandle> RayTracingScene::RebuildDynamicMeshes(const std::vector<DynamicMesh>& meshes) {
                 // --- Does it fit? Checked before anything changes ---
-                size_t vertexCount = 0, indexCount = 0, partCount = 0, materialCount = 0;
+                size_t vertexCount = 0, indexCount = 0, partCount = 0, materialCount = 0, placementCount = 0;
                 for (const DynamicMesh& entry : meshes) {
                     vertexCount += entry.mesh->vertices.size();
                     indexCount += entry.mesh->indices.size();
                     partCount += std::max<size_t>(entry.mesh->parts.size(), 1);
                     materialCount += entry.materials.size();
+                    placementCount += 1 + entry.moreTransforms.size();
                 }
                 if (vertexCount > DYNAMIC_VERTEX_CAPACITY || indexCount > DYNAMIC_INDEX_CAPACITY) {
                     throw std::runtime_error("Too much geometry for the room reserved for dynamic meshes (" + std::to_string(vertexCount) + " vertices, "
                         + std::to_string(indexCount / 3) + " triangles)");
                 }
                 if (staticCounts.submeshes + partCount > MAX_SUBMESHES || staticCounts.materials + materialCount > MAX_MATERIALS
-                    || staticCounts.instances + meshes.size() > MAX_INSTANCES) {
-                    throw std::runtime_error("Too many dynamic meshes, parts or materials");
+                    || staticCounts.instances + placementCount > MAX_INSTANCES) {
+                    throw std::runtime_error("Too many dynamic meshes, placements, parts or materials (at most "
+                        + std::to_string(MAX_INSTANCES - staticCounts.instances) + " placements)");
                 }
 
                 // --- Back to the static scene ---
@@ -1522,6 +1524,16 @@ namespace Fox {
                     handle.skinnedMesh = AddSkinnedMesh(*entry.mesh, entry.materials, entry.transform.Matrix(), entry.name);
                     handle.object = GetObjectOfSkinnedMesh(handle.skinnedMesh);
                     placements[handle.object].transform = entry.transform; // Exactly, not decomposed from the matrix
+
+                    // Instances: more placements of the same record (geometry, skinning and structures shared)
+                    for (size_t i = 0; i < entry.moreTransforms.size(); i++) {
+                        Placement placement;
+                        placement.record = placements[handle.object].record;
+                        placement.transform = entry.moreTransforms[i];
+                        placement.name = i < entry.moreNames.size() ? entry.moreNames[i] : entry.name;
+                        placements.push_back(std::move(placement));
+                        handle.moreObjects.push_back(placements.size() - 1);
+                    }
                     handles.push_back(handle);
                 }
 

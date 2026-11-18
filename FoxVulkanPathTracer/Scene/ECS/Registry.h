@@ -133,6 +133,15 @@ namespace Fox {
 				}
 			}
 
+			template<class T, class F>
+			void Each(F&& f) const {
+				if (const Pool<T>* pool = const_cast<Registry*>(this)->FindPool<T>()) {
+					for (size_t i = 0; i < pool->components.size(); i++) {
+						f(pool->entities[i], pool->components[i]);
+					}
+				}
+			}
+
 			template<class T>
 			size_t Count() const {
 				const Pool<T>* pool = const_cast<Registry*>(this)->FindPool<T>();

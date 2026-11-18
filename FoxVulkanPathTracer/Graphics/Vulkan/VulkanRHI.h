@@ -152,6 +152,8 @@ namespace Fox {
 				Fox::Editor::SceneGraphEditor sceneGraphEditor;
 				Fox::Editor::EditorShell shell;          // Menu bar, Find, window layout, status bar
 				Fox::Editor::ContentBrowser contentBrowser;
+				Fox::Editor::MeshPainter meshPainter;
+				bool painterWasActive = false, terrainBrushWasActive = false; // Only one brush at a time
 				Fox::ECS::Entity lastSelection;          // Selecting something new opens the Inspector
 				std::vector<std::function<void()>> deferredCommands; // Menu commands run between frames
 

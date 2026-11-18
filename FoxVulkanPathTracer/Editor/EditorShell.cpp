@@ -40,6 +40,7 @@ namespace Fox {
 			case Window::Environment: return "Environment";
 			case Window::Trees: return "Trees";
 			case Window::Terrain: return "Terrain";
+			case Window::MeshPaint: return "Mesh Paint";
 			case Window::Camera: return "Camera";
 			case Window::Controls: return "Controls";
 			default: return "";

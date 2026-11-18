@@ -373,8 +373,10 @@ namespace Fox {
 			const std::vector<Entity>& children = graph.GetChildren(entity);
 			const bool leaf = children.empty();
 
-			ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth
-				| ImGuiTreeNodeFlags_DefaultOpen;
+			ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+			if (children.size() <= 32) {
+				flags |= ImGuiTreeNodeFlags_DefaultOpen; // Big groups (painted meshes) start folded
+			}
 			if (leaf) {
 				flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
 			}
@@ -459,6 +461,13 @@ namespace Fox {
 				}
 				if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
 					toDuplicate = entity;
+				}
+				if (ImGui::MenuItem("Duplicate as Instance")) {
+					gizmo.Select(scene.DuplicateEntity(entity, true));
+				}
+				ImGui::SetItemTooltip("Trees in the copy stay the same trees: one geometry, edited together");
+				if (ImGui::MenuItem("Drop to Ground", nullptr, false, graph.HasTransform(entity))) {
+					MeshPainter::DropToGround(scene, entity);
 				}
 				if (ImGui::MenuItem("Unparent", nullptr, false, graph.IsValid(graph.GetParent(entity)))) {
 					moves.push_back({ entity, Entity{}, -1 });

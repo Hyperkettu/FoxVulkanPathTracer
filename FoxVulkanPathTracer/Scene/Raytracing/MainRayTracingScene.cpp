@@ -1,6 +1,8 @@
 #include "FoxRenderer.h"
 
 #include <filesystem>
+#include <unordered_set>
+#include <unordered_map>
 
 namespace Fox {
 
@@ -82,13 +84,20 @@ namespace Fox {
 					objectEntities[mesh.object] = entity;
 				};
 
-				// Static content: models and spheres, then the ground and sun
+				// Static content: models and spheres, then the ground and sun. A placement can take up to three top
+				// level instances (one per surface kind); half the room goes to them, the rest to trees.
+				const size_t staticBudget = MAX_INSTANCES / 2;
+				size_t leftOut = 0;
 				for (Entity entity : entities) {
 					MeshComponent* mesh = registry.TryGet<MeshComponent>(entity);
 					if (!mesh) {
 						continue;
 					}
 					mesh->placed = false;
+					if (mesh->type != MeshComponent::Type::Tree && GetObjectCount() >= staticBudget) {
+						leftOut++;
+						continue;
+					}
 					const glm::mat4 world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
 					const std::string& name = graph.GetName(entity);
 
@@ -108,6 +117,11 @@ namespace Fox {
 						AddSphere(glm::vec3(0.0f), mesh->radius, mesh->material.ToMaterial(), name);
 						placed(entity, *mesh, world);
 					}
+				}
+
+				if (leftOut > 0) {
+					problems += std::string(problems.empty() ? "" : "; ") + std::to_string(leftOut) + " models and spheres left out (at most "
+						+ std::to_string(staticBudget) + ")";
 				}
 
 				terrainPlaced = false;
@@ -375,7 +389,7 @@ namespace Fox {
 				graph.DestroyEntity(entity);
 			}
 
-			MainRayTracingScene::Entity MainRayTracingScene::DuplicateEntity(Entity entity) {
+			MainRayTracingScene::Entity MainRayTracingScene::DuplicateEntity(Entity entity, bool instanceTrees) {
 				const Entity copy = graph.Duplicate(entity);
 				if (!graph.IsValid(copy)) {
 					return copy;
@@ -383,9 +397,9 @@ namespace Fox {
 				auto& registry = graph.GetRegistry();
 				for (Entity e : graph.Subtree(copy)) {
 					if (MeshComponent* mesh = registry.TryGet<MeshComponent>(e)) {
-						// A placement of its own, and a tree of its own
+						// A placement of its own; a tree of its own too, unless it is an instance of the same tree
 						mesh->placed = false;
-						if (mesh->tree) {
+						if (mesh->tree && !instanceTrees) {
 							mesh->tree = mesh->tree->CloneSettings();
 						}
 						MeshChanged(mesh, nullptr);
@@ -431,10 +445,13 @@ namespace Fox {
 				SyncMeshes();
 				SyncLights();
 
-				// Wind in every tree; it blows in world space, wherever a tree has been moved to
+				// Wind in every tree; it blows in world space, wherever a tree has been moved to. Instances of a tree
+				// share its deformation: it is computed once, for its first placement.
+				std::unordered_set<const Tree*> blown;
 				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {
 					Tree* tree = mesh.type == MeshComponent::Type::Tree ? mesh.tree.get() : nullptr;
-					if (!tree || !tree->placed || !tree->skeleton || !mesh.placed || tree->handle.object >= GetObjectCount()) {
+					if (!tree || !tree->placed || !tree->skeleton || !mesh.placed || tree->handle.object >= GetObjectCount()
+						|| !blown.insert(tree).second) {
 						return;
 					}
 					tree->skeleton->GetSettings() = tree->wind;
@@ -665,10 +682,24 @@ namespace Fox {
 				graph.UpdateTransforms();
 				auto& registry = graph.GetRegistry();
 				try {
+					// Entities sharing a tree are instances of it: its geometry is generated, stored and deformed once
 					const std::vector<Entity> entities = GetTreeEntities();
-					std::vector<DynamicMesh> meshes;
+					std::vector<Tree*> trees;
+					std::vector<std::vector<Entity>> users;
+					std::unordered_map<Tree*, size_t> indexOf;
 					for (Entity entity : entities) {
-						Tree& tree = *GetTree(entity);
+						Tree* tree = GetTree(entity);
+						auto [it, added] = indexOf.emplace(tree, trees.size());
+						if (added) {
+							trees.push_back(tree);
+							users.emplace_back();
+						}
+						users[it->second].push_back(entity);
+					}
+
+					std::vector<DynamicMesh> meshes;
+					for (size_t t = 0; t < trees.size(); t++) {
+						Tree& tree = *trees[t];
 						if (tree.regenerate || !tree.mesh) {
 							GenerateTreeMesh(tree);
 						}
@@ -676,8 +707,12 @@ namespace Fox {
 						DynamicMesh mesh;
 						mesh.mesh = tree.mesh.get();
 						mesh.materials = MaterialsFor(tree.look);
-						mesh.transform = graph.GetWorldTransform(entity);
-						mesh.name = graph.GetName(entity);
+						mesh.transform = graph.GetWorldTransform(users[t][0]);
+						mesh.name = graph.GetName(users[t][0]);
+						for (size_t u = 1; u < users[t].size(); u++) {
+							mesh.moreTransforms.push_back(graph.GetWorldTransform(users[t][u]));
+							mesh.moreNames.push_back(graph.GetName(users[t][u]));
+						}
 						meshes.push_back(std::move(mesh));
 					}
 
@@ -692,14 +727,17 @@ namespace Fox {
 					}
 					objectEntities.resize(GetObjectCount());
 
-					for (size_t i = 0; i < entities.size(); i++) {
-						MeshComponent& mesh = registry.Get<MeshComponent>(entities[i]);
-						mesh.tree->handle = handles[i];
-						mesh.tree->placed = true;
-						mesh.placed = true;
-						mesh.object = handles[i].object;
-						mesh.placedMatrix = registry.Get<Fox::Scene::WorldTransformComponent>(entities[i]).matrix;
-						objectEntities[mesh.object] = entities[i];
+					for (size_t t = 0; t < trees.size(); t++) {
+						trees[t]->handle = handles[t];
+						trees[t]->placed = true;
+						for (size_t u = 0; u < users[t].size(); u++) {
+							const Entity entity = users[t][u];
+							MeshComponent& mesh = registry.Get<MeshComponent>(entity);
+							mesh.placed = true;
+							mesh.object = u == 0 ? handles[t].object : handles[t].moreObjects[u - 1];
+							mesh.placedMatrix = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+							objectEntities[mesh.object] = entity;
+						}
 					}
 					ForgetStalePlacements();
 					SyncMeshes();
@@ -710,6 +748,65 @@ namespace Fox {
 					error = e.what();
 					return false;
 				}
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddTreeInstance(const std::shared_ptr<Tree>& tree, const Fox::Scene::Transform& transform,
+				const std::string& name, Entity parent, bool rebuild) {
+				const Entity entity = graph.CreateEntity(name, parent);
+				graph.SetWorldTransform(entity, transform);
+				MeshComponent mesh;
+				mesh.type = MeshComponent::Type::Tree;
+				mesh.tree = tree;
+				MeshComponent& added = graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh));
+				if (rebuild) {
+					MeshChanged(&added, nullptr);
+				}
+				return entity;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddModelInstance(const std::string& file, bool displacement, const Fox::Scene::Transform& transform,
+				const std::string& name, Entity parent, bool rebuild) {
+				const Entity entity = graph.CreateEntity(name, parent);
+				graph.SetWorldTransform(entity, transform);
+				MeshComponent mesh;
+				mesh.type = MeshComponent::Type::Model;
+				mesh.file = file;
+				mesh.displacement = displacement;
+				MeshComponent& added = graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh));
+				if (rebuild) {
+					MeshChanged(&added, nullptr);
+				}
+				return entity;
+			}
+
+			float MainRayTracingScene::GetModelBottom(const std::string& file, bool displacement) {
+				const std::string key = file + (displacement ? "|displaced" : "");
+				if (auto it = modelBottoms.find(key); it != modelBottoms.end()) {
+					return it->second;
+				}
+				float bottom = 0.0f;
+				try {
+					const auto& vertices = LoadModel(file, displacement).GetVertices();
+					if (!vertices.empty()) {
+						bottom = std::numeric_limits<float>::max();
+						for (const auto& vertex : vertices) {
+							bottom = std::min(bottom, vertex.position[1]);
+						}
+					}
+				}
+				catch (const std::exception& e) {
+					std::cout << "Model " << file << ": " << e.what() << "\n";
+				}
+				modelBottoms[key] = bottom;
+				return bottom;
+			}
+
+			size_t MainRayTracingScene::CountUsers(const Tree* tree) const {
+				size_t count = 0;
+				graph.GetRegistry().Each<MeshComponent>([&](Entity, const MeshComponent& mesh) {
+					count += mesh.type == MeshComponent::Type::Tree && mesh.tree.get() == tree ? 1 : 0;
+				});
+				return count;
 			}
 		}
 	}

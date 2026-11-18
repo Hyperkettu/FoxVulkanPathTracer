@@ -95,7 +95,8 @@ namespace Fox {
                 // Destroys the entity and everything under it; meshes among them leave the scene
                 void DestroyEntity(Entity entity);
                 // A copy of the entity and everything under it (trees are generated anew)
-                Entity DuplicateEntity(Entity entity);
+                // instanceTrees: trees under it stay the same trees (instances: one geometry, edited together)
+                Entity DuplicateEntity(Entity entity, bool instanceTrees = false);
 
                 // A new entity with a light of this type at position (a directional light shines straight down)
                 Entity AddLight(Fox::Scene::LightComponent::Type type, const glm::vec3& position, Entity parent = {});
@@ -125,6 +126,17 @@ namespace Fox {
                 // Entities with a tree mesh, in hierarchy order, and their trees
                 std::vector<Entity> GetTreeEntities() const;
                 Tree* GetTree(Entity entity);
+                // How many entities show this tree (its instances)
+                size_t CountUsers(const Tree* tree) const;
+                // A new entity showing an existing tree (an instance of it), standing at position
+                // rebuild false: the scene is not told yet (MarkStructureChanged / MarkTreesChanged later, e.g. once a
+                // paint stroke ends, so the scene rebuilds once for many)
+                Entity AddTreeInstance(const std::shared_ptr<Tree>& tree, const Fox::Scene::Transform& transform, const std::string& name,
+                    Entity parent = {}, bool rebuild = true);
+                Entity AddModelInstance(const std::string& file, bool displacement, const Fox::Scene::Transform& transform, const std::string& name,
+                    Entity parent = {}, bool rebuild = true);
+                // A model's lowest point in its own space (loads the model if it is not loaded yet; 0 if it cannot be)
+                float GetModelBottom(const std::string& file, bool displacement);
 
                 // Models, spheres and the environment changed: everything is rebuilt (RebuildScene)
                 void MarkStructureChanged() { structureChanged = true; }
@@ -189,6 +201,7 @@ namespace Fox {
 
                 // Loaded glTF files, by file and displacement: reused when added again or the scene rebuilds
                 std::map<std::string, std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>> loadedModels;
+                std::map<std::string, float> modelBottoms; // GetModelBottom, by the same key
                 Fox::Graphics::Geometry::Vulkan::Mesh& LoadModel(const std::string& file, bool displacement);
 
                 bool treesChanged = false;

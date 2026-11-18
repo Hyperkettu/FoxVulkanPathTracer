@@ -133,6 +133,7 @@
 #include "FoxVulkanPathTracer/Editor/SceneGraphEditor.h"
 #include "FoxVulkanPathTracer/Editor/EditorShell.h"
 #include "FoxVulkanPathTracer/Editor/ContentBrowser.h"
+#include "FoxVulkanPathTracer/Editor/MeshPainter.h"
 #include "FoxVulkanPathTracer/Editor/TreeEditor.h"
 #include "FoxVulkanPathTracer/Editor/SceneEditor.h"
 #include "FoxVulkanPathTracer/Editor/CameraEditor.h"

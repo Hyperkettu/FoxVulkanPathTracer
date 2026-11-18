@@ -261,6 +261,38 @@ rebuild takes about 70–80 ms. It then rebuilds the trees on the GPU only:
   structures.
 * **Micromaps:** classifications are kept between rebuilds, so only the first build classifies micro-triangles.
 
+### Instanced trees and mesh painting
+
+Entities can share one tree: they are **instances** of it. The tree's geometry is generated, stored, deformed by the
+wind and given a bottom level acceleration structure once; each instance is one more top level instance with its own
+transform, so a forest costs little more than its distinct trees. Instances sway together (the deformation is
+shared) and change together: editing the tree in the **Trees** window changes all of them (the window says how many
+there are). **Add Instance** in the Trees window and **Duplicate as Instance** (Edit menu or the Hierarchy's
+right-click menu) make instances; **Duplicate** makes a tree of its own. Scene files list each tree once under
+`"treeAssets"` and tree meshes refer to it by index, so instances stay instances when loaded.
+
+The **Mesh Paint** window (Window menu; `M` turns the brush on) paints models and trees onto the ground, the terrain
+or the ground plane:
+
+| Input / setting | What it does |
+| --- | --- |
+| Left mouse | Paints: fills the brush up to the density |
+| `Ctrl` + left mouse | Erases what was painted under the brush |
+| `[` `]` | Brush radius (the mesh brush while it is on, otherwise the terrain brush) |
+| **Density** | Meshes per 100 m² the brush fills an area with |
+| **Min spacing** | No two painted meshes closer than this (0: from the density) |
+| **Same tree apart** | Instances of the same tree variant keep this far apart. A spot nearer to one gets another variant; if every variant stands too near, a new one is grown (while there is room for its geometry), and if none can be, the spot stays empty |
+| **Meshes** | What the brush paints: models (from the list, or dragged from the Content Browser) and trees (any tree of the scene, or a new one), each checked or not, with a weight (how often it is chosen), a scale range, random rotation and how far into the ground it goes. Models can tilt with the slope. Trees have **Variants**: the same tree grown from other seeds, each one geometry for all its instances |
+
+Painted meshes land on the ground where they are painted: models with their lowest point on it, trees upright with
+their base slightly in it. They go under **Painted** in the Hierarchy, one group per mesh (big groups start folded).
+While a stroke lasts its new meshes show as dots; the scene rebuilds once when it ends. **Drop to Ground** (Edit menu,
+or right-click in the Hierarchy) puts any entity back onto the ground.
+
+Limits: every distinct tree takes room in the space reserved for dynamic geometry (`DYNAMIC_VERTEX_CAPACITY`, 2.5 M
+vertices: about half a dozen detailed trees), so variants are few and instances many. Up to 16,384 top level instances:
+half for models and spheres, the rest for trees.
+
 ### Leaves, alpha testing and opacity micromaps
 
 The tree's thinner branches (level 2 and up) carry leaf cards: two along each branch segment, and one at each tip.
@@ -323,6 +355,7 @@ windows (Environment, Trees, Terrain, Camera Paths) beside it, the Content Brows
 | `Ctrl+Space` | **Content Browser** on / off: `Models/`, `Scenes/` and `Textures/`. Double-click a model to add it in front of the camera, or drag it onto an entity in the Hierarchy to add it as that entity's child; double-click a scene to open it |
 | `Ctrl+S` | Save the scene |
 | `Ctrl+D` | Duplicate the selected entity |
+| `M` | Mesh paint brush on / off (see *Instanced trees and mesh painting*) |
 
 **Help > Controls** lists every key. Both `F1` and `Ctrl+Space` switch on edit mode when it is off.
 
@@ -399,7 +432,7 @@ The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "camera": { "position": [29, -2.6, 17], "target": [4, -0.6, -3] },
   "environment": { "ground": true, "groundHeight": -3.73 },
   "entities": [
@@ -414,12 +447,13 @@ The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for
                   "material": { "color": [1, 1, 1], "roughness": 0, "transmission": 1, "ior": 1.5,
                                 "attenuationColor": [0.8, 0.94, 0.9], "attenuationDistance": 2 } } } },
     { "name": "Tree 1", "components": { "transform": { "position": [14, -3.73, 12] },
-                                         "mesh": { "type": "tree", "shape": {}, "look": {}, "wind": {} } } },
+                                         "mesh": { "type": "tree", "asset": 0 } } },
     { "name": "Sun", "components": { "transform": { "rotation": [-13, 61, 0] },
                                      "light": { "type": "directional", "color": [1, 0.58, 0.3], "intensity": 18, "angularRadius": 1.2 } } },
     { "name": "Lamp", "components": { "transform": { "position": [18, 1, 4] },
                                       "light": { "type": "spot", "intensity": 50, "radius": 0.05, "innerConeAngle": 20, "outerConeAngle": 30 } } }
-  ]
+  ],
+  "treeAssets": [ { "shape": {}, "look": {}, "wind": {} } ]
 }
 ```
 

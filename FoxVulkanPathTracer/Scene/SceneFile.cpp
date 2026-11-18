@@ -1,7 +1,7 @@
 // Scene files: the content of MainRayTracingScene as JSON (Scenes/*.json).
 //
 // {
-//   "version": 3,
+//   "version": 4,
 //   "camera":      { "position": [x, y, z], "target": [x, y, z] },
 //   "environment": { "ground": true, "groundHeight": -3.73, "groundMaterial": {...} },
 //   "entities": [
@@ -9,7 +9,7 @@
 //       "components": { "transform": {...}, "mesh": { "type": "model", "file": "Models/cabin.glb", "displacement": true } } },
 //     { "name": "Glass ball", "parent": 0,
 //       "components": { "transform": {...}, "mesh": { "type": "sphere", "radius": 1.2, "material": {...} } } },
-//     { "name": "Tree 1", "components": { "transform": {...}, "mesh": { "type": "tree", "shape": {...}, "look": {...}, "wind": {...} } } },
+//     { "name": "Tree 1", "components": { "transform": {...}, "mesh": { "type": "tree", "asset": 0 } } },
 //     { "name": "Sun", "components": { "transform": {...}, "light": { "type": "directional", "color": [1, 0.58, 0.3], "intensity": 18,
 //                                                                        "angularRadius": 1.2 } } }
 //   ],
@@ -22,6 +22,9 @@
 // siblings keep their order. An entity has the components listed (no "transform": it has none).
 // A transform is { "position": [x, y, z], "rotation": [x, y, z] (Euler angles, degrees), "scale": [x, y, z] }.
 // Version 1 files (lists of "models", "spheres" and "trees" in place of "entities") still load, as root entities.
+// Trees are listed once each in "treeAssets": [ { "shape": {...}, "look": {...}, "wind": {...} } ], and a tree mesh refers
+// to one by index ({ "type": "tree", "asset": 0 }): entities sharing a tree are its instances. Before version 4 each tree
+// mesh held its own shape, look and wind.
 // Before version 3 the sun was part of the environment ("sun", "sunDirection", "sunColor", "sunIntensity",
 // "sunAngularRadius"): such files get a "Sun" entity with a directional light in its place.
 // Every value is optional: what a file leaves out keeps its default, so files stay readable by later versions.
@@ -112,7 +115,7 @@ namespace Fox {
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
-				const int FILE_VERSION = 3;
+				const int FILE_VERSION = 4;
 
 				using Fox::ECS::Entity;
 				using Fox::Scene::SceneGraph;
@@ -147,6 +150,27 @@ namespace Fox {
 					}
 				}
 
+				// Trees are saved once each in "treeAssets", and tree meshes refer to them by index: entities that
+				// share a tree (its instances) share it again when loaded
+				struct TreeAssets {
+					std::unordered_map<const Fox::Scene::Tree*, int> ids; // Saving
+					json list = json::array();
+					std::vector<std::shared_ptr<Fox::Scene::Tree>> loaded; // Loading
+				};
+				TreeAssets* treeAssets = nullptr; // While a file is saved or loaded
+
+				json TreeToJson(const Fox::Scene::Tree& tree) {
+					return { { "shape", tree.shape }, { "look", tree.look }, { "wind", tree.wind } };
+				}
+
+				std::shared_ptr<Fox::Scene::Tree> TreeFromJson(const json& j) {
+					auto tree = std::make_shared<Fox::Scene::Tree>();
+					tree->shape = j.value("shape", Fox::Graphics::Geometry::TreeSettings{});
+					tree->look = j.value("look", Fox::Scene::TreeLook{});
+					tree->wind = j.value("wind", Fox::Animation::WindSkeleton::Settings{});
+					return tree;
+				}
+
 				json MeshToJson(const MeshComponent& mesh) {
 					json j = { { "type", MeshTypeKey(mesh.type) }, { "enabled", mesh.enabled } };
 					switch (mesh.type) {
@@ -159,10 +183,15 @@ namespace Fox {
 						j["material"] = mesh.material;
 						break;
 					case MeshComponent::Type::Tree:
-						if (mesh.tree) {
-							j["shape"] = mesh.tree->shape;
-							j["look"] = mesh.tree->look;
-							j["wind"] = mesh.tree->wind;
+						if (mesh.tree && treeAssets) {
+							auto [it, added] = treeAssets->ids.emplace(mesh.tree.get(), static_cast<int>(treeAssets->list.size()));
+							if (added) {
+								treeAssets->list.push_back(TreeToJson(*mesh.tree));
+							}
+							j["asset"] = it->second;
+						}
+						else if (mesh.tree) {
+							j.update(TreeToJson(*mesh.tree));
 						}
 						break;
 					}
@@ -180,10 +209,13 @@ namespace Fox {
 					}
 					else if (type == "tree") {
 						mesh.type = MeshComponent::Type::Tree;
-						mesh.tree = std::make_shared<Fox::Scene::Tree>();
-						mesh.tree->shape = j.value("shape", Fox::Graphics::Geometry::TreeSettings{});
-						mesh.tree->look = j.value("look", Fox::Scene::TreeLook{});
-						mesh.tree->wind = j.value("wind", Fox::Animation::WindSkeleton::Settings{});
+						const int asset = j.value("asset", -1);
+						if (treeAssets && asset >= 0 && asset < static_cast<int>(treeAssets->loaded.size())) {
+							mesh.tree = treeAssets->loaded[asset]; // Shared: an instance
+						}
+						else {
+							mesh.tree = TreeFromJson(j); // Version 3 and before: its own tree, in place
+						}
 					}
 					else {
 						mesh.type = MeshComponent::Type::Model;
@@ -399,7 +431,13 @@ namespace Fox {
 				}
 				file["cameraPaths"] = cameraManager.GetPaths();
 				file["activeCameraPath"] = cameraManager.GetActivePath();
-				file["entities"] = EntitiesToJson(graph);
+				{
+					TreeAssets assets;
+					treeAssets = &assets;
+					file["entities"] = EntitiesToJson(graph);
+					treeAssets = nullptr;
+					file["treeAssets"] = std::move(assets.list);
+				}
 
 				try {
 					const std::filesystem::path target(path);
@@ -462,7 +500,19 @@ namespace Fox {
 					newEnvironment = file.value("environment", Environment{});
 
 					if (file.contains("entities")) {
-						EntitiesFromJson(file.at("entities"), newGraph);
+						TreeAssets assets;
+						for (const json& entry : file.value("treeAssets", json::array())) {
+							assets.loaded.push_back(TreeFromJson(entry));
+						}
+						treeAssets = &assets;
+						try {
+							EntitiesFromJson(file.at("entities"), newGraph);
+						}
+						catch (...) {
+							treeAssets = nullptr;
+							throw;
+						}
+						treeAssets = nullptr;
 					}
 					else {
 						Version1FromJson(file, newGraph);

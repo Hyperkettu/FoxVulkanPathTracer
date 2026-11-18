@@ -804,8 +804,10 @@ namespace Fox {
 				ApplySceneChanges();
 
 				// Terrain brush strokes, and what they changed on its way to the GPU
-				terrainEditor.Update(*raytracingScene, GizmoView(), MouseInDisplayPixels(), deltaTime,
-					inputManager && (inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL)));
+				const bool ctrl = inputManager && (inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL));
+				terrainEditor.Update(*raytracingScene, GizmoView(), MouseInDisplayPixels(), deltaTime, ctrl);
+				// Mesh paint: Ctrl erases
+				meshPainter.Update(*raytracingScene, GizmoView(), MouseInDisplayPixels(), ctrl);
 
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				raytracingScene->Update(deltaTime);
@@ -859,7 +861,9 @@ namespace Fox {
 				}
 
 				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
-				auto key = [this](SDL_Scancode code) { return inputManager->IsKeyDown(code) ? 1.0f : 0.0f; };
+				// Not while typing in a text field: W A S D R F are letters there
+				const bool typing = userInterface && ImGui::GetIO().WantTextInput;
+				auto key = [this, typing](SDL_Scancode code) { return !typing && inputManager->IsKeyDown(code) ? 1.0f : 0.0f; };
 				const glm::vec3 move(
 					key(SDL_SCANCODE_D) - key(SDL_SCANCODE_A),
 					key(SDL_SCANCODE_R) - key(SDL_SCANCODE_F),
@@ -1327,6 +1331,9 @@ namespace Fox {
 
 					// Grab a handle of the gizmo, or select what is under the mouse (answered a frame or two later)
 					const glm::vec2 mouse = MouseInDisplayPixels();
+					if (meshPainter.MouseDown(*raytracingScene, GizmoView(), mouse)) {
+						return; // Painting meshes
+					}
 					if (terrainEditor.MouseDown(*raytracingScene, GizmoView(), mouse)) {
 						return; // Sculpting or painting
 					}
@@ -1340,10 +1347,15 @@ namespace Fox {
 					if (button == SDL_BUTTON_LEFT) {
 						gizmo.MouseUp();
 						terrainEditor.MouseUp();
+						meshPainter.MouseUp(*raytracingScene);
 					}
 				});
 
 				keyInputBind = input.OnKeyReleased.Connect([this](SDL_Scancode key) {
+					// Typing in a text field (a name, Find, Save As) is not a shortcut
+					if (userInterface && ImGui::GetIO().WantTextInput) {
+						return;
+					}
 					RunKeyCommand(key);
 				});
 			}
@@ -1391,10 +1403,26 @@ namespace Fox {
 						}
 					}
 					break;
+
+				// Mesh paint brush on / off
+				case SDL_SCANCODE_M:
+					if (editMode) {
+						meshPainter.Toggle();
+						if (meshPainter.IsActive()) {
+							shell.SetOpen(Fox::Editor::EditorShell::Window::MeshPaint, true);
+						}
+					}
+					break;
 				case SDL_SCANCODE_LEFTBRACKET:
 				case SDL_SCANCODE_RIGHTBRACKET:
 					if (editMode) {
-						terrainEditor.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
+						// The brush that is on
+						if (meshPainter.IsActive()) {
+							meshPainter.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
+						}
+						else {
+							terrainEditor.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
+						}
 					}
 					break;
 

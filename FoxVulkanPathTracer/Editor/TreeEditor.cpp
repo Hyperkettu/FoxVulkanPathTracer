@@ -65,6 +65,9 @@ namespace Fox {
 
 				ImGui::Separator();
 				ImGui::Text("%s", scene.GetSceneGraph().GetName(selected).c_str());
+				if (const size_t instances = scene.CountUsers(&tree); instances > 1) {
+					ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%zu instances share this tree: changes apply to all of them", instances);
+				}
 				if (tree.mesh) {
 					ImGui::SameLine();
 					ImGui::TextDisabled("%zu triangles, %zu bones, generated in %.0f ms",
@@ -216,6 +219,17 @@ namespace Fox {
 				selected = scene.AddTree(inFront(), tree);
 				gizmo.Select(selected);
 			}
+			ImGui::SetItemTooltip("A new tree with the same settings, edited on its own");
+			ImGui::SameLine();
+			if (ImGui::Button("Add Instance") && tree) {
+				// The same tree once more: no new geometry, and edits change both
+				const auto& mesh = graph.GetRegistry().Get<Fox::Scene::MeshComponent>(selected);
+				Fox::Scene::Transform transform = graph.GetWorldTransform(selected);
+				transform.position = inFront();
+				selected = scene.AddTreeInstance(mesh.tree, transform, graph.GetName(selected));
+				gizmo.Select(selected);
+			}
+			ImGui::SetItemTooltip("The same tree once more: it shares the geometry, and edits change every instance");
 			ImGui::SameLine();
 			if (ImGui::Button("Remove") && tree) {
 				if (graph.IsAncestorOf(selected, gizmo.GetSelected())) {
@@ -237,9 +251,22 @@ namespace Fox {
 			ImGui::ProgressBar(std::max(used, usedIndices), ImVec2(-1.0f, 0.0f), overlay);
 
 			if (ImGui::BeginListBox("##trees", ImVec2(-1.0f, ImGui::GetTextLineHeightWithSpacing() * std::clamp(static_cast<float>(trees.size()), 2.0f, 6.0f)))) {
+				// One row per tree, with how many instances it has (painted forests share a few trees)
+				const Scene::Tree* selectedTree = scene.GetTree(selected);
+				std::vector<const Scene::Tree*> listed;
 				for (Fox::ECS::Entity entity : trees) {
+					const Scene::Tree* rowTree = scene.GetTree(entity);
+					if (std::find(listed.begin(), listed.end(), rowTree) != listed.end()) {
+						continue;
+					}
+					listed.push_back(rowTree);
+					const size_t instances = scene.CountUsers(rowTree);
+					std::string label = graph.GetName(entity);
+					if (instances > 1) {
+						label += "  (" + std::to_string(instances) + " instances)";
+					}
 					ImGui::PushID(static_cast<int>(entity.index));
-					if (ImGui::Selectable(graph.GetName(entity).c_str(), entity == selected)) {
+					if (ImGui::Selectable(label.c_str(), rowTree == selectedTree)) {
 						selected = entity;
 						gizmo.Select(entity);
 					}

@@ -107,15 +107,21 @@ namespace Fox {
                 // rewrites that part: their vertices, indices, submeshes and materials, their skinning data, opacity
                 // micromaps and bottom level acceleration structures. Static geometry and every descriptor stay as
                 // they are (new textures aside). Call with the device idle.
+                //
+                // A mesh can be placed many times (instancing): it is stored, deformed and given a bottom level
+                // structure once, and each placement is one more object (top level instance) using it.
                 struct DynamicMesh {
                     const Fox::Graphics::Geometry::SkinnedMesh* mesh = nullptr;
                     std::vector<Fox::Graphics::Vulkan::Material> materials; // One per part
-                    ObjectTransform transform;
+                    ObjectTransform transform;          // The first placement
                     std::string name;
+                    std::vector<ObjectTransform> moreTransforms; // More placements of the same mesh
+                    std::vector<std::string> moreNames;
                 };
                 struct DynamicMeshHandle {
-                    size_t skinnedMesh = 0; // For SetJointMatrices
-                    size_t object = 0;      // For GetObjectTransform / SetObjectTransform
+                    size_t skinnedMesh = 0;         // For SetJointMatrices
+                    size_t object = 0;              // The first placement, for GetObjectTransform / SetObjectTransform
+                    std::vector<size_t> moreObjects; // The other placements, in the order of moreTransforms
                 };
                 // Throws std::runtime_error (scene unchanged) when the meshes do not fit the reserved room
                 std::vector<DynamicMeshHandle> RebuildDynamicMeshes(const std::vector<DynamicMesh>& meshes);
@@ -151,7 +157,7 @@ namespace Fox {
                 static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 12'000'000;
                 static constexpr uint32_t MAX_SUBMESHES = 65'536;
                 static constexpr uint32_t MAX_MATERIALS = 4'096;
-                static constexpr uint32_t MAX_INSTANCES = 4'096;
+                static constexpr uint32_t MAX_INSTANCES = 16'384; // Painted forests: one per tree
                 uint32_t GetDynamicVertexCount() const { return static_cast<uint32_t>(vertices.size()) - staticCounts.vertices; }
                 uint32_t GetDynamicIndexCount() const { return static_cast<uint32_t>(indices.size()) - staticCounts.indices; }
 
