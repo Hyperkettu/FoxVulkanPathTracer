@@ -23,19 +23,19 @@ namespace Fox {
 			// After the renderer applied changes (or failed to)
 			void Applied(Fox::Scene::RayTracing::MainRayTracingScene& scene, TransformGizmo& gizmo, bool succeeded, const std::string& error, float seconds);
 
-			int GetSelected() const { return selected; }
+			Fox::ECS::Entity GetSelected() const { return selected; }
 
 		private:
 			using Scene = Fox::Scene::RayTracing::MainRayTracingScene;
 
 			void DrawTreeList(Scene& scene, TransformGizmo& gizmo, const glm::vec3& cameraPosition, const glm::vec3& cameraForward);
-			void DrawPlacement(Scene& scene, Scene::Tree& tree);
+			void DrawPlacement(Scene& scene, Fox::ECS::Entity entity);
 			bool DrawCrossSection(Fox::Graphics::Geometry::TreeSettings& shape, float uiScale);
 			bool DrawTrunkCurve(Fox::Graphics::Geometry::TreeSettings& shape, float uiScale);
 			bool DrawTextures(const char* id, Scene::SurfaceTextures& textures, bool& geometryChanged);
 			bool TextureCombo(const char* label, std::string& file);
 
-			int selected = 0;
+			Fox::ECS::Entity selected; // The tree entity being edited
 			bool liveUpdate = false;
 			std::string status;
 			bool statusIsError = false;

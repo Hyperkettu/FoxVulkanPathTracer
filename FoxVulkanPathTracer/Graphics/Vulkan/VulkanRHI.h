@@ -149,6 +149,7 @@ namespace Fox {
 				float uiScale = 0.0f;            // Sizes scale with the window height
 				Fox::Editor::TreeEditor treeEditor;
 				Fox::Editor::SceneEditor sceneEditor;
+				Fox::Editor::SceneGraphEditor sceneGraphEditor;
 				Fox::Editor::CameraEditor cameraEditor;
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written

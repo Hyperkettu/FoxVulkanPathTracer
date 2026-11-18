@@ -164,6 +164,14 @@ namespace Fox {
                 // Takes effect with the next RecordFrameUpdate
                 void SetObjectTransform(size_t object, const ObjectTransform& transform);
 
+                // Hidden objects stay in the scene but no ray hits them (instance mask 0) and their lights go dark.
+                // Cheap: takes effect with the next RecordFrameUpdate, no rebuild.
+                void SetObjectVisible(size_t object, bool visible);
+                bool IsObjectVisible(size_t object) const { return placements[object].visible; }
+
+                // Translation, rotation and scale of a matrix; shear is not supported
+                static ObjectTransform Decompose(const glm::mat4& matrix);
+
                 // The object an acceleration structure instance belongs to (InstanceIndex() in the shaders), -1 if none
                 int GetObjectOfInstance(uint32_t instanceIndex) const {
                     return instanceIndex < instancePlacements.size() ? static_cast<int>(instancePlacements[instanceIndex]) : -1;
@@ -435,12 +443,13 @@ namespace Fox {
                     std::vector<Fox::Graphics::Vulkan::Light> localLights;
 
                     std::vector<uint32_t> instances;  // Its TLAS instances
+                    std::vector<uint32_t> masks;      // Their visibility masks while visible
                     glm::mat4 previousMatrix{ 1.0f }; // As traced in the previous frame
+                    bool visible = true;
                 };
                 std::vector<Placement> placements;
                 std::vector<uint32_t> instancePlacements; // Per TLAS instance
 
-                static ObjectTransform Decompose(const glm::mat4& matrix);
                 static Fox::Graphics::Vulkan::Light TransformLight(Fox::Graphics::Vulkan::Light light, const glm::mat4& transform);
 
                 bool tlasDirty = false;

@@ -6,9 +6,7 @@ namespace Fox {
 
 	namespace Scene {
 
-		namespace RayTracing {
-
-			Fox::Graphics::Vulkan::Material MainRayTracingScene::SurfaceMaterial::ToMaterial() const {
+			Fox::Graphics::Vulkan::Material SurfaceMaterial::ToMaterial() const {
 				Fox::Graphics::Vulkan::Material material;
 				material.baseColor[0] = color.r;
 				material.baseColor[1] = color.g;
@@ -23,6 +21,10 @@ namespace Fox {
 				}
 				return material;
 			}
+
+		namespace RayTracing {
+
+			using Fox::Scene::MeshComponent;
 
 			void MainRayTracingScene::Initialize() {
 				textureLibrary = std::make_unique<Fox::Scene::TextureLibrary>(device, physicalDevice, commandPool->Get(), queue);
@@ -60,48 +62,50 @@ namespace Fox {
 				return *(loadedModels[key] = std::move(mesh));
 			}
 
-			void MainRayTracingScene::SyncTransforms() {
-				for (Model& model : models) {
-					if (model.placed && model.object < GetObjectCount()) {
-						model.transform = GetObjectTransform(model.object);
-					}
-				}
-				for (Sphere& sphere : spheres) {
-					if (sphere.placed && sphere.object < GetObjectCount()) {
-						sphere.transform = GetObjectTransform(sphere.object);
-					}
-				}
-				for (Tree& tree : trees) {
-					if (tree.placed && tree.handle.object < GetObjectCount()) {
-						tree.transform = GetObjectTransform(tree.handle.object);
-					}
-				}
-			}
-
 			bool MainRayTracingScene::RebuildScene(std::string& error) {
-				SyncTransforms();
+				graph.UpdateTransforms();
 				Clear();
+				objectEntities.clear();
 				std::string problems;
 
-				// Static content: models, spheres, ground and sun
-				for (Model& model : models) {
-					model.placed = false;
-					try {
-						AddMesh(LoadModel(model.file, model.displacement), model.transform.Matrix(), model.name);
-						model.object = GetObjectCount() - 1;
-						model.placed = true;
-						SetObjectTransform(model.object, model.transform); // Exactly, not decomposed from the matrix
-					}
-					catch (const std::exception& e) {
-						problems += std::string(problems.empty() ? "" : "; ") + model.file + ": " + e.what();
-					}
-				}
+				auto& registry = graph.GetRegistry();
+				const std::vector<Entity> entities = graph.DepthFirst();
+				auto placed = [&](Entity entity, MeshComponent& mesh, const glm::mat4& world) {
+					mesh.object = GetObjectCount() - 1;
+					mesh.placed = true;
+					mesh.placedMatrix = world;
+					mesh.shown = true;
+					SetObjectTransform(mesh.object, graph.GetWorldTransform(entity)); // Exactly, when it can be
+					objectEntities.resize(GetObjectCount());
+					objectEntities[mesh.object] = entity;
+				};
 
-				for (Sphere& sphere : spheres) {
-					AddSphere(glm::vec3(0.0f), sphere.radius, sphere.material.ToMaterial(), sphere.name);
-					sphere.object = GetObjectCount() - 1;
-					sphere.placed = true;
-					SetObjectTransform(sphere.object, sphere.transform);
+				// Static content: models and spheres, then the ground and sun
+				for (Entity entity : entities) {
+					MeshComponent* mesh = registry.TryGet<MeshComponent>(entity);
+					if (!mesh) {
+						continue;
+					}
+					mesh->placed = false;
+					const glm::mat4 world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+					const std::string& name = graph.GetName(entity);
+
+					if (mesh->type == MeshComponent::Type::Model) {
+						if (mesh->file.empty()) {
+							continue;
+						}
+						try {
+							AddMesh(LoadModel(mesh->file, mesh->displacement), world, name);
+							placed(entity, *mesh, world);
+						}
+						catch (const std::exception& e) {
+							problems += std::string(problems.empty() ? "" : "; ") + mesh->file + ": " + e.what();
+						}
+					}
+					else if (mesh->type == MeshComponent::Type::Sphere) {
+						AddSphere(glm::vec3(0.0f), mesh->radius, mesh->material.ToMaterial(), name);
+						placed(entity, *mesh, world);
+					}
 				}
 
 				terrainPlaced = false;
@@ -114,105 +118,236 @@ namespace Fox {
 				if (environment.sun) {
 					AddSun(environment.sunDirection, environment.sunColor * environment.sunIntensity, environment.sunAngularRadius);
 				}
+				objectEntities.resize(GetObjectCount());
 
 				Build();
 				structureChanged = false;
 
-				// Dynamic content: trees
-				for (Tree& tree : trees) {
-					tree.placed = false;
-				}
+				// Dynamic content: trees. Their objects went with the rest; until they are placed again they have none.
+				registry.Each<MeshComponent>([](Entity, MeshComponent& mesh) {
+					if (mesh.type == MeshComponent::Type::Tree) {
+						mesh.placed = false;
+						if (mesh.tree) {
+							mesh.tree->placed = false;
+						}
+					}
+				});
 				std::string treeError;
 				if (!ApplyTreeChanges(treeError)) {
 					problems += std::string(problems.empty() ? "" : "; ") + treeError;
 				}
 
+				// Hidden entities stay placed, out of sight
+				ForgetStalePlacements();
+				SyncMeshes();
+				objectsChanged = true;
+
 				error = problems;
 				return problems.empty();
 			}
 
+			void MainRayTracingScene::ForgetStalePlacements() {
+				graph.GetRegistry().Each<MeshComponent>([&](Entity entity, MeshComponent& mesh) {
+					if (mesh.placed && (mesh.object >= objectEntities.size() || objectEntities[mesh.object] != entity)) {
+						mesh.placed = false;
+						if (mesh.tree) {
+							mesh.tree->placed = false;
+						}
+					}
+				});
+			}
+
+			void MainRayTracingScene::SyncMeshes() {
+				auto& registry = graph.GetRegistry();
+				registry.Each<MeshComponent>([&](Entity entity, MeshComponent& mesh) {
+					if (!mesh.placed || mesh.object >= GetObjectCount()) {
+						return;
+					}
+					const glm::mat4& world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+					if (world != mesh.placedMatrix) {
+						SetObjectTransform(mesh.object, graph.GetWorldTransform(entity));
+						mesh.placedMatrix = world;
+						objectsChanged = true;
+					}
+					const bool show = mesh.enabled && graph.IsActiveInHierarchy(entity);
+					if (show != IsObjectVisible(mesh.object)) {
+						SetObjectVisible(mesh.object, show);
+						objectsChanged = true;
+					}
+					mesh.shown = show;
+				});
+			}
+
 			void MainRayTracingScene::ClearContent() {
-				models.clear();
-				spheres.clear();
-				trees.clear();
+				graph.Clear();
 				environment = Environment{};
 				cameraManager.Clear();
 				ResetTerrain();
 				structureChanged = true;
+				treesChanged = true;
 			}
 
-			size_t MainRayTracingScene::AddModel(const std::string& file, bool displacement, const glm::vec3& position) {
-				Model model;
-				model.file = file;
-				model.displacement = displacement;
-				model.name = std::filesystem::path(file).stem().string();
-				model.transform.position = position;
-				models.push_back(std::move(model));
-				structureChanged = true;
-				return models.size() - 1;
+			MainRayTracingScene::Entity MainRayTracingScene::CreateEmpty(const std::string& name, Entity parent) {
+				return graph.CreateEntity(name, parent);
 			}
 
-			size_t MainRayTracingScene::AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material) {
-				Sphere sphere;
-				sphere.name = "Sphere " + std::to_string(spheres.size() + 1);
-				sphere.radius = radius;
-				sphere.material = material;
-				sphere.transform.position = position;
-				spheres.push_back(std::move(sphere));
-				structureChanged = true;
-				return spheres.size() - 1;
+			MainRayTracingScene::Entity MainRayTracingScene::AddModel(const std::string& file, bool displacement, const glm::vec3& position, Entity parent) {
+				const Entity entity = graph.CreateEntity(std::filesystem::path(file).stem().string(), parent);
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+
+				MeshComponent mesh;
+				mesh.type = MeshComponent::Type::Model;
+				mesh.file = file;
+				mesh.displacement = displacement;
+				MeshChanged(&graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh)), nullptr);
+				return entity;
 			}
 
-			bool MainRayTracingScene::RemoveObject(int object) {
-				if (object < 0) {
-					return false;
+			MainRayTracingScene::Entity MainRayTracingScene::AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material, Entity parent) {
+				size_t spheres = 0;
+				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {
+					spheres += mesh.type == MeshComponent::Type::Sphere ? 1 : 0;
+				});
+				const Entity entity = graph.CreateEntity("Sphere " + std::to_string(spheres + 1), parent);
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+
+				MeshComponent mesh;
+				mesh.type = MeshComponent::Type::Sphere;
+				mesh.radius = radius;
+				mesh.material = material;
+				MeshChanged(&graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh)), nullptr);
+				return entity;
+			}
+
+			MeshComponent& MainRayTracingScene::AddMeshComponent(Entity entity, MeshComponent::Type type) {
+				MeshComponent mesh;
+				mesh.type = type;
+				if (type == MeshComponent::Type::Tree) {
+					mesh.tree = std::make_shared<Tree>();
 				}
-				SyncTransforms();
+				else if (type == MeshComponent::Type::Sphere) {
+					mesh.material.color = glm::vec3(0.85f);
+					mesh.material.roughness = 0.4f;
+				}
+				RemoveMeshComponent(entity);
+				MeshComponent& added = graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh));
+				MeshChanged(&added, nullptr);
+				return added;
+			}
 
-				// The objects after a removed one move down an index once the scene is rebuilt; until then none of
-				// them can be selected by their old index
-				auto removed = [this] {
-					for (Model& model : models) {
-						model.placed = false;
+			void MainRayTracingScene::RemoveMeshComponent(Entity entity) {
+				MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(entity);
+				if (!mesh) {
+					return;
+				}
+				if (mesh->placed && mesh->object < GetObjectCount()) {
+					SetObjectVisible(mesh->object, false); // Out of sight until the rebuild takes it out
+				}
+				const MeshComponent::Type type = mesh->type;
+				graph.GetRegistry().Remove<MeshComponent>(entity);
+				MeshChanged(nullptr, &type);
+			}
+
+			void MainRayTracingScene::MeshChanged(const MeshComponent* now, const MeshComponent::Type* previous) {
+				auto affects = [&](MeshComponent::Type type) {
+					if (type == MeshComponent::Type::Tree) {
+						treesChanged = true;
 					}
-					for (Sphere& sphere : spheres) {
-						sphere.placed = false;
+					else {
+						structureChanged = true;
 					}
-					structureChanged = true;
-					return true;
 				};
-				for (size_t i = 0; i < models.size(); i++) {
-					if (models[i].placed && static_cast<int>(models[i].object) == object) {
-						models.erase(models.begin() + static_cast<std::ptrdiff_t>(i));
-						return removed();
+				if (now) {
+					affects(now->type);
+				}
+				if (previous) {
+					affects(*previous);
+				}
+			}
+
+			void MainRayTracingScene::DestroyEntity(Entity entity) {
+				if (!graph.IsValid(entity)) {
+					return;
+				}
+				auto& registry = graph.GetRegistry();
+				for (Entity e : graph.Subtree(entity)) {
+					if (MeshComponent* mesh = registry.TryGet<MeshComponent>(e)) {
+						// Out of sight right away; out of the scene with the rebuild
+						if (mesh->placed && mesh->object < GetObjectCount()) {
+							SetObjectVisible(mesh->object, false);
+						}
+						const MeshComponent::Type type = mesh->type;
+						MeshChanged(nullptr, &type);
 					}
 				}
-				for (size_t i = 0; i < spheres.size(); i++) {
-					if (spheres[i].placed && static_cast<int>(spheres[i].object) == object) {
-						spheres.erase(spheres.begin() + static_cast<std::ptrdiff_t>(i));
-						return removed();
+				graph.DestroyEntity(entity);
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::DuplicateEntity(Entity entity) {
+				const Entity copy = graph.Duplicate(entity);
+				if (!graph.IsValid(copy)) {
+					return copy;
+				}
+				auto& registry = graph.GetRegistry();
+				for (Entity e : graph.Subtree(copy)) {
+					if (MeshComponent* mesh = registry.TryGet<MeshComponent>(e)) {
+						// A placement of its own, and a tree of its own
+						mesh->placed = false;
+						if (mesh->tree) {
+							mesh->tree = mesh->tree->CloneSettings();
+						}
+						MeshChanged(mesh, nullptr);
 					}
 				}
-				const int tree = GetTreeOfObject(object);
-				if (tree >= 0) {
-					RemoveTree(static_cast<size_t>(tree));
-					return true;
+				graph.SetName(copy, graph.GetName(copy) + " (copy)");
+				return copy;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::GetEntityOfObject(int object) const {
+				if (object < 0 || static_cast<size_t>(object) >= objectEntities.size()) {
+					return {};
 				}
-				return false;
+				const Entity entity = objectEntities[static_cast<size_t>(object)];
+				return graph.IsValid(entity) ? entity : Entity{};
+			}
+
+			std::vector<MainRayTracingScene::Entity> MainRayTracingScene::GetTreeEntities() const {
+				std::vector<Entity> result;
+				for (Entity entity : graph.DepthFirst()) {
+					const MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(entity);
+					if (mesh && mesh->type == MeshComponent::Type::Tree && mesh->tree) {
+						result.push_back(entity);
+					}
+				}
+				return result;
+			}
+
+			MainRayTracingScene::Tree* MainRayTracingScene::GetTree(Entity entity) {
+				MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(entity);
+				return mesh && mesh->type == MeshComponent::Type::Tree ? mesh->tree.get() : nullptr;
 			}
 
 			void MainRayTracingScene::Update(float dt) {
 				time += dt;
 
+				// The scene graph's world transforms, and the meshes placed and shown as their entities are
+				graph.UpdateTransforms();
+				SyncMeshes();
+
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to
-				for (Tree& tree : trees) {
-					if (!tree.placed || !tree.skeleton) {
-						continue;
+				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {
+					Tree* tree = mesh.type == MeshComponent::Type::Tree ? mesh.tree.get() : nullptr;
+					if (!tree || !tree->placed || !tree->skeleton || !mesh.placed || tree->handle.object >= GetObjectCount()) {
+						return;
 					}
-					tree.skeleton->GetSettings() = tree.wind;
-					tree.skeleton->Update(dt, time, GetObjectTransform(tree.handle.object).Matrix());
-					SetJointMatrices(tree.handle.skinnedMesh, tree.skeleton->GetSkinMatrices());
-				}
+					tree->skeleton->GetSettings() = tree->wind;
+					tree->skeleton->Update(dt, time, GetObjectTransform(tree->handle.object).Matrix());
+					SetJointMatrices(tree->handle.skinnedMesh, tree->skeleton->GetSkinMatrices());
+				});
 			}
 
 			float MainRayTracingScene::GetGroundHeight() const {
@@ -342,35 +477,26 @@ namespace Fox {
 				}
 			}
 
-			size_t MainRayTracingScene::AddTree(const glm::vec3& position, const Tree* copyOf) {
-				Tree tree;
+			MainRayTracingScene::Entity MainRayTracingScene::AddTree(const glm::vec3& position, const Tree* copyOf, Entity parent) {
+				Fox::Scene::Transform transform;
 				if (copyOf) {
-					tree.shape = copyOf->shape;
-					tree.look = copyOf->look;
-					tree.wind = copyOf->wind;
-					tree.transform = copyOf->transform;
-				}
-				tree.transform.position = position;
-				tree.name = "Tree " + std::to_string(trees.size() + 1);
-				trees.push_back(std::move(tree));
-				treesChanged = true;
-				return trees.size() - 1;
-			}
-
-			void MainRayTracingScene::RemoveTree(size_t tree) {
-				if (tree < trees.size()) {
-					trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(tree));
-					treesChanged = true;
-				}
-			}
-
-			int MainRayTracingScene::GetTreeOfObject(int object) const {
-				for (size_t i = 0; i < trees.size(); i++) {
-					if (trees[i].placed && static_cast<int>(trees[i].handle.object) == object) {
-						return static_cast<int>(i);
+					// Turned and sized as the tree it copies
+					for (Entity other : GetTreeEntities()) {
+						if (GetTree(other) == copyOf) {
+							transform = graph.GetWorldTransform(other);
+						}
 					}
 				}
-				return -1;
+				transform.position = position;
+
+				const Entity entity = graph.CreateEntity("Tree " + std::to_string(GetTreeEntities().size() + 1), parent);
+				graph.SetWorldTransform(entity, transform);
+
+				MeshComponent mesh;
+				mesh.type = MeshComponent::Type::Tree;
+				mesh.tree = copyOf ? copyOf->CloneSettings() : std::make_shared<Tree>();
+				MeshChanged(&graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh)), nullptr);
+				return entity;
 			}
 
 			std::vector<Fox::Graphics::Vulkan::Material> MainRayTracingScene::MaterialsFor(const TreeLook& look) {
@@ -443,13 +569,13 @@ namespace Fox {
 
 			bool MainRayTracingScene::ApplyTreeChanges(std::string& error) {
 				treesChanged = false;
+				graph.UpdateTransforms();
+				auto& registry = graph.GetRegistry();
 				try {
+					const std::vector<Entity> entities = GetTreeEntities();
 					std::vector<DynamicMesh> meshes;
-					for (Tree& tree : trees) {
-						// Keep where the gizmos moved it
-						if (tree.placed) {
-							tree.transform = GetObjectTransform(tree.handle.object);
-						}
+					for (Entity entity : entities) {
+						Tree& tree = *GetTree(entity);
 						if (tree.regenerate || !tree.mesh) {
 							GenerateTreeMesh(tree);
 						}
@@ -457,16 +583,34 @@ namespace Fox {
 						DynamicMesh mesh;
 						mesh.mesh = tree.mesh.get();
 						mesh.materials = MaterialsFor(tree.look);
-						mesh.transform = tree.transform;
-						mesh.name = tree.name;
+						mesh.transform = graph.GetWorldTransform(entity);
+						mesh.name = graph.GetName(entity);
 						meshes.push_back(std::move(mesh));
 					}
 
 					const std::vector<DynamicMeshHandle> handles = RebuildDynamicMeshes(meshes);
-					for (size_t i = 0; i < trees.size(); i++) {
-						trees[i].handle = handles[i];
-						trees[i].placed = true;
+
+					// The previous trees' objects are gone (or someone else's now)
+					for (Entity& entity : objectEntities) {
+						const MeshComponent* mesh = registry.TryGet<MeshComponent>(entity);
+						if (!mesh || mesh->type == MeshComponent::Type::Tree) {
+							entity = Entity{};
+						}
 					}
+					objectEntities.resize(GetObjectCount());
+
+					for (size_t i = 0; i < entities.size(); i++) {
+						MeshComponent& mesh = registry.Get<MeshComponent>(entities[i]);
+						mesh.tree->handle = handles[i];
+						mesh.tree->placed = true;
+						mesh.placed = true;
+						mesh.object = handles[i].object;
+						mesh.placedMatrix = registry.Get<Fox::Scene::WorldTransformComponent>(entities[i]).matrix;
+						objectEntities[mesh.object] = entities[i];
+					}
+					ForgetStalePlacements();
+					SyncMeshes();
+					objectsChanged = true;
 					return true;
 				}
 				catch (const std::exception& e) {

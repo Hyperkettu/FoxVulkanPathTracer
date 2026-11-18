@@ -217,6 +217,8 @@
     <ClCompile Include="Scene\Terrain.cpp" />
     <ClCompile Include="Editor\TerrainEditor.cpp" />
     <ClCompile Include="Scene\SceneFile.cpp" />
+    <ClCompile Include="Scene\SceneGraph.cpp" />
+    <ClCompile Include="Editor\SceneGraphEditor.cpp" />
     <ClCompile Include="Graphics\Geometry\TreeGenerator.cpp" />
     <ClCompile Include="Animation\WindSkeleton.cpp" />
     <ClCompile Include="Graphics\Vulkan\Raytracing\SkinningPass.cpp" />
@@ -311,6 +313,12 @@
     <ClInclude Include="Scene\TextureLibrary.h" />
     <ClInclude Include="Editor\TreeEditor.h" />
     <ClInclude Include="Editor\SceneEditor.h" />
+    <ClInclude Include="Editor\SceneGraphEditor.h" />
+    <ClInclude Include="Scene\SceneGraph.h" />
+    <ClInclude Include="Scene\SceneContent.h" />
+    <ClInclude Include="Scene\ECS\Entity.h" />
+    <ClInclude Include="Scene\ECS\Registry.h" />
+    <ClInclude Include="Scene\ECS\Components.h" />
     <ClInclude Include="Editor\CameraEditor.h" />
     <ClInclude Include="Scene\CameraManager.h" />
     <ClInclude Include="Scene\Terrain.h" />

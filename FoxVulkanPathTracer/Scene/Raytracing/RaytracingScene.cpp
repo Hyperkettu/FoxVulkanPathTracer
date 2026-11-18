@@ -955,6 +955,19 @@ namespace Fox {
                 lightsDirty = lightsDirty || !placement.localLights.empty();
             }
 
+            void RayTracingScene::SetObjectVisible(size_t object, bool visible) {
+                Placement& placement = placements[object];
+                if (placement.visible == visible) {
+                    return;
+                }
+                placement.visible = visible;
+                for (size_t i = 0; i < placement.instances.size() && i < placement.masks.size(); i++) {
+                    instances[placement.instances[i]].mask = visible ? placement.masks[i] : 0u;
+                }
+                tlasDirty = true;
+                lightsDirty = lightsDirty || !placement.localLights.empty();
+            }
+
             void RayTracingScene::RecordFrameUpdate(VkCommandBuffer cmd, uint32_t frameSlot) {
                 // Instance motion since the previous frame (for motion vectors), and lights of moved objects.
                 // Small, so they are written into the command buffer (vkCmdUpdateBuffer, up to 64 KiB).
@@ -974,6 +987,9 @@ namespace Fox {
                     for (const Placement& placement : placements) {
                         for (size_t i = 0; i < placement.localLights.size(); i++) {
                             lights[placement.firstLight + i] = TransformLight(placement.localLights[i], placement.transform.Matrix());
+                            if (!placement.visible) {
+                                lights[placement.firstLight + i].color = glm::vec3(0.0f); // Dark while hidden
+                            }
                         }
                     }
                 }
@@ -1325,11 +1341,13 @@ namespace Fox {
                 const MeshRecord& record = meshRecords[placement.record];
                 placement.previousMatrix = placement.transform.Matrix();
                 placement.instances.clear();
+                placement.masks.clear();
                 for (int kind = 0; kind < SurfaceKindCount; kind++) {
                     if (record.blas[kind] >= 0) {
                         placement.instances.push_back(static_cast<uint32_t>(instances.size()));
+                        placement.masks.push_back(masks[kind]);
                         instancePlacements.push_back(static_cast<uint32_t>(p));
-                        AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), masks[kind]);
+                        AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), placement.visible ? masks[kind] : 0u);
                     }
                 }
             }

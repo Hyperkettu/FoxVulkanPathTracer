@@ -8,7 +8,8 @@ namespace Fox {
 
 	namespace Editor {
 
-		// Interactive handles for moving, rotating and scaling the selected object of a ray tracing scene.
+		// Interactive handles for moving, rotating and scaling the selected entity of a scene graph (in world space;
+		// the entity's local transform is set to match).
 		//
 		//   Move:   drag an arrow to move along that world axis, or the center square to move in the view plane
 		//   Rotate: drag a ring to rotate about that world axis
@@ -39,21 +40,22 @@ namespace Fox {
 			Mode GetMode() const { return mode; }
 			static const char* ModeName(Mode mode);
 
-			void Select(int object) { selected = object; dragging = false; hovered = Handle::None; }
-			int GetSelected() const { return selected; }
+			// The selected entity (null: none). The editor windows show and change the same selection.
+			void Select(Fox::ECS::Entity entity) { selected = entity; dragging = false; hovered = Handle::None; }
+			Fox::ECS::Entity GetSelected() const { return selected; }
 
 			// Returns true when a handle was grabbed (otherwise the click is free to select another object)
-			bool MouseDown(glm::vec2 mouse, const View& view, Fox::Scene::RayTracing::RayTracingScene& scene);
+			bool MouseDown(glm::vec2 mouse, const View& view, Fox::Scene::SceneGraph& scene);
 
 			// Updates the hovered handle, and the object's transform while dragging. snap: round to steps of
 			// 0.25 m, 15 degrees or 0.1x
-			void MouseMove(glm::vec2 mouse, const View& view, Fox::Scene::RayTracing::RayTracingScene& scene, bool snap);
+			void MouseMove(glm::vec2 mouse, const View& view, Fox::Scene::SceneGraph& scene, bool snap);
 
 			void MouseUp() { dragging = false; }
 			bool IsDragging() const { return dragging; }
 
 			// Triangles drawing the gizmo of the selected object (nothing without a selection)
-			void BuildOverlay(const View& view, const Fox::Scene::RayTracing::RayTracingScene& scene, std::vector<OverlayVertex>& vertices) const;
+			void BuildOverlay(const View& view, const Fox::Scene::SceneGraph& scene, std::vector<OverlayVertex>& vertices) const;
 
 			// Where a world point appears in the image (pixels); false behind the camera
 			static bool Project(const View& view, const glm::vec3& point, glm::vec2& pixel);
@@ -70,14 +72,15 @@ namespace Fox {
 				float uiScale = 1.0f; // Pixels scale with the image height (1 at 1080 lines)
 			};
 
-			Frame FrameOf(const View& view, const Fox::Scene::RayTracing::RayTracingScene& scene) const;
+			Frame FrameOf(const View& view, const Fox::Scene::SceneGraph& scene) const;
 			Handle HandleAt(glm::vec2 mouse, const View& view, const Frame& frame) const;
 			std::vector<glm::vec3> RingPoints(const Frame& frame, int axis) const;
 
 			static bool AxisParameter(const glm::vec3& rayOrigin, const glm::vec3& rayDirection, const glm::vec3& point, const glm::vec3& axis, float& parameter);
 
 			Mode mode = Mode::Translate;
-			int selected = -1;
+			Fox::ECS::Entity selected;
+			bool IsMovable(const Fox::Scene::SceneGraph& scene) const { return scene.IsValid(selected) && scene.HasTransform(selected); }
 			Handle hovered = Handle::None;
 
 			// Drag state

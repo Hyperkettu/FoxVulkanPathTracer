@@ -6,64 +6,58 @@ namespace Fox {
 
 	namespace Editor {
 
-		namespace {
-			using Scene = Fox::Scene::RayTracing::MainRayTracingScene;
+		const char* const SceneEditor::SPHERE_PRESETS[SceneEditor::SPHERE_PRESET_COUNT] = { "Glass", "Frosted glass", "Chrome", "Gold", "White plastic" };
 
-			// glTF files under folder, with forward slashes, sorted
-			std::vector<std::string> ListModels(const std::string& folder) {
-				std::vector<std::string> files;
-				std::error_code error;
-				for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
-					if (!entry.is_regular_file()) {
-						continue;
-					}
-					std::string extension = entry.path().extension().string();
-					std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-					if (extension == ".glb" || extension == ".gltf") {
-						files.push_back(entry.path().generic_string());
-					}
+		std::vector<std::string> SceneEditor::ListModels(const std::string& folder) {
+			std::vector<std::string> files;
+			std::error_code error;
+			for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
+				if (!entry.is_regular_file()) {
+					continue;
 				}
-				std::sort(files.begin(), files.end());
-				return files;
-			}
-
-			// Sphere materials to start from
-			const char* SPHERE_PRESETS[] = { "Glass", "Frosted glass", "Chrome", "Gold", "White plastic" };
-
-			Scene::SurfaceMaterial SpherePreset(int preset) {
-				Scene::SurfaceMaterial material;
-				switch (preset) {
-				case 0: // Clear glass with the faint green of thick window glass
-					material.color = glm::vec3(1.0f);
-					material.roughness = 0.0f;
-					material.transmission = 1.0f;
-					material.ior = 1.5f;
-					material.attenuationColor = glm::vec3(0.80f, 0.94f, 0.90f);
-					material.attenuationDistance = 2.0f;
-					break;
-				case 1:
-					material.color = glm::vec3(1.0f);
-					material.roughness = 0.25f;
-					material.transmission = 1.0f;
-					material.ior = 1.5f;
-					break;
-				case 2:
-					material.color = glm::vec3(0.95f, 0.94f, 0.92f);
-					material.roughness = 0.05f;
-					material.metallic = 1.0f;
-					break;
-				case 3:
-					material.color = glm::vec3(1.0f, 0.78f, 0.34f);
-					material.roughness = 0.2f;
-					material.metallic = 1.0f;
-					break;
-				default:
-					material.color = glm::vec3(0.85f);
-					material.roughness = 0.4f;
-					break;
+				std::string extension = entry.path().extension().string();
+				std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				if (extension == ".glb" || extension == ".gltf") {
+					files.push_back(entry.path().generic_string());
 				}
-				return material;
 			}
+			std::sort(files.begin(), files.end());
+			return files;
+		}
+
+		Fox::Scene::SurfaceMaterial SceneEditor::SpherePreset(int preset) {
+			Scene::SurfaceMaterial material;
+			switch (preset) {
+			case 0: // Clear glass with the faint green of thick window glass
+				material.color = glm::vec3(1.0f);
+				material.roughness = 0.0f;
+				material.transmission = 1.0f;
+				material.ior = 1.5f;
+				material.attenuationColor = glm::vec3(0.80f, 0.94f, 0.90f);
+				material.attenuationDistance = 2.0f;
+				break;
+			case 1:
+				material.color = glm::vec3(1.0f);
+				material.roughness = 0.25f;
+				material.transmission = 1.0f;
+				material.ior = 1.5f;
+				break;
+			case 2:
+				material.color = glm::vec3(0.95f, 0.94f, 0.92f);
+				material.roughness = 0.05f;
+				material.metallic = 1.0f;
+				break;
+			case 3:
+				material.color = glm::vec3(1.0f, 0.78f, 0.34f);
+				material.roughness = 0.2f;
+				material.metallic = 1.0f;
+				break;
+			default:
+				material.color = glm::vec3(0.85f);
+				material.roughness = 0.4f;
+				break;
+			}
+			return material;
 		}
 
 		void SceneEditor::Draw(Scene& scene, TransformGizmo& gizmo, const Scene::CameraPose& camera, float uiScale) {
@@ -90,7 +84,7 @@ namespace Fox {
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Load")) {
-				gizmo.Select(-1);
+				gizmo.Select({});
 				Scene::CameraPose loaded;
 				std::string error;
 				if (scene.LoadFromFile(path, loaded, error)) {
@@ -104,7 +98,7 @@ namespace Fox {
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("New")) {
-				gizmo.Select(-1);
+				gizmo.Select({});
 				scene.ClearContent();
 				status = "New scene";
 				statusIsError = false;
@@ -152,7 +146,7 @@ namespace Fox {
 					// Models carry their own height above the ground plane (e.g. the cabin's foundation); on
 					// terrain they follow it
 					position.y = inFront.y - scene.GetEnvironment().groundHeight;
-					scene.AddModel(modelFiles[modelChoice], displacement, position);
+					gizmo.Select(scene.AddModel(modelFiles[modelChoice], displacement, position));
 					status = "Loading " + modelFiles[modelChoice] + "...";
 					statusIsError = false;
 				}
@@ -163,55 +157,14 @@ namespace Fox {
 				}
 
 				ImGui::Spacing();
-				ImGui::Combo("Sphere", &spherePreset, SPHERE_PRESETS, IM_ARRAYSIZE(SPHERE_PRESETS));
+				ImGui::Combo("Sphere", &spherePreset, SPHERE_PRESETS, SPHERE_PRESET_COUNT);
 				ImGui::SliderFloat("Radius (m)", &sphereRadius, 0.1f, 5.0f, "%.2f");
 				if (ImGui::Button("Add sphere")) {
-					scene.AddSphereObject(inFront + glm::vec3(0.0f, sphereRadius, 0.0f), sphereRadius, SpherePreset(spherePreset));
+					gizmo.Select(scene.AddSphereObject(inFront + glm::vec3(0.0f, sphereRadius, 0.0f), sphereRadius, SpherePreset(spherePreset)));
 				}
 			}
 
-			// --- Objects ---
-			if (ImGui::CollapsingHeader("Objects", ImGuiTreeNodeFlags_DefaultOpen)) {
-				auto& models = scene.GetModels();
-				auto& spheres = scene.GetSpheres();
-				auto& trees = scene.GetTrees();
-				const int selected = gizmo.GetSelected();
-
-				if (ImGui::BeginListBox("##objects", ImVec2(-1.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f))) {
-					auto row = [&](const std::string& label, bool placed, size_t object) {
-						const bool isSelected = placed && static_cast<int>(object) == selected;
-						if (ImGui::Selectable(label.c_str(), isSelected) && placed) {
-							gizmo.Select(static_cast<int>(object));
-						}
-					};
-					for (size_t i = 0; i < models.size(); i++) {
-						ImGui::PushID(static_cast<int>(i));
-						row(models[i].name + "   (" + models[i].file + (models[i].displacement ? ", displaced)" : ")"), models[i].placed, models[i].object);
-						ImGui::PopID();
-					}
-					for (size_t i = 0; i < spheres.size(); i++) {
-						ImGui::PushID(1000 + static_cast<int>(i));
-						row(spheres[i].name + "   (sphere)", spheres[i].placed, spheres[i].object);
-						ImGui::PopID();
-					}
-					for (size_t i = 0; i < trees.size(); i++) {
-						ImGui::PushID(2000 + static_cast<int>(i));
-						row(trees[i].name + "   (tree)", trees[i].placed, trees[i].handle.object);
-						ImGui::PopID();
-					}
-					ImGui::EndListBox();
-				}
-
-				ImGui::BeginDisabled(selected < 0);
-				if (ImGui::Button("Remove selected") && selected >= 0) {
-					if (scene.RemoveObject(selected)) {
-						gizmo.Select(-1);
-					}
-				}
-				ImGui::EndDisabled();
-				ImGui::SameLine();
-				ImGui::TextDisabled("(or the Delete key)");
-			}
+			ImGui::TextDisabled("The scene's entities: the Hierarchy window; their components: the Inspector");
 
 			// --- Environment ---
 			if (ImGui::CollapsingHeader("Environment")) {

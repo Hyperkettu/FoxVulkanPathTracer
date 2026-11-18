@@ -122,8 +122,8 @@ namespace Fox {
 			return true;
 		}
 
-		TransformGizmo::Frame TransformGizmo::FrameOf(const View& view, const Fox::Scene::RayTracing::RayTracingScene& scene) const {
-			const auto& transform = scene.GetObjectTransform(static_cast<size_t>(selected));
+		TransformGizmo::Frame TransformGizmo::FrameOf(const View& view, const Fox::Scene::SceneGraph& scene) const {
+			const auto transform = scene.GetWorldTransform(selected);
 
 			Frame frame;
 			frame.pivot = transform.position;
@@ -204,8 +204,8 @@ namespace Fox {
 			return best;
 		}
 
-		bool TransformGizmo::MouseDown(glm::vec2 mouse, const View& view, Fox::Scene::RayTracing::RayTracingScene& scene) {
-			if (selected < 0 || !scene.IsObjectMovable(static_cast<size_t>(selected))) {
+		bool TransformGizmo::MouseDown(glm::vec2 mouse, const View& view, Fox::Scene::SceneGraph& scene) {
+			if (!IsMovable(scene)) {
 				return false;
 			}
 
@@ -218,7 +218,7 @@ namespace Fox {
 			dragging = true;
 			active = handle;
 			hovered = handle;
-			start = scene.GetObjectTransform(static_cast<size_t>(selected));
+			start = scene.GetWorldTransform(selected);
 			startFrame = frame;
 			startMouse = mouse;
 			startParameter = 0.0f;
@@ -265,14 +265,14 @@ namespace Fox {
 			return true;
 		}
 
-		void TransformGizmo::MouseMove(glm::vec2 mouse, const View& view, Fox::Scene::RayTracing::RayTracingScene& scene, bool snap) {
-			if (selected < 0) {
+		void TransformGizmo::MouseMove(glm::vec2 mouse, const View& view, Fox::Scene::SceneGraph& scene, bool snap) {
+			if (!IsMovable(scene)) {
 				hovered = Handle::None;
 				return;
 			}
 
 			if (!dragging) {
-				hovered = scene.IsObjectMovable(static_cast<size_t>(selected)) ? HandleAt(mouse, view, FrameOf(view, scene)) : Handle::None;
+				hovered = HandleAt(mouse, view, FrameOf(view, scene));
 				return;
 			}
 
@@ -341,11 +341,11 @@ namespace Fox {
 				break;
 			}
 
-			scene.SetObjectTransform(static_cast<size_t>(selected), transform);
+			scene.SetWorldTransform(selected, transform);
 		}
 
-		void TransformGizmo::BuildOverlay(const View& view, const Fox::Scene::RayTracing::RayTracingScene& scene, std::vector<OverlayVertex>& vertices) const {
-			if (selected < 0 || !scene.IsObjectMovable(static_cast<size_t>(selected))) {
+		void TransformGizmo::BuildOverlay(const View& view, const Fox::Scene::SceneGraph& scene, std::vector<OverlayVertex>& vertices) const {
+			if (!IsMovable(scene)) {
 				return;
 			}
 

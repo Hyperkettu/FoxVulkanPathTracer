@@ -32,37 +32,12 @@ namespace Fox {
 
                 // --- Scene content: what a scene file holds (Scenes/*.json, see SceneFile.cpp) ---
 
-                // A simple material for generated surfaces (ground, spheres)
-                struct SurfaceMaterial {
-                    glm::vec3 color{ 0.8f };
-                    float roughness = 0.5f;
-                    float metallic = 0.0f;
-                    float transmission = 0.0f;           // 1: glass
-                    float ior = 1.5f;                    // Glass: solid (refracting) when > 0
-                    glm::vec3 attenuationColor{ 1.0f };  // Glass: colour left after attenuationDistance metres
-                    float attenuationDistance = 0.0f;    // 0: clear
-
-                    Fox::Graphics::Vulkan::Material ToMaterial() const;
-                };
-
-                // A glTF model placed in the scene
-                struct Model {
-                    std::string name;
-                    std::string file;          // .glb / .gltf, from the working directory
-                    bool displacement = false; // Relief reconstructed from its normal maps (slower to load)
-                    ObjectTransform transform;
-                    bool placed = false;       // Set by the scene: object is its index
-                    size_t object = 0;
-                };
-
-                struct Sphere {
-                    std::string name;
-                    float radius = 1.0f;
-                    SurfaceMaterial material;
-                    ObjectTransform transform;
-                    bool placed = false;
-                    size_t object = 0;
-                };
+                // Types of scene content (Scene/SceneContent.h)
+                using SurfaceMaterial = Fox::Scene::SurfaceMaterial;
+                using SurfaceTextures = Fox::Scene::SurfaceTextures;
+                using TreeLook = Fox::Scene::TreeLook;
+                using Tree = Fox::Scene::Tree;
+                using Entity = Fox::ECS::Entity;
 
                 struct Environment {
                     bool ground = true;
@@ -83,8 +58,6 @@ namespace Fox {
 
                 static constexpr const char* DEFAULT_SCENE_FILE = "Scenes/default.json";
 
-                std::vector<Model>& GetModels() { return models; }
-                std::vector<Sphere>& GetSpheres() { return spheres; }
                 Environment& GetEnvironment() { return environment; }
                 // Camera paths (saved with the scene) and the camera's flight
                 Fox::Scene::CameraManager& GetCameraManager() { return cameraManager; }
@@ -101,11 +74,43 @@ namespace Fox {
                 // Height of the ground under a point: the terrain where there is terrain, otherwise the ground plane
                 float GetGroundHeightAt(float x, float z) const;
 
-                size_t AddModel(const std::string& file, bool displacement, const glm::vec3& position);
-                size_t AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material);
+                // --- Entities: the scene graph (Scene/SceneGraph.h). Entities with a MeshComponent are rendered. ---
 
-                // Removes the model, sphere or tree placed as this scene object; false if it is none of them
-                bool RemoveObject(int object);
+                Fox::Scene::SceneGraph& GetSceneGraph() { return graph; }
+
+                // New entities with a mesh (under parent, or a root), named after what they are
+                Entity AddModel(const std::string& file, bool displacement, const glm::vec3& position, Entity parent = {});
+                Entity AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material, Entity parent = {});
+                // A new tree standing on the ground at position (copying another's settings if given)
+                Entity AddTree(const glm::vec3& position, const Tree* copyOf = nullptr, Entity parent = {});
+                Entity CreateEmpty(const std::string& name, Entity parent = {});
+
+                // Destroys the entity and everything under it; meshes among them leave the scene
+                void DestroyEntity(Entity entity);
+                // A copy of the entity and everything under it (trees are generated anew)
+                Entity DuplicateEntity(Entity entity);
+
+                // Gives the entity a mesh of this type (with defaults), or takes it away (hidden right away)
+                Fox::Scene::MeshComponent& AddMeshComponent(Entity entity, Fox::Scene::MeshComponent::Type type);
+                void RemoveMeshComponent(Entity entity);
+
+                // A MeshComponent was added, removed or now shows something else (type, file, sphere): the scene
+                // rebuilds what it needs to. previous: its type before, if it had one.
+                void MeshChanged(const Fox::Scene::MeshComponent* now, const Fox::Scene::MeshComponent::Type* previous);
+
+                // The entity rendered as a ray tracing scene object; null for the ground, terrain or nothing
+                Entity GetEntityOfObject(int object) const;
+
+                // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
+                bool TakeObjectsChanged() {
+                    const bool changed = objectsChanged;
+                    objectsChanged = false;
+                    return changed;
+                }
+
+                // Entities with a tree mesh, in hierarchy order, and their trees
+                std::vector<Entity> GetTreeEntities() const;
+                Tree* GetTree(Entity entity);
 
                 // Models, spheres and the environment changed: everything is rebuilt (RebuildScene)
                 void MarkStructureChanged() { structureChanged = true; }
@@ -134,48 +139,6 @@ namespace Fox {
 
                 // --- Trees: generated, placed and changed while the scene renders (see Editor/TreeEditor) ---
 
-                // Image files of one surface (paths from the working directory; empty = not used)
-                struct SurfaceTextures {
-                    std::string albedo, normal, roughness, metallic, occlusion, displacement;
-                    bool normalGreenUp = true;       // Normal map convention: OpenGL (true) or DirectX
-                    bool invertDisplacement = false; // Bright = low
-                };
-
-                // How a tree looks: its own textures and factors for bark and leaves
-                struct TreeLook {
-                    SurfaceTextures bark{ "Textures/bark/albedo.png", "Textures/bark/normal.png", "Textures/bark/roughness.png",
-                        "Textures/bark/metallic.png", "Textures/bark/ao.png", "Textures/bark/displacement.png", true, false };
-                    SurfaceTextures leaf{ "Textures/bark/leaf-albedo.png", "Textures/bark/leaf_normal.png", "Textures/bark/leaf-roughness.png",
-                        "Textures/bark/leaf-metallic.png", "Textures/bark/leaf_ambient_occlusion.png", "Textures/bark/leaf_displacement.png", false, true };
-                    glm::vec3 barkTint{ 1.0f };
-                    glm::vec3 leafTint{ 1.0f };
-                    float barkRoughness = 1.0f; // Multiplies the roughness texture
-                    float leafRoughness = 1.0f;
-                    float alphaCutoff = 0.5f;
-                };
-
-                struct Tree {
-                    std::string name;
-                    Fox::Graphics::Geometry::TreeSettings shape; // Its height maps come from the look
-                    TreeLook look;
-                    Fox::Animation::WindSkeleton::Settings wind;
-                    ObjectTransform transform;
-
-                    // Set by the scene
-                    bool regenerate = true; // The shape (or a texture the geometry depends on) changed
-                    std::shared_ptr<Fox::Graphics::Geometry::SkinnedMesh> mesh;
-                    std::unique_ptr<Fox::Animation::WindSkeleton> skeleton;
-                    DynamicMeshHandle handle;
-                    bool placed = false;
-                    float generationSeconds = 0.0f;
-                };
-
-                std::vector<Tree>& GetTrees() { return trees; }
-
-                // A new tree standing on the ground at position (copying another's settings if given); returns its index
-                size_t AddTree(const glm::vec3& position, const Tree* copyOf = nullptr);
-                void RemoveTree(size_t tree);
-
                 // Changes take effect with ApplyTreeChanges, which the renderer calls with the device idle
                 void MarkTreesChanged() { treesChanged = true; }
                 bool HaveTreesChanged() const { return treesChanged; }
@@ -183,15 +146,18 @@ namespace Fox {
                 // set when they do not fit (the previous trees stay).
                 bool ApplyTreeChanges(std::string& error);
 
-                // The tree placed as a scene object, -1 if it is not a tree
-                int GetTreeOfObject(int object) const;
-
                 float GetGroundHeight() const;
                 Fox::Scene::TextureLibrary& GetTextureLibrary() { return *textureLibrary; }
 
             private:
-                std::vector<Model> models;
-                std::vector<Sphere> spheres;
+                Fox::Scene::SceneGraph graph;
+                std::vector<Entity> objectEntities; // By ray tracing scene object
+
+                // Moves and shows / hides the placed meshes as their entities are now
+                void SyncMeshes();
+                bool objectsChanged = false;
+                // Meshes whose object is no longer theirs (the objects were rebuilt without them) are not placed
+                void ForgetStalePlacements();
                 Environment environment;
                 Fox::Scene::CameraManager cameraManager;
                 Fox::Scene::Terrain terrain;
@@ -209,10 +175,6 @@ namespace Fox {
                 std::map<std::string, std::unique_ptr<Fox::Graphics::Geometry::Vulkan::Mesh>> loadedModels;
                 Fox::Graphics::Geometry::Vulkan::Mesh& LoadModel(const std::string& file, bool displacement);
 
-                // Where gizmos moved the objects, back into the content
-                void SyncTransforms();
-
-                std::vector<Tree> trees;
                 bool treesChanged = false;
                 std::unique_ptr<Fox::Scene::TextureLibrary> textureLibrary;
                 float time = 0.0f;

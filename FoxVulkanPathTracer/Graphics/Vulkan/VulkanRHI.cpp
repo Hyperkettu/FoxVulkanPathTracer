@@ -732,9 +732,10 @@ namespace Fox {
 					title.unsetf(std::ios::fixed);
 				}
 				if (editMode) {
-					const int selected = gizmo.GetSelected();
+					const auto selected = gizmo.GetSelected();
+					const auto& graph = raytracingScene->GetSceneGraph();
 					title << " - EDIT " << Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode()) << ": "
-						<< (selected >= 0 ? raytracingScene->GetObjectName(static_cast<size_t>(selected)) : std::string("click an object"));
+						<< (graph.IsValid(selected) ? graph.GetName(selected) : std::string("click an object"));
 				}
 				if (titleTimer > 0.0f) {
 					title << " - " << static_cast<int>(std::round(titleFrames / titleTimer)) << " fps" << (vsync ? "" : " (vsync off)");
@@ -805,6 +806,8 @@ namespace Fox {
 
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				raytracingScene->Update(deltaTime);
+				// Entities moved, shown or hidden from the editor windows (the gizmos say so while dragging)
+				sceneChanged = raytracingScene->TakeObjectsChanged() || sceneChanged;
 
 				frameResource.renderFence->Reset();
 				frameResource.commandPool->Reset();
@@ -1006,7 +1009,7 @@ namespace Fox {
 				if (editMode) {
 					static_assert(sizeof(OverlayRenderer::Vertex) == sizeof(Fox::Editor::TransformGizmo::OverlayVertex), "Overlay vertex layouts differ");
 					std::vector<Fox::Editor::TransformGizmo::OverlayVertex> gizmoVertices;
-					gizmo.BuildOverlay(GizmoView(), *raytracingScene, gizmoVertices);
+					gizmo.BuildOverlay(GizmoView(), raytracingScene->GetSceneGraph(), gizmoVertices);
 					for (const auto& vertex : gizmoVertices) {
 						overlayVertices.push_back({ vertex.position, vertex.color });
 					}
@@ -1122,6 +1125,15 @@ namespace Fox {
 					pose.position = camera->GetPosition();
 					pose.target = camera->GetPosition() + camera->GetForward();
 					sceneEditor.Draw(*raytracingScene, gizmo, pose, uiScale);
+					{
+						// New entities stand on the ground in front of the camera
+						glm::vec3 forward = camera->GetForward();
+						forward.y = 0.0f;
+						forward = glm::dot(forward, forward) > 1e-6f ? glm::normalize(forward) : glm::vec3(1.0f, 0.0f, 0.0f);
+						glm::vec3 spawn = camera->GetPosition() + forward * 12.0f;
+						spawn.y = raytracingScene->GetGroundHeightAt(spawn.x, spawn.z);
+						sceneGraphEditor.Draw(*raytracingScene, gizmo, spawn, uiScale);
+					}
 					treeEditor.Draw(*raytracingScene, gizmo, camera->GetPosition(), camera->GetForward(), uiScale);
 					if (cameraEditor.Draw(raytracingScene->GetCameraManager(), *camera, GizmoView(), uiScale)) {
 						ResetHistory(); // The camera jumped
@@ -1151,8 +1163,7 @@ namespace Fox {
 					RefreshTextureDescriptors(); // Models bring their own textures
 					textureVersion = raytracingScene->GetTextureLibrary().GetVersion();
 
-					gizmo.Select(-1);
-					sceneEditor.Rebuilt(succeeded, error, seconds);
+					sceneEditor.Rebuilt(succeeded, error, seconds); // The selection is an entity: it stays
 					std::cout << "Scene: rebuilt in " << seconds << " s" << (succeeded ? "" : " (" + error + ")") << "\n";
 					ResetHistory();
 				}
@@ -1177,7 +1188,7 @@ namespace Fox {
 						std::cout << "Trees: " << error << "\n";
 					}
 					else {
-						std::cout << "Trees: " << raytracingScene->GetTrees().size() << " rebuilt in " << seconds * 1000.0f << " ms\n";
+						std::cout << "Trees: " << raytracingScene->GetTreeEntities().size() << " rebuilt in " << seconds * 1000.0f << " ms\n";
 					}
 					sceneChanged = true;
 				}
@@ -1278,13 +1289,13 @@ namespace Fox {
 				std::memcpy(result, static_cast<const uint8_t*>(pickBuffer->Map()) + sizeof(result) * frameSlot, sizeof(result));
 				pickBuffer->Unmap();
 
-				// Instance index + 1, 0 for the sky. Objects that cannot move (the ground) deselect.
+				// Instance index + 1, 0 for the sky. What is not an entity (the ground, the terrain) deselects.
 				const int object = result[0] > 0 ? raytracingScene->GetObjectOfInstance(result[0] - 1) : -1;
-				const bool selectable = object >= 0 && raytracingScene->IsObjectMovable(static_cast<size_t>(object));
-				gizmo.Select(selectable ? object : -1);
+				const auto entity = raytracingScene->GetEntityOfObject(object);
+				gizmo.Select(entity);
 
-				if (selectable) {
-					std::cout << "Selected: " << raytracingScene->GetObjectName(static_cast<size_t>(object)) << "\n";
+				if (entity) {
+					std::cout << "Selected: " << raytracingScene->GetSceneGraph().GetName(entity) << "\n";
 				}
 				UpdateWindowTitle(0.0f);
 			}
@@ -1306,7 +1317,7 @@ namespace Fox {
 
 					if (editMode) {
 						const bool snap = inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL);
-						gizmo.MouseMove(MouseInDisplayPixels(), GizmoView(), *raytracingScene, snap);
+						gizmo.MouseMove(MouseInDisplayPixels(), GizmoView(), raytracingScene->GetSceneGraph(), snap);
 						sceneChanged = sceneChanged || gizmo.IsDragging();
 					}
 				});
@@ -1321,7 +1332,7 @@ namespace Fox {
 					if (terrainEditor.MouseDown(*raytracingScene, GizmoView(), mouse)) {
 						return; // Sculpting or painting
 					}
-					if (!gizmo.MouseDown(mouse, GizmoView(), *raytracingScene)) {
+					if (!gizmo.MouseDown(mouse, GizmoView(), raytracingScene->GetSceneGraph())) {
 						pickRequested = true;
 						pickMouse = mouse;
 					}
@@ -1343,10 +1354,11 @@ namespace Fox {
 						SetEditMode(!editMode);
 						break;
 
-					// Remove the selected object (model, sphere or tree)
+					// Delete the selected entity (and everything under it)
 					case SDL_SCANCODE_DELETE:
-						if (editMode && raytracingScene->RemoveObject(gizmo.GetSelected())) {
-							gizmo.Select(-1);
+						if (editMode && gizmo.GetSelected()) {
+							raytracingScene->DestroyEntity(gizmo.GetSelected());
+							gizmo.Select({});
 						}
 						break;
 

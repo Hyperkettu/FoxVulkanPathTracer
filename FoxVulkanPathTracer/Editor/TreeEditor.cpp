@@ -40,18 +40,14 @@ namespace Fox {
 		}
 
 		void TreeEditor::Draw(Scene& scene, TransformGizmo& gizmo, const glm::vec3& cameraPosition, const glm::vec3& cameraForward, float uiScale) {
-			auto& trees = scene.GetTrees();
+			const std::vector<Fox::ECS::Entity> trees = scene.GetTreeEntities();
 
-			// A tree clicked in the scene becomes the one being edited
-			const int clicked = scene.GetTreeOfObject(gizmo.GetSelected());
-			if (clicked >= 0) {
-				selected = clicked;
+			// A tree selected (in the scene or the hierarchy) becomes the one being edited
+			if (scene.GetTree(gizmo.GetSelected())) {
+				selected = gizmo.GetSelected();
 			}
-			if (trees.empty()) {
-				selected = -1;
-			}
-			else {
-				selected = std::clamp(selected, 0, static_cast<int>(trees.size()) - 1);
+			if (!scene.GetTree(selected)) {
+				selected = trees.empty() ? Fox::ECS::Entity{} : trees.front();
 			}
 
 			ImGui::SetNextWindowPos(ImVec2(10.0f * uiScale, 10.0f * uiScale), ImGuiCond_FirstUseEver);
@@ -63,14 +59,14 @@ namespace Fox {
 
 			DrawTreeList(scene, gizmo, cameraPosition, cameraForward);
 
-			if (selected >= 0) {
-				Scene::Tree& tree = trees[selected];
+			if (Scene::Tree* edited = scene.GetTree(selected)) {
+				Scene::Tree& tree = *edited;
 				auto& shape = tree.shape;
 				bool shapeChanged = false;   // Needs new geometry
 				bool lookChanged = false;    // Materials only
 
 				ImGui::Separator();
-				ImGui::Text("%s", tree.name.c_str());
+				ImGui::Text("%s", scene.GetSceneGraph().GetName(selected).c_str());
 				if (tree.mesh) {
 					ImGui::SameLine();
 					ImGui::TextDisabled("%zu triangles, %zu bones, generated in %.0f ms",
@@ -78,7 +74,7 @@ namespace Fox {
 				}
 
 				if (ImGui::CollapsingHeader("Placement", ImGuiTreeNodeFlags_DefaultOpen)) {
-					DrawPlacement(scene, tree);
+					DrawPlacement(scene, selected);
 				}
 
 				if (ImGui::CollapsingHeader("Trunk", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -199,7 +195,8 @@ namespace Fox {
 		}
 
 		void TreeEditor::DrawTreeList(Scene& scene, TransformGizmo& gizmo, const glm::vec3& cameraPosition, const glm::vec3& cameraForward) {
-			auto& trees = scene.GetTrees();
+			const std::vector<Fox::ECS::Entity> trees = scene.GetTreeEntities();
+			Fox::Scene::SceneGraph& graph = scene.GetSceneGraph();
 
 			// New trees stand on the ground in front of the camera
 			auto inFront = [&]() {
@@ -210,19 +207,24 @@ namespace Fox {
 				return position;
 			};
 
+			const Scene::Tree* tree = scene.GetTree(selected);
 			if (ImGui::Button("Add tree")) {
-				selected = static_cast<int>(scene.AddTree(inFront()));
+				selected = scene.AddTree(inFront());
+				gizmo.Select(selected);
 			}
 			ImGui::SameLine();
-			ImGui::BeginDisabled(selected < 0);
-			if (ImGui::Button("Duplicate") && selected >= 0) {
-				selected = static_cast<int>(scene.AddTree(inFront(), &trees[selected]));
+			ImGui::BeginDisabled(!tree);
+			if (ImGui::Button("Duplicate") && tree) {
+				selected = scene.AddTree(inFront(), tree);
+				gizmo.Select(selected);
 			}
 			ImGui::SameLine();
-			if (ImGui::Button("Remove") && selected >= 0) {
-				gizmo.Select(-1);
-				scene.RemoveTree(static_cast<size_t>(selected));
-				selected = std::min(selected, static_cast<int>(trees.size()) - 1);
+			if (ImGui::Button("Remove") && tree) {
+				if (graph.IsAncestorOf(selected, gizmo.GetSelected())) {
+					gizmo.Select({});
+				}
+				scene.DestroyEntity(selected);
+				selected = {};
 			}
 			ImGui::EndDisabled();
 			ImGui::SameLine();
@@ -237,31 +239,28 @@ namespace Fox {
 			ImGui::ProgressBar(std::max(used, usedIndices), ImVec2(-1.0f, 0.0f), overlay);
 
 			if (ImGui::BeginListBox("##trees", ImVec2(-1.0f, ImGui::GetTextLineHeightWithSpacing() * std::clamp(static_cast<float>(trees.size()), 2.0f, 6.0f)))) {
-				for (int i = 0; i < static_cast<int>(trees.size()); i++) {
-					if (ImGui::Selectable(trees[i].name.c_str(), i == selected)) {
-						selected = i;
-						if (trees[i].placed) {
-							gizmo.Select(static_cast<int>(trees[i].handle.object));
-						}
+				for (Fox::ECS::Entity entity : trees) {
+					ImGui::PushID(static_cast<int>(entity.index));
+					if (ImGui::Selectable(graph.GetName(entity).c_str(), entity == selected)) {
+						selected = entity;
+						gizmo.Select(entity);
 					}
+					ImGui::PopID();
 				}
 				ImGui::EndListBox();
 			}
 		}
 
-		void TreeEditor::DrawPlacement(Scene& scene, Scene::Tree& tree) {
+		void TreeEditor::DrawPlacement(Scene& scene, Fox::ECS::Entity entity) {
+			Fox::Scene::SceneGraph& graph = scene.GetSceneGraph();
 			char name[64];
-			std::snprintf(name, sizeof(name), "%s", tree.name.c_str());
+			std::snprintf(name, sizeof(name), "%s", graph.GetName(entity).c_str());
 			if (ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue)) {
-				tree.name = name;
+				graph.SetName(entity, name);
 			}
 
-			if (!tree.placed) {
-				return;
-			}
-
-			// The scene object: changes here take effect right away, as with the gizmos
-			auto transform = scene.GetObjectTransform(tree.handle.object);
+			// Its entity, in the world: changes here take effect right away, as with the gizmos
+			auto transform = graph.GetWorldTransform(entity);
 			bool moved = ImGui::DragFloat3("Position", &transform.position.x, 0.05f, 0.0f, 0.0f, "%.2f");
 
 			const glm::vec3 euler = glm::degrees(glm::eulerAngles(transform.rotation));
@@ -281,8 +280,7 @@ namespace Fox {
 				moved = true;
 			}
 			if (moved) {
-				scene.SetObjectTransform(tree.handle.object, transform);
-				tree.transform = transform;
+				graph.SetWorldTransform(entity, transform);
 			}
 		}
 
@@ -543,15 +541,10 @@ namespace Fox {
 			}
 
 			char text[128];
-			std::snprintf(text, sizeof(text), "%zu trees rebuilt in %.0f ms", scene.GetTrees().size(), seconds * 1000.0f);
+			std::snprintf(text, sizeof(text), "%zu trees rebuilt in %.0f ms", scene.GetTreeEntities().size(), seconds * 1000.0f);
 			status = text;
 			statusIsError = false;
-
-			// Object indices may have moved: keep the edited tree selected for the gizmos
-			auto& trees = scene.GetTrees();
-			if (selected >= 0 && selected < static_cast<int>(trees.size()) && trees[selected].placed) {
-				gizmo.Select(static_cast<int>(trees[selected].handle.object));
-			}
+			(void)gizmo; // Selections are entities: they survive the rebuild
 		}
 	}
 }

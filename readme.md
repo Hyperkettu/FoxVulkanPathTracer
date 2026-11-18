@@ -313,25 +313,53 @@ Press `E` for edit mode: the mouse pointer appears and the window title shows th
 
 | Input | Action |
 | --- | --- |
-| Left click | Select the object under the pointer (the ground cannot be selected) |
+| Left click | Select the entity under the pointer (the ground cannot be selected) |
 | `Z` / `X` / `C` | Move / rotate / scale gizmo |
 | Drag an arrow | Move along that world axis; the center square moves in the view plane |
 | Drag a ring | Rotate about that world axis |
 | Drag an axis | Scale along that axis of the object; the center square scales uniformly |
 | `Ctrl` while dragging | Snap to 0.25 m, 15° or 0.1x steps |
 | Right mouse + drag | Look around (`W` `A` `S` `D` `R` `F` still move) |
-| `Delete` | Remove the selected object |
+| `Delete` | Delete the selected entity and everything under it |
 | `K` | Add a camera path key from the view |
 | `B` | Terrain brush on / off (left mouse on the terrain sculpts or paints, `Ctrl` inverts, `[` `]` radius) |
 | `E` | Leave edit mode |
 
-Each object rotates and scales about its origin. `RayTracingScene::SetObjectTransform` moves objects from code too.
+Each entity rotates and scales about its origin, in world space; a child's local transform is set to match.
+`SceneGraph::SetLocalTransform` / `SetWorldTransform` move entities from code too.
 
 How it works: the path tracer reports the object seen at the clicked pixel (`gPickResult` in `raygen.slang`), read back
 once that frame finishes. When an object moves, the top level acceleration structure is rebuilt that frame
 (microseconds: one instance per object), its lights follow it, and every instance's motion since the previous frame
 goes to the shaders, which add it to the motion vectors of directly visible surfaces. The gizmos are 2D triangles
 drawn over the tone mapped image (`Editor/TransformGizmo`, `Graphics/Vulkan/OverlayRenderer`).
+
+### Scene graph and components
+
+The scene's content is a tree of entities (`Scene/SceneGraph`) with components (`Scene/ECS`): a small
+entity-component system whose registry keeps each component type in a packed array (a sparse set).
+
+| Component | What it does |
+| --- | --- |
+| Transform | Position, rotation and scale relative to the parent (the world for a root). Every new entity has one |
+| Mesh | The entity is rendered: a glTF model, a sphere or a generated tree. **Rendered** off hides it without a rebuild |
+
+Every entity also has a name and an **active** flag; an inactive entity hides everything under it. A child moves,
+turns and scales with its parent. In edit mode:
+
+| Window | What it does |
+| --- | --- |
+| **Hierarchy** | Every entity as a tree. Click to select (the same selection as clicking in the view). Drag onto an entity to make it a child, onto the top or bottom edge of one to place it before or after, onto the empty space below to make it a root. Right-click: create an empty child, duplicate (`Ctrl+D`), unparent, active, delete. **+ Create**: an empty entity, a sphere or a tree |
+| **Inspector** | The selected entity: active, name, and each component in a section (transform with Euler angles in degrees, the mesh's type, file, sphere material). **Add Component** adds one; a section's close button (or right-click on Transform) removes it |
+
+Adding a component type (physics, audio, ...) takes its struct in `Scene/ECS/Components.h`, an inspector entry in
+`COMPONENT_EDITORS` (`Editor/SceneGraphEditor.cpp`), a save entry in `COMPONENT_SERIALIZERS` (`Scene/SceneFile.cpp`)
+and a system that acts on it, stepped from `MainRayTracingScene::Update` like the mesh sync.
+
+How it works: rebuilding the scene places every entity with a mesh as a ray tracing scene object, at its world
+transform. Each frame the graph's world transforms are updated and objects whose entity moved (or was shown or
+hidden) follow, through the same path as the gizmos. Adding or removing a mesh, or changing its type, file or sphere,
+rebuilds the scene; trees only rebuild the trees.
 
 ### Scene files
 
@@ -342,30 +370,36 @@ without that file it starts empty, with only the ground and the sun. In edit mod
 | --- | --- |
 | Path, **Save** / **Load** / **New** | Save the scene (with the current view) to the path, load a scene file, or start an empty scene. Save to `Scenes/default.json` to change what the renderer starts with |
 | **Add** | Add any glTF model from `Models/` (`.glb` / `.gltf`, optionally with displacement from its normal maps), or a sphere with a glass, frosted glass, chrome, gold or plastic material. New objects stand on the ground 12 m in front of the camera. Trees are added in the **Trees** window |
-| **Objects** | Every model, sphere and tree; click one to select it for the gizmo. **Remove selected** (or `Delete`) removes it |
 | **Environment** | Ground (height, colour, roughness) and sun (direction, elevation, colour, strength, size) |
 
 The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for what a file leaves out:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "camera": { "position": [29, -2.6, 17], "target": [4, -0.6, -3] },
   "environment": { "ground": true, "groundHeight": -3.73, "sun": true, "sunDirection": [0.876, 0.22, 0.479], "sunIntensity": 18 },
-  "models": [
-    { "name": "Cabin", "file": "Models/cabin.glb", "displacement": true,
-      "transform": { "position": [20, 0, 0], "rotation": [0, 90, 0], "scale": [1, 1, 1] } }
-  ],
-  "spheres": [
-    { "name": "Glass ball", "radius": 1.2, "transform": { "position": [21, -2.53, 10] },
-      "material": { "color": [1, 1, 1], "roughness": 0, "transmission": 1, "ior": 1.5,
-                    "attenuationColor": [0.8, 0.94, 0.9], "attenuationDistance": 2 } }
-  ],
-  "trees": [ { "name": "Tree 1", "transform": { "position": [14, -3.73, 12] }, "shape": {}, "look": {}, "wind": {} } ]
+  "entities": [
+    { "name": "Cabin", "active": true, "parent": -1,
+      "components": {
+        "transform": { "position": [20, 0, 0], "rotation": [0, 90, 0], "scale": [1, 1, 1] },
+        "mesh": { "type": "model", "file": "Models/cabin.glb", "displacement": true } } },
+    { "name": "Glass ball", "parent": 0,
+      "components": {
+        "transform": { "position": [1, -2.53, 10] },
+        "mesh": { "type": "sphere", "radius": 1.2,
+                  "material": { "color": [1, 1, 1], "roughness": 0, "transmission": 1, "ior": 1.5,
+                                "attenuationColor": [0.8, 0.94, 0.9], "attenuationDistance": 2 } } } },
+    { "name": "Tree 1", "components": { "transform": { "position": [14, -3.73, 12] },
+                                         "mesh": { "type": "tree", "shape": {}, "look": {}, "wind": {} } } }
+  ]
 }
 ```
 
-Rotations are Euler angles in degrees. A tree's `shape`, `look` and `wind` hold everything the Trees window edits
+Entities are listed parents first; `parent` is the index of the parent in the list (`-1` or none: a root), and a
+child's transform is relative to its parent. An entity without `"transform"` has no Transform component. Version 1
+files (`"models"`, `"spheres"` and `"trees"` lists) still load, as root entities. Rotations are Euler angles in
+degrees. A tree's `shape`, `look` and `wind` hold everything the Trees window edits
 (saved in full, so a file shows every parameter). Adding, removing or loading rebuilds the scene's acceleration
 structures; models already loaded once are kept in memory, so this takes about half a second with two displaced
 cabins (the first load of a displaced model takes a few seconds).
