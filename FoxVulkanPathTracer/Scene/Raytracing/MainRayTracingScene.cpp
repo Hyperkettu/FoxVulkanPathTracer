@@ -303,6 +303,7 @@ namespace Fox {
 			}
 
 			void MainRayTracingScene::ClearContent() {
+				StopPhysics();
 				graph.Clear();
 				CreateSun(graph);
 				environment = Environment{};
@@ -480,6 +481,10 @@ namespace Fox {
 
 				// The scene graph's world transforms, and the meshes placed and shown as their entities are
 				graph.UpdateTransforms();
+				if (physicsPlaying) {
+					UpdatePhysics(dt);
+					graph.UpdateTransforms();
+				}
 				SyncMeshes();
 				SyncLights();
 				UpdateWater(dt);
@@ -1049,7 +1054,6 @@ namespace Fox {
 			}
 
 			void MainRayTracingScene::RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) {
-				(void)frameSlot;
 				graph.GetRegistry().Each<Fox::Scene::WaterComponent>([&](Entity, Fox::Scene::WaterComponent& water) {
 					if (!water.placed || !water.simulation) {
 						return;
@@ -1068,12 +1072,376 @@ namespace Fox {
 					parameters.foamLifetime = water.foamLifetime;
 					parameters.sprayAmount = water.spray;
 					parameters.dropletSize = water.dropletSize;
-					water.simulation->Record(cmd, frameTime, parameters);
+					water.simulation->Record(cmd, frameTime, parameters, frameSlot);
 					MarkSurfaceDeformed(water.surface);
 					if (water.hasSpray) {
 						MarkSurfaceDeformed(water.spraySurface, true); // Droplets fly far: built anew every frame
 					}
 				});
+			}
+
+			// --- Physics ---
+
+			namespace {
+				// Position, rotation and scale of a world matrix (no shear)
+				void DecomposeWorld(const glm::mat4& m, glm::vec3& position, glm::quat& rotation, glm::vec3& scale) {
+					position = glm::vec3(m[3]);
+					scale = glm::vec3(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2])));
+					const glm::mat3 r(glm::vec3(m[0]) / std::max(scale.x, 1e-8f), glm::vec3(m[1]) / std::max(scale.y, 1e-8f),
+						glm::vec3(m[2]) / std::max(scale.z, 1e-8f));
+					rotation = glm::normalize(glm::quat_cast(r));
+				}
+
+				bool SameMatrix(const glm::mat4& a, const glm::mat4& b) {
+					for (int c = 0; c < 4; c++) {
+						if (glm::any(glm::greaterThan(glm::abs(a[c] - b[c]), glm::vec4(1e-4f)))) {
+							return false;
+						}
+					}
+					return true;
+				}
+			}
+
+			bool MainRayTracingScene::DescribeBody(Entity entity, const Fox::Scene::PhysicsComponent& component, Fox::Scene::PhysicsWorld::BodyDesc& desc) {
+				using PhysicsComponent = Fox::Scene::PhysicsComponent;
+				using World = Fox::Scene::PhysicsWorld;
+				glm::vec3 scale;
+				DecomposeWorld(graph.GetWorldMatrix(entity), desc.position, desc.rotation, scale);
+				const float widest = std::max({ scale.x, scale.y, scale.z });
+
+				desc.motion = component.motion == PhysicsComponent::Motion::Static ? World::Motion::Static
+					: component.motion == PhysicsComponent::Motion::Kinematic ? World::Motion::Kinematic : World::Motion::Dynamic;
+				desc.mass = component.mass;
+				desc.density = std::max(component.density, 1.0f);
+				desc.friction = component.friction;
+				desc.restitution = component.restitution;
+				desc.linearDamping = component.linearDamping;
+				desc.angularDamping = component.angularDamping;
+				desc.continuous = component.continuous;
+				desc.user = (static_cast<uint64_t>(entity.generation) << 32) | entity.index;
+				desc.center = component.center * scale;
+				desc.halfExtents = component.halfExtents * scale;
+				desc.radius = component.radius * widest;
+				desc.halfHeight = component.halfHeight * scale.y;
+
+				// What the entity shows decides the automatic shape
+				const MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(entity);
+				PhysicsComponent::Shape shape = component.shape;
+				if (shape == PhysicsComponent::Shape::Auto) {
+					if (mesh && mesh->type == MeshComponent::Type::Sphere) {
+						shape = PhysicsComponent::Shape::Sphere;
+						desc.radius = mesh->radius * widest;
+						desc.center = glm::vec3(0.0f);
+					}
+					else if (mesh && mesh->type == MeshComponent::Type::Model) {
+						shape = component.motion == PhysicsComponent::Motion::Static ? PhysicsComponent::Shape::Mesh : PhysicsComponent::Shape::ConvexHull;
+					}
+					else if (mesh && mesh->type == MeshComponent::Type::Tree && mesh->tree) {
+						// The trunk: a capsule as thick as its middle, standing on the entity's origin
+						const auto& trunk = mesh->tree->shape;
+						const float horizontal = std::max(scale.x, scale.z);
+						shape = PhysicsComponent::Shape::Capsule;
+						desc.radius = std::max(0.02f, trunk.trunkRadius * 0.5f * (1.0f + trunk.trunkTaper) * horizontal);
+						const float height = trunk.trunkLength * scale.y;
+						desc.halfHeight = std::max(0.01f, 0.5f * height - desc.radius);
+						desc.center = glm::vec3(0.0f, 0.5f * height, 0.0f);
+					}
+					else {
+						shape = PhysicsComponent::Shape::Box;
+					}
+				}
+
+				switch (shape) {
+				case PhysicsComponent::Shape::Sphere: desc.shape = World::ShapeType::Sphere; break;
+				case PhysicsComponent::Shape::Capsule: desc.shape = World::ShapeType::Capsule; break;
+				case PhysicsComponent::Shape::ConvexHull:
+				case PhysicsComponent::Shape::Mesh: {
+					if (!mesh || mesh->type != MeshComponent::Type::Model || mesh->file.empty()) {
+						desc.shape = World::ShapeType::Box; // Nothing to take the points from
+						break;
+					}
+					// From the model without displacement: its relief is far finer than collisions need
+					Fox::Graphics::Geometry::Vulkan::Mesh* model = nullptr;
+					try {
+						model = &LoadModel(mesh->file, false);
+					}
+					catch (const std::exception& e) {
+						std::cout << "Physics: " << mesh->file << " could not be loaded (" << e.what() << "), using a box\n";
+					}
+					if (!model) {
+						desc.shape = World::ShapeType::Box;
+						break;
+					}
+					const bool triangles = shape == PhysicsComponent::Shape::Mesh;
+					desc.shape = triangles ? World::ShapeType::Mesh : World::ShapeType::ConvexHull;
+					desc.points.reserve(model->GetVertices().size());
+					for (const auto& vertex : model->GetVertices()) {
+						desc.points.emplace_back(vertex.position[0] * scale.x, vertex.position[1] * scale.y, vertex.position[2] * scale.z);
+					}
+					if (triangles) {
+						desc.indices.assign(model->GetIndices().begin(), model->GetIndices().end());
+					}
+					char key[96];
+					std::snprintf(key, sizeof(key), "|%d|%.4f|%.4f|%.4f", triangles ? 1 : 0, scale.x, scale.y, scale.z);
+					desc.cacheKey = mesh->file + key;
+					break;
+				}
+				default: desc.shape = World::ShapeType::Box; break;
+				}
+				return true;
+			}
+
+			bool MainRayTracingScene::StartPhysics(std::string& error) {
+				if (physicsPlaying) {
+					return true;
+				}
+				if (!physics) {
+					physics = std::make_unique<Fox::Scene::PhysicsWorld>();
+				}
+				physics->Reset();
+				playingBodies.clear();
+				playSnapshot.clear();
+				graph.UpdateTransforms();
+
+				// The ground: the terrain as a height field, or the ground plane
+				if (environment.terrain && terrainPlaced && terrain.IsCreated()) {
+					const uint32_t samples = 512; // A multiple of the block size; resampled from the terrain's heights
+					const float size = terrain.settings.size;
+					const float spacing = size / static_cast<float>(samples - 1);
+					const glm::vec2 corner(terrain.settings.position.x - 0.5f * size, terrain.settings.position.z - 0.5f * size);
+					std::vector<float> heights(static_cast<size_t>(samples) * samples);
+					for (uint32_t z = 0; z < samples; z++) {
+						for (uint32_t x = 0; x < samples; x++) {
+							float y = environment.groundHeight;
+							terrain.HeightAt(corner.x + x * spacing, corner.y + z * spacing, y);
+							heights[static_cast<size_t>(z) * samples + x] = y;
+						}
+					}
+					physics->AddHeightField(heights, samples, corner, spacing);
+				}
+				else if (environment.ground) {
+					physics->AddGroundPlane(environment.groundHeight);
+				}
+
+				// Every entity's transform, to put back when it stops
+				for (Entity entity : graph.DepthFirst()) {
+					if (graph.HasTransform(entity)) {
+						playSnapshot.emplace_back(entity, graph.GetLocalTransform(entity));
+					}
+				}
+
+				// The bodies
+				size_t failed = 0;
+				graph.GetRegistry().Each<Fox::Scene::PhysicsComponent>([&](Entity entity, Fox::Scene::PhysicsComponent& component) {
+					component.body = Fox::Scene::PhysicsWorld::INVALID_BODY;
+					if (!component.enabled || !graph.IsActiveInHierarchy(entity)) {
+						return;
+					}
+					Fox::Scene::PhysicsWorld::BodyDesc desc;
+					DescribeBody(entity, component, desc);
+					std::string bodyError;
+					const uint32_t body = physics->AddBody(desc, bodyError);
+					if (body == Fox::Scene::PhysicsWorld::INVALID_BODY) {
+						std::cout << "Physics: no body for " << graph.GetName(entity) << " (" << bodyError << ")\n";
+						failed++;
+						return;
+					}
+					component.body = body;
+					PlayingBody playing;
+					playing.entity = entity;
+					playing.body = body;
+					playing.motion = component.motion;
+					glm::vec3 position;
+					glm::quat rotation;
+					DecomposeWorld(graph.GetWorldMatrix(entity), position, rotation, playing.scale);
+					playing.written = graph.GetWorldMatrix(entity);
+					const auto info = physics->GetBodyInfo(body);
+					playing.extent = std::max(info.extent, 0.05f);
+					playing.floats = component.floats && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic;
+					playing.waterDrag = component.waterDrag;
+					playing.buoyancy = info.mass > 0.0f && info.volume > 0.0f ? 1000.0f / (info.mass / info.volume) : 1.0f;
+					playingBodies.push_back(playing);
+				});
+				physics->Optimize();
+				physicsPlaying = true;
+				std::cout << "Physics: playing, " << playingBodies.size() << " bodies" << (failed ? " (some failed, see above)" : "") << "\n";
+				if (playingBodies.empty()) {
+					error = "No entity has a Physics component (Inspector > Add Component > Physics)";
+				}
+				return true;
+			}
+
+			void MainRayTracingScene::StopPhysics() {
+				if (!physicsPlaying) {
+					return;
+				}
+				physicsPlaying = false;
+				for (const auto& [entity, transform] : playSnapshot) {
+					if (graph.IsValid(entity) && graph.HasTransform(entity)) {
+						graph.SetLocalTransform(entity, transform);
+					}
+				}
+				graph.GetRegistry().Each<Fox::Scene::PhysicsComponent>([](Entity, Fox::Scene::PhysicsComponent& component) {
+					component.body = Fox::Scene::PhysicsWorld::INVALID_BODY;
+				});
+				playSnapshot.clear();
+				playingBodies.clear();
+				if (physics) {
+					physics->Reset();
+				}
+				graph.UpdateTransforms();
+				std::cout << "Physics: stopped (everything is back where it was)\n";
+			}
+
+			void MainRayTracingScene::UpdatePhysics(float dt) {
+				if (!physics) {
+					return;
+				}
+				using Motion = Fox::Scene::PhysicsComponent::Motion;
+
+				// Entities gone or switched off leave; dynamic ones moved by hand (the gizmo) go where they were put,
+				// thrown with the speed they were moved at
+				for (size_t i = 0; i < playingBodies.size();) {
+					PlayingBody& playing = playingBodies[i];
+					const auto* component = graph.IsValid(playing.entity) ? graph.GetRegistry().TryGet<Fox::Scene::PhysicsComponent>(playing.entity) : nullptr;
+					if (!component || !component->enabled || component->body != playing.body || !graph.IsActiveInHierarchy(playing.entity)) {
+						physics->RemoveBody(playing.body);
+						playingBodies.erase(playingBodies.begin() + i);
+						continue;
+					}
+					const glm::mat4 world = graph.GetWorldMatrix(playing.entity);
+					if (playing.motion == Motion::Dynamic && !SameMatrix(world, playing.written)) {
+						glm::vec3 position, scale;
+						glm::quat rotation;
+						DecomposeWorld(world, position, rotation, scale);
+						const glm::vec3 moved = (position - glm::vec3(playing.written[3])) / std::max(dt, 1e-3f);
+						physics->SetTransform(playing.body, position, rotation);
+						physics->SetVelocity(playing.body, glm::clamp(moved, glm::vec3(-20.0f), glm::vec3(20.0f)), glm::vec3(0.0f));
+						playing.written = world;
+					}
+					i++;
+				}
+
+				// The water bodies to float in
+				std::vector<Fox::Scene::WaterSimulation*> waters;
+				graph.GetRegistry().Each<Fox::Scene::WaterComponent>([&](Entity, Fox::Scene::WaterComponent& water) {
+					if (water.placed && water.simulation) {
+						waters.push_back(water.simulation.get());
+					}
+				});
+				auto sampleWater = [&](const glm::vec3& at, glm::vec3& point, glm::vec3& normal, glm::vec3& flow, Fox::Scene::WaterSimulation*& in) {
+					for (auto* water : waters) {
+						float height;
+						glm::vec2 velocity;
+						if (water->SampleSurface(at.x, at.z, height, normal, velocity)) {
+							point = glm::vec3(at.x, height, at.z);
+							flow = glm::vec3(velocity.x, 0.0f, velocity.y);
+							in = water;
+							return true;
+						}
+					}
+					return false;
+				};
+
+				physics->Step(dt, [&](float step) {
+					for (PlayingBody& playing : playingBodies) {
+						if (playing.motion == Motion::Kinematic) {
+							// It follows its entity (the gizmo, or its parent moving it)
+							glm::vec3 position, scale;
+							glm::quat rotation;
+							DecomposeWorld(graph.GetWorldMatrix(playing.entity), position, rotation, scale);
+							physics->MoveKinematic(playing.body, position, rotation, step);
+						}
+						else if (playing.motion == Motion::Dynamic && playing.floats && !waters.empty()) {
+							glm::vec3 position, point, normal, flow;
+							glm::quat rotation;
+							Fox::Scene::WaterSimulation* water = nullptr;
+							physics->GetTransform(playing.body, position, rotation);
+							if (sampleWater(position, point, normal, flow, water)) {
+								physics->ApplyBuoyancy(playing.body, point, normal, playing.buoyancy, playing.waterDrag, 0.4f * playing.waterDrag, flow, step);
+							}
+						}
+					}
+				});
+
+				// Where the dynamic bodies are now; splashes where they hit the water, a wake where they move through it
+				for (PlayingBody& playing : playingBodies) {
+					if (playing.motion != Motion::Dynamic) {
+						continue;
+					}
+					glm::vec3 position;
+					glm::quat rotation;
+					physics->GetTransform(playing.body, position, rotation);
+					Fox::Scene::Transform world;
+					world.position = position;
+					world.rotation = rotation;
+					world.scale = playing.scale;
+					graph.SetWorldTransform(playing.entity, world);
+					playing.written = world.Matrix();
+
+					if (waters.empty()) {
+						continue;
+					}
+					glm::vec3 point, normal, flow;
+					Fox::Scene::WaterSimulation* water = nullptr;
+					const bool over = sampleWater(position, point, normal, flow, water);
+					const float submerged = over ? physics->SubmergedFraction(playing.body, point, normal) : 0.0f;
+					const bool inWater = submerged > 0.0f;
+					if (inWater) {
+						const glm::vec3 velocity = physics->GetLinearVelocity(playing.body);
+						const auto& grid = water->GetGrid();
+						const float x = position.x - grid.origin.x, z = position.z - grid.origin.z;
+						const float radius = std::max(playing.extent * 1.5f, 2.0f * grid.cellSize);
+						if (!playing.inWater && velocity.y < -1.0f) {
+							// Hitting the water: a dip as deep as it is hard, and the foam and spray that come with it
+							water->AddDrop(x, z, radius, std::min(0.5f, 0.04f * -velocity.y * (0.5f + playing.extent)));
+						}
+						const glm::vec2 through(velocity.x - flow.x, velocity.z - flow.z);
+						const float speed = glm::length(through);
+						playing.wakeTimer += dt;
+						if (submerged < 0.95f && speed > 0.8f && playing.wakeTimer > 0.12f) {
+							water->AddDrop(x, z, radius, std::min(0.15f, 0.012f * speed * (0.5f + playing.extent)));
+							playing.wakeTimer = 0.0f;
+						}
+					}
+					playing.inWater = inWater;
+				}
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddPhysicsBall(const glm::vec3& position) {
+				SurfaceMaterial material{ glm::vec3(0.75f, 0.12f, 0.08f), 0.35f };
+				const Entity entity = AddSphereObject(position, 0.4f, material);
+				graph.SetName(entity, "Ball");
+				auto& body = graph.GetRegistry().Add<Fox::Scene::PhysicsComponent>(entity);
+				body.restitution = 0.5f;
+				body.density = 300.0f;
+				return entity;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddPhysicsCrate(const glm::vec3& position) {
+				const Entity entity = AddModel("Models/box.glb", false, position);
+				graph.SetName(entity, "Box");
+				// Scaled to a metre across, whatever size the model is
+				try {
+					glm::vec3 low(1e30f), high(-1e30f);
+					for (const auto& vertex : LoadModel("Models/box.glb", false).GetVertices()) {
+						const glm::vec3 p(vertex.position[0], vertex.position[1], vertex.position[2]);
+						low = glm::min(low, p);
+						high = glm::max(high, p);
+					}
+					const glm::vec3 extent = high - low;
+					const float size = std::max({ extent.x, extent.y, extent.z });
+					if (size > 1e-4f) {
+						Fox::Scene::Transform transform = graph.GetLocalTransform(entity);
+						transform.scale = glm::vec3(1.0f / size);
+						graph.SetLocalTransform(entity, transform);
+					}
+				}
+				catch (const std::exception&) {
+				}
+				auto& body = graph.GetRegistry().Add<Fox::Scene::PhysicsComponent>(entity);
+				body.density = 600.0f; // Wood
+				return entity;
 			}
 
 			size_t MainRayTracingScene::CountUsers(const Tree* tree) const {

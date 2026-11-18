@@ -391,6 +391,40 @@ Limits: a vertical wave front cannot break (the equations have one height per po
 instead), spray does not collide with objects, and light refracted through the surface is not focused into caustics on
 the bed.
 
+### Physics
+
+Rigid bodies with [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (v5.3.0, MIT, vendored in
+`ThirdParty/JoltPhysics`; `Scene/Physics` keeps its headers to itself). Give an entity a **Physics** component
+(Inspector > Add Component, or **Physics > Add Body to Selection**), or make one from **Create > Physics** (a ball, a
+metre box), then **Physics > Play** (`F5`). Bodies fall, collide and come to rest; their entities' transforms follow,
+and everything rendered with them moves as the gizmos would move it. `F5` again stops, and every entity goes back
+where it was. Saving while it plays saves the scene as it was before; loading a scene stops it.
+
+| Motion | |
+| --- | --- |
+| Dynamic | Falls, collides, floats. Moving it with the gizmo while it plays puts it there and throws it with the speed it was moved at |
+| Kinematic | Follows its entity's transform (the gizmo, a parent) and pushes dynamic bodies out of the way |
+| Static | Stays where it was when physics started |
+
+| Shape | |
+| --- | --- |
+| Auto | A sphere mesh's sphere; a model's convex hull (moving) or its triangles (static); a tree's trunk (a capsule as thick as its middle); otherwise the box |
+| Box, Sphere, Capsule | Their sizes (and a centre offset) in the entity's space: its world scale scales them |
+| Convex hull | Around the model's vertices (at most 256 corners); kept while the scene lives, so playing again is quick |
+| Triangle mesh | The model's triangles (without displacement): exact, for static and kinematic bodies only (it has no inside) |
+
+The ground is the terrain (a 512 x 512 height field resampled from it) or the ground plane. Mass comes from
+**Density** and the shape's volume unless **Mass** is set; friction, bounciness and damping are per body;
+**Continuous collision** sweeps fast, small bodies so they do not pass through others. Steps are a fixed 1/60 s
+(at most four a frame), on Jolt's job system threads.
+
+**Water**: a dynamic body that **Floats** is lifted by the water it displaces (the plane of the surface under it,
+tilted with the waves), slowed by **Water drag** and carried by the flow. Its buoyancy is water's density over its
+own: lighter than 1000 kg/m^3 floats, heavier sinks. The surface, its tilt and the flow come from the simulation,
+read back every frame (a few frames late). Hitting the water makes a splash as deep as the impact is hard (with its
+foam and spray), and a body moving through the surface leaves a wake. The water does not flow around bodies: they
+stir it only through these splashes.
+
 ### Leaves, alpha testing and opacity micromaps
 
 The tree's thinner branches (level 2 and up) carry leaf cards: two along each branch segment, and one at each tip.
@@ -490,6 +524,8 @@ entity-component system whose registry keeps each component type in a packed arr
 | Transform | Position, rotation and scale relative to the parent (the world for a root). Every new entity has one |
 | Mesh | The entity is rendered: a glTF model, a sphere or a generated tree. **Rendered** off hides it without a rebuild |
 | Light | The entity gives light: directional (the sun), point or spot. It shines along the entity's -Z axis; point and spot lights are where the entity is. **On** off darkens it without a rebuild |
+| Water | A body of water, simulated and refracting (see *Water*) |
+| Physics | A rigid body, simulated while physics plays (see *Physics*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot
@@ -655,6 +691,7 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
 | `P` | Fly the active camera path, or stop (see *Camera paths*) |
+| `F5` | Play physics, or stop (everything goes back where it was; see *Physics*) |
 | `E` | Edit mode: select, move, rotate and scale objects, the Scene, Trees and Camera windows (see *Editing the scene*, *Scene files*, *Camera paths*, *Tree editor*) |
 | `Esc` | Quit |
 
@@ -692,7 +729,7 @@ Below is the active development checklist for the renderer.
 ### 🏃 Animation & Physics
 - [x] GPU skinning (procedural tree in the wind, angular springs)
 - [ ] Skeletal animation support
-- [ ] Integration of a physics engine (e.g., Box2D/3D physics library)
+- [x] Integration of a physics engine (Jolt Physics: rigid bodies, terrain, buoyancy in the simulated water)
 
 ### 🐛 Bug Fixes & Refinement
 - [ ] Improved glTF binary format compliance (roughness, metallic parameter checks)

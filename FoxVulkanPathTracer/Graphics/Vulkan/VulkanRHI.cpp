@@ -1426,6 +1426,22 @@ namespace Fox {
 					break;
 
 				// Fly the active camera path, or stop
+				// Physics: play, or stop (everything goes back where it was)
+				case SDL_SCANCODE_F5: {
+					if (raytracingScene->IsPhysicsPlaying()) {
+						raytracingScene->StopPhysics();
+					}
+					else {
+						std::string error;
+						raytracingScene->StartPhysics(error);
+						if (!error.empty()) {
+							std::cout << "Physics: " << error << "\n";
+						}
+					}
+					ResetHistory();
+					break;
+				}
+
 				case SDL_SCANCODE_P: {
 					auto& cameraManager = raytracingScene->GetCameraManager();
 					const bool playing = cameraManager.TogglePlay();

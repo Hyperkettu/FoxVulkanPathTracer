@@ -260,6 +260,37 @@ namespace Fox {
 					return light;
 				}
 
+				json PhysicsToJson(const Fox::Scene::PhysicsComponent& body) {
+					return json{
+						{ "enabled", body.enabled }, { "motion", static_cast<int>(body.motion) }, { "shape", static_cast<int>(body.shape) },
+						{ "halfExtents", body.halfExtents }, { "radius", body.radius }, { "halfHeight", body.halfHeight }, { "center", body.center },
+						{ "mass", body.mass }, { "density", body.density }, { "friction", body.friction }, { "restitution", body.restitution },
+						{ "linearDamping", body.linearDamping }, { "angularDamping", body.angularDamping }, { "continuous", body.continuous },
+						{ "floats", body.floats }, { "waterDrag", body.waterDrag },
+					};
+				}
+
+				Fox::Scene::PhysicsComponent PhysicsFromJson(const json& j) {
+					Fox::Scene::PhysicsComponent body;
+					body.enabled = j.value("enabled", body.enabled);
+					body.motion = static_cast<Fox::Scene::PhysicsComponent::Motion>(std::clamp(j.value("motion", 1), 0, 2));
+					body.shape = static_cast<Fox::Scene::PhysicsComponent::Shape>(std::clamp(j.value("shape", 0), 0, 5));
+					body.halfExtents = j.value("halfExtents", body.halfExtents);
+					body.radius = j.value("radius", body.radius);
+					body.halfHeight = j.value("halfHeight", body.halfHeight);
+					body.center = j.value("center", body.center);
+					body.mass = j.value("mass", body.mass);
+					body.density = j.value("density", body.density);
+					body.friction = j.value("friction", body.friction);
+					body.restitution = j.value("restitution", body.restitution);
+					body.linearDamping = j.value("linearDamping", body.linearDamping);
+					body.angularDamping = j.value("angularDamping", body.angularDamping);
+					body.continuous = j.value("continuous", body.continuous);
+					body.floats = j.value("floats", body.floats);
+					body.waterDrag = j.value("waterDrag", body.waterDrag);
+					return body;
+				}
+
 				json WaterToJson(const Fox::Scene::WaterComponent& water) {
 					return {
 						{ "enabled", water.enabled }, { "size", water.size }, { "cellSize", water.cellSize },
@@ -365,6 +396,20 @@ namespace Fox {
 							graph.GetRegistry().Add<Fox::Scene::WaterComponent>(entity, WaterFromJson(j));
 						},
 					},
+					{
+						"physics",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::PhysicsComponent* body = graph.GetRegistry().TryGet<Fox::Scene::PhysicsComponent>(entity);
+							if (!body) {
+								return false;
+							}
+							j = PhysicsToJson(*body);
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::PhysicsComponent>(entity, PhysicsFromJson(j));
+						},
+					},
 				};
 
 				// Before version 3: the environment's sun, as an entity
@@ -461,6 +506,29 @@ namespace Fox {
 			}
 
 			bool MainRayTracingScene::SaveToFile(const std::string& path, const CameraPose& camera, std::string& error) {
+				// While physics plays, the scene is saved as it was before it started
+				struct PutBack {
+					Fox::Scene::SceneGraph& graph;
+					std::vector<std::pair<Entity, Fox::Scene::Transform>> transforms;
+					~PutBack() {
+						for (const auto& [entity, transform] : transforms) {
+							graph.SetLocalTransform(entity, transform);
+						}
+						if (!transforms.empty()) {
+							graph.UpdateTransforms();
+						}
+					}
+				} putBack{ graph, {} };
+				if (physicsPlaying) {
+					for (const auto& [entity, transform] : playSnapshot) {
+						if (graph.IsValid(entity) && graph.HasTransform(entity)) {
+							putBack.transforms.emplace_back(entity, graph.GetLocalTransform(entity));
+							graph.SetLocalTransform(entity, transform);
+						}
+					}
+					graph.UpdateTransforms();
+				}
+
 				json file;
 				file["version"] = FILE_VERSION;
 				file["camera"] = camera;
@@ -513,6 +581,7 @@ namespace Fox {
 			}
 
 			bool MainRayTracingScene::LoadFromFile(const std::string& path, CameraPose& camera, std::string& error) {
+				StopPhysics();
 				json file;
 				try {
 					std::ifstream in(path);

@@ -131,6 +131,7 @@
 #include "FoxVulkanPathTracer/Scene/ECS/Components.h"
 #include "FoxVulkanPathTracer/Scene/SceneGraph.h"
 #include "FoxVulkanPathTracer/Scene/WaterSimulation.h"
+#include "FoxVulkanPathTracer/Scene/Physics.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 #include "FoxVulkanPathTracer/Editor/SceneGraphEditor.h"

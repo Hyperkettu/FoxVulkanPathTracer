@@ -13,6 +13,7 @@ namespace Fox {
 			using Fox::Scene::TransformComponent;
 			using Fox::Scene::LightComponent;
 			using Fox::Scene::WaterComponent;
+			using Fox::Scene::PhysicsComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -279,6 +280,80 @@ namespace Fox {
 				}
 			}
 
+			void DrawPhysics(Scene& scene, Entity entity, State&) {
+				PhysicsComponent& body = scene.GetSceneGraph().GetRegistry().Get<PhysicsComponent>(entity);
+				const MeshComponent* mesh = scene.GetSceneGraph().GetRegistry().TryGet<MeshComponent>(entity);
+
+				ImGui::Checkbox("On", &body.enabled);
+				int motion = static_cast<int>(body.motion);
+				const char* motions[] = { "Static", "Dynamic", "Kinematic" };
+				if (ImGui::Combo("Motion", &motion, motions, 3)) {
+					body.motion = static_cast<PhysicsComponent::Motion>(motion);
+				}
+				ImGui::SetItemTooltip("Static: stays. Dynamic: falls, collides, floats; its transform follows. Kinematic: follows its transform and pushes");
+
+				int shape = static_cast<int>(body.shape);
+				const char* shapes[] = { "Auto", "Box", "Sphere", "Capsule", "Convex hull", "Triangle mesh" };
+				if (ImGui::Combo("Shape", &shape, shapes, 6)) {
+					body.shape = static_cast<PhysicsComponent::Shape>(shape);
+				}
+				if (body.shape == PhysicsComponent::Shape::Auto) {
+					const char* automatic = !mesh ? "a box"
+						: mesh->type == MeshComponent::Type::Sphere ? "its sphere"
+						: mesh->type == MeshComponent::Type::Tree ? "its trunk (a capsule)"
+						: body.motion == PhysicsComponent::Motion::Static ? "its model's triangles" : "its model's convex hull";
+					ImGui::TextDisabled("Auto: %s", automatic);
+				}
+				const bool box = body.shape == PhysicsComponent::Shape::Box || (body.shape == PhysicsComponent::Shape::Auto && !mesh);
+				if (box) {
+					ImGui::DragFloat3("Half size (m)", &body.halfExtents.x, 0.01f, 0.01f, 100.0f, "%.2f");
+				}
+				if (body.shape == PhysicsComponent::Shape::Sphere || body.shape == PhysicsComponent::Shape::Capsule) {
+					ImGui::DragFloat("Radius (m)", &body.radius, 0.01f, 0.01f, 100.0f, "%.2f");
+				}
+				if (body.shape == PhysicsComponent::Shape::Capsule) {
+					ImGui::DragFloat("Half height (m)", &body.halfHeight, 0.01f, 0.01f, 100.0f, "%.2f");
+					ImGui::SetItemTooltip("Half the straight part, along the entity's y");
+				}
+				if (box || body.shape == PhysicsComponent::Shape::Sphere || body.shape == PhysicsComponent::Shape::Capsule) {
+					ImGui::DragFloat3("Centre (m)", &body.center.x, 0.01f, -100.0f, 100.0f, "%.2f");
+				}
+				if (body.shape == PhysicsComponent::Shape::Mesh && body.motion == PhysicsComponent::Motion::Dynamic) {
+					ImGui::TextDisabled("A triangle mesh has no inside: it moves as kinematic");
+				}
+
+				if (body.motion == PhysicsComponent::Motion::Dynamic) {
+					ImGui::SeparatorText("Mass");
+					ImGui::DragFloat("Mass (kg)", &body.mass, 0.5f, 0.0f, 100000.0f, body.mass > 0.0f ? "%.1f" : "from density");
+					if (body.mass <= 0.0f) {
+						ImGui::DragFloat("Density (kg/m3)", &body.density, 5.0f, 10.0f, 20000.0f, "%.0f");
+						ImGui::SetItemTooltip("Water is 1000: lighter floats, heavier sinks. Wood 400-700, ice 917, stone 2600, steel 7850");
+					}
+				}
+				ImGui::SeparatorText("Surface");
+				ImGui::SliderFloat("Friction", &body.friction, 0.0f, 1.5f, "%.2f");
+				ImGui::SliderFloat("Bounciness", &body.restitution, 0.0f, 1.0f, "%.2f");
+				if (body.motion == PhysicsComponent::Motion::Dynamic) {
+					ImGui::SliderFloat("Linear damping", &body.linearDamping, 0.0f, 1.0f, "%.2f");
+					ImGui::SliderFloat("Angular damping", &body.angularDamping, 0.0f, 1.0f, "%.2f");
+					ImGui::Checkbox("Continuous collision", &body.continuous);
+					ImGui::SetItemTooltip("Swept: fast, small bodies do not pass through others (slower)");
+					ImGui::SeparatorText("Water");
+					ImGui::Checkbox("Floats", &body.floats);
+					ImGui::SetItemTooltip("In water: lifted by what it displaces, slowed and carried by the flow, and it splashes");
+					if (body.floats) {
+						ImGui::SliderFloat("Water drag", &body.waterDrag, 0.0f, 3.0f, "%.2f");
+					}
+				}
+
+				if (scene.IsPhysicsPlaying()) {
+					ImGui::TextDisabled(body.body != 0xffffffffu ? "Playing: changes apply when physics plays again" : "Playing: not a body (it was off)");
+				}
+				else {
+					ImGui::TextDisabled("Physics > Play (F5) simulates it");
+				}
+			}
+
 			const ComponentEditor COMPONENT_EDITORS[] = {
 				{
 					"Transform", false,
@@ -350,6 +425,17 @@ namespace Fox {
 						scene.MarkStructureChanged();
 					},
 					DrawWater,
+				},
+				{
+					"Physics", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<PhysicsComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Physics")) {
+							scene.GetSceneGraph().GetRegistry().Add<PhysicsComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<PhysicsComponent>(entity); },
+					DrawPhysics,
 				},
 			};
 		}
@@ -579,6 +665,10 @@ namespace Fox {
 			if (const WaterComponent* water = graph.GetRegistry().TryGet<WaterComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("Water%s", water->enabled ? "" : " (off)");
+			}
+			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s body%s", PhysicsComponent::MotionName(body->motion), body->enabled ? "" : " (off)");
 			}
 
 			if (open && !leaf) {

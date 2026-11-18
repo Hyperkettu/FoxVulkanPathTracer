@@ -144,6 +144,7 @@ namespace Fox {
 				}
 				std::string hint = graph.IsValid(selected) ? graph.GetName(selected) + "   |   " : std::string();
 				hint += Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode());
+				hint += raytracingScene->IsPhysicsPlaying() ? "   |   Physics playing: F5 stops" : "   |   F5 physics";
 				hint += "   |   F1 find   Ctrl+Space content   E leave edit mode";
 				shell.DrawStatusBar(status, isError, hint, uiScale);
 			}
@@ -222,6 +223,10 @@ namespace Fox {
 				shell.Add("Create/Tree", [&] { gizmo.Select(scene.AddTree(spawn)); }, "", true, -1, "plant mesh");
 				shell.Add("Create/Water", [&] { gizmo.Select(scene.AddWater(spawn + glm::vec3(0.0f, 0.8f, 0.0f))); }, "", true, -1,
 					"lake pond river sea ocean fluid simulation");
+				shell.Add("Create/Physics/Ball", [&] { gizmo.Select(scene.AddPhysicsBall(spawn + glm::vec3(-1.0f, 3.0f, 0.0f))); }, "", true, -1,
+					"rigid body sphere drop");
+				shell.Add("Create/Physics/Box", [&] { gizmo.Select(scene.AddPhysicsCrate(spawn + glm::vec3(1.0f, 3.0f, 0.0f))); }, "", true, -1,
+					"rigid body crate cube drop");
 				shell.Separator("Create");
 				shell.Add("Create/Light/Directional Light", [&] {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Directional, spawn + glm::vec3(0.0f, 20.0f, 0.0f)));
@@ -232,6 +237,16 @@ namespace Fox {
 				shell.Add("Create/Light/Spot Light", [&] {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Spot, spawn + glm::vec3(0.0f, 4.0f, 0.0f)));
 				}, "", true, -1, "lamp cone");
+
+				// --- Physics ---
+				shell.Add("Physics/Play", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_F5); }); }, "F5", true,
+					scene.IsPhysicsPlaying() ? 1 : 0, "simulate rigid bodies jolt start stop");
+				shell.Add("Physics/Add Body to Selection", [&scene, selected] {
+					auto& registry = scene.GetSceneGraph().GetRegistry();
+					if (!registry.Has<Fox::Scene::PhysicsComponent>(selected)) {
+						registry.Add<Fox::Scene::PhysicsComponent>(selected);
+					}
+				}, "", hasSelection, -1, "rigid body component");
 
 				// --- Window ---
 				auto windowItem = [&](Window window, const std::string& label, const std::string& shortcut, const std::string& keywords) {

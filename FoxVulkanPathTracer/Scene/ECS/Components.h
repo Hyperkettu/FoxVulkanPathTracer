@@ -15,8 +15,9 @@
 //   MeshComponent       it is rendered: a glTF model, a sphere or a generated tree
 //   LightComponent      it gives light: a directional light (the sun), a point light or a spot light
 //   WaterComponent      it is a body of water, simulated (shallow water equations) and refracting
+//   PhysicsComponent    it is a rigid body (Jolt Physics, Scene/Physics.h): it falls, collides and floats in play mode
 //
-// Adding a component type (e.g. physics or audio):
+// Adding a component type (e.g. audio):
 //   1. the struct here
 //   2. its inspector entry: COMPONENT_EDITORS in Editor/SceneGraphEditor.cpp
 //   3. how it is saved: COMPONENT_SERIALIZERS in Scene/SceneFile.cpp
@@ -142,6 +143,57 @@ namespace Fox {
 				material.uvScale[1] = std::sin(angle) * windSpeed;
 				material.normalScale = ripples;
 				return material;
+			}
+		};
+
+		// The entity is a rigid body (Scene/Physics.h), simulated while physics plays (Physics > Play, F5): a dynamic
+		// body falls and collides and its transform follows, a kinematic one follows its transform and pushes what is
+		// in the way, a static one stays. Dimensions are in the entity's space: its world scale scales them.
+		struct PhysicsComponent {
+			enum class Motion { Static, Dynamic, Kinematic };
+			// Auto: a sphere mesh's sphere, a model's convex hull (moving) or its triangles (static), a tree's trunk
+			// (a capsule), or else the box
+			enum class Shape { Auto, Box, Sphere, Capsule, ConvexHull, Mesh };
+
+			bool enabled = true;
+			Motion motion = Motion::Dynamic;
+			Shape shape = Shape::Auto;
+			glm::vec3 halfExtents{ 0.5f };  // Box
+			float radius = 0.5f;            // Sphere, capsule
+			float halfHeight = 0.5f;        // Capsule: half its straight part, along y
+			glm::vec3 center{ 0.0f };       // The shape's centre, from the entity's origin
+
+			float mass = 0.0f;              // kg; 0: from the density and the shape's volume
+			float density = 500.0f;         // kg/m^3 (water 1000: lighter floats)
+			float friction = 0.5f;
+			float restitution = 0.2f;       // Bounciness
+			float linearDamping = 0.05f;
+			float angularDamping = 0.05f;
+			bool continuous = false;        // Swept collision, for fast small bodies
+
+			// In water (a WaterComponent's): lifted by what it displaces, slowed and carried by the flow, and it splashes
+			bool floats = true;
+			float waterDrag = 0.5f;
+
+			// Set while physics plays
+			uint32_t body = 0xffffffffu;
+
+			static const char* MotionName(Motion motion) {
+				switch (motion) {
+				case Motion::Static: return "Static";
+				case Motion::Dynamic: return "Dynamic";
+				default: return "Kinematic";
+				}
+			}
+			static const char* ShapeName(Shape shape) {
+				switch (shape) {
+				case Shape::Auto: return "Auto";
+				case Shape::Box: return "Box";
+				case Shape::Sphere: return "Sphere";
+				case Shape::Capsule: return "Capsule";
+				case Shape::ConvexHull: return "Convex hull";
+				default: return "Triangle mesh";
+				}
 			}
 		};
 

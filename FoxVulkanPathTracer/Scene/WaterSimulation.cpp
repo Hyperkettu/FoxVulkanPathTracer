@@ -62,6 +62,7 @@ namespace Fox {
 			const uint32_t cells = grid.width * grid.depth;
 			const uint32_t uFaces = (grid.width + 1) * grid.depth;
 			const uint32_t vFaces = grid.width * (grid.depth + 1);
+			this->bedHeights = bedHeights;
 			for (float d : initialDepth) {
 				maxDepth = std::max(maxDepth, d);
 				initialVolume += d;
@@ -162,7 +163,76 @@ namespace Fox {
 				0, 1, &barrier, 0, nullptr, 0, nullptr);
 		}
 
-		void WaterSimulation::Record(VkCommandBuffer cmd, float deltaTime, const Parameters& parameters) {
+		void WaterSimulation::TakeReadback(uint32_t slot, uint32_t substeps, float dt) {
+			if (!readbackWritten[slot]) {
+				return;
+			}
+			const uint32_t cells = grid.width * grid.depth;
+			const uint32_t uFaces = (grid.width + 1) * grid.depth;
+			const uint32_t vFaces = grid.width * (grid.depth + 1);
+			const float* values = static_cast<const float*>(readback[slot]->Map());
+			cpuDepth.assign(values, values + cells);
+			cpuU.assign(values + cells, values + cells + uFaces);
+			cpuV.assign(values + cells + uFaces, values + cells + uFaces + vFaces);
+			readback[slot]->Unmap();
+
+			// The volume, every second or so: what it lost is put back over the next second
+			if (frame % 60 == 0) {
+				double volume = 0.0;
+				uint32_t wet = 0;
+				float low = 1e9f, high = -1e9f;
+				for (float d : cpuDepth) {
+					volume += d;
+					wet += d > 1e-3f ? 1 : 0;
+					low = std::min(low, d);
+					high = std::max(high, d);
+				}
+				volume *= static_cast<double>(grid.cellSize) * grid.cellSize;
+				const float wetArea = wet * grid.cellSize * grid.cellSize;
+				correction = wetArea > 0.0f ? static_cast<float>((initialVolume - volume) / wetArea) : 0.0f;
+				static const bool debug = SDL_getenv("FOX_WATER_DEBUG") != nullptr;
+				if (debug) {
+					std::cout << "Water: depth " << low << " .. " << high << ", volume " << volume << " of " << initialVolume << " m3, "
+						<< substeps << " steps of " << dt * 1000.0f << " ms" << std::endl;
+				}
+			}
+		}
+
+		bool WaterSimulation::SampleSurface(float worldX, float worldZ, float& height, glm::vec3& normal, glm::vec2& velocity) const {
+			if (cpuDepth.empty()) {
+				return false;
+			}
+			const int W = static_cast<int>(grid.width), D = static_cast<int>(grid.depth);
+			const float fx = (worldX - grid.origin.x) / grid.cellSize, fz = (worldZ - grid.origin.z) / grid.cellSize;
+			if (fx < 0.0f || fz < 0.0f || fx >= W || fz >= D) {
+				return false;
+			}
+			const int i = std::min(static_cast<int>(fx), W - 1), j = std::min(static_cast<int>(fz), D - 1);
+			auto cell = [&](int ci, int cj) { return static_cast<size_t>(std::clamp(cj, 0, D - 1)) * W + std::clamp(ci, 0, W - 1); };
+			const float h = cpuDepth[cell(i, j)];
+			if (h <= 1e-3f) {
+				return false;
+			}
+			// The level, bilinear between cell centres (dry neighbours count at this cell's level)
+			auto level = [&](int ci, int cj) {
+				const size_t c = cell(ci, cj);
+				return cpuDepth[c] > 1e-3f ? bedHeights[c] + cpuDepth[c] : bedHeights[cell(i, j)] + h;
+			};
+			const float cx = fx - 0.5f, cz = fz - 0.5f;
+			const int i0 = static_cast<int>(std::floor(cx)), j0 = static_cast<int>(std::floor(cz));
+			const float tx = cx - i0, tz = cz - j0;
+			height = glm::mix(glm::mix(level(i0, j0), level(i0 + 1, j0), tx), glm::mix(level(i0, j0 + 1), level(i0 + 1, j0 + 1), tx), tz);
+			const float slopeX = (level(i + 1, j) - level(i - 1, j)) / (2.0f * grid.cellSize);
+			const float slopeZ = (level(i, j + 1) - level(i, j - 1)) / (2.0f * grid.cellSize);
+			normal = glm::normalize(glm::vec3(-slopeX, 1.0f, -slopeZ));
+			// The cell's velocity: the average of its faces
+			const size_t su = grid.width + 1;
+			velocity.x = 0.5f * (cpuU[j * su + i] + cpuU[j * su + i + 1]);
+			velocity.y = 0.5f * (cpuV[static_cast<size_t>(j) * W + i] + cpuV[static_cast<size_t>(j + 1) * W + i]);
+			return true;
+		}
+
+		void WaterSimulation::Record(VkCommandBuffer cmd, float deltaTime, const Parameters& parameters, uint32_t frameSlot) {
 			// The step a wave can take without skipping a cell (CFL), the speed of a wave in water this deep being
 			// sqrt(g h), and the step diffusion stays stable at
 			const float frameTime = std::min(deltaTime, 1.0f / 20.0f) * parameters.timeScale;
@@ -221,6 +291,10 @@ namespace Fox {
 
 			const uint32_t cells = grid.width * grid.depth;
 			const uint32_t faces = (grid.width + 1) * grid.depth + grid.width * (grid.depth + 1);
+
+			// What this frame slot read back last time it ran (that frame has finished)
+			const uint32_t slot = frameSlot % READBACK_SLOTS;
+			TakeReadback(slot, substeps, dt);
 			auto dispatch = [&](int pass, int set, uint32_t threads) {
 				const VkDescriptorSet descriptorSet = sets[set]->Get();
 				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pass]);
@@ -257,36 +331,25 @@ namespace Fox {
 			// The surface, from the current depth and foam
 			dispatch(3, current, cells);
 
-			// The volume, read back every second or so: what it lost is put back over the next second
-			if (!readback) {
-				readback = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(float) * cells,
-					VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-			}
-			if (frame % 60 == 30) {
-				// Copied 30 frames ago: long done
-				const float* values = static_cast<const float*>(readback->Map());
-				double volume = 0.0;
-				uint32_t wet = 0;
-				float low = 1e9f, high = -1e9f;
-				for (uint32_t c = 0; c < cells; c++) {
-					volume += values[c];
-					wet += values[c] > 1e-3f ? 1 : 0;
-					low = std::min(low, values[c]);
-					high = std::max(high, values[c]);
+			// Depth and velocities, read back for the CPU (taken when this frame slot comes round again)
+			{
+				const uint32_t uFaces = (grid.width + 1) * grid.depth;
+				const uint32_t vFaces = grid.width * (grid.depth + 1);
+				if (!readback[slot]) {
+					readback[slot] = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(float) * (cells + uFaces + vFaces),
+						VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 				}
-				readback->Unmap();
-				volume *= static_cast<double>(grid.cellSize) * grid.cellSize;
-				const float wetArea = wet * grid.cellSize * grid.cellSize;
-				correction = wetArea > 0.0f ? static_cast<float>((initialVolume - volume) / wetArea) : 0.0f;
-				static const bool debug = SDL_getenv("FOX_WATER_DEBUG") != nullptr;
-				if (debug) {
-					std::cout << "Water: depth " << low << " .. " << high << ", volume " << volume << " of " << initialVolume << " m3, "
-						<< substeps << " steps of " << dt * 1000.0f << " ms" << std::endl;
-				}
-			}
-			if (frame % 60 == 0) {
-				const VkBufferCopy copy{ 0, 0, sizeof(float) * cells };
-				vkCmdCopyBuffer(cmd, depth[current]->Get(), readback->Get(), 1, &copy);
+				const VkBufferCopy copies[3] = {
+					{ 0, 0, sizeof(float) * cells },
+					{ 0, sizeof(float) * cells, sizeof(float) * uFaces },
+					{ 0, sizeof(float) * (cells + uFaces), sizeof(float) * vFaces },
+				};
+				vkCmdCopyBuffer(cmd, depth[current]->Get(), readback[slot]->Get(), 1, &copies[0]);
+				vkCmdCopyBuffer(cmd, u[current]->Get(), readback[slot]->Get(), 1, &copies[1]);
+				vkCmdCopyBuffer(cmd, v[current]->Get(), readback[slot]->Get(), 1, &copies[2]);
+				VkMemoryBarrier toHost{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT };
+				vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
+				readbackWritten[slot] = true;
 			}
 			frame++;
 

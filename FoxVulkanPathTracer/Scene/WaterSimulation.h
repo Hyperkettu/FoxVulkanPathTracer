@@ -73,8 +73,13 @@ namespace Fox {
 			// A drop or splash at x, z (metres from the corner): a dip of `amount` metres with a ring around it
 			void AddDrop(float x, float z, float radius, float amount);
 
-			// Steps the water by deltaTime (in as many small steps as it needs to stay stable) and writes the surface
-			void Record(VkCommandBuffer cmd, float deltaTime, const Parameters& parameters);
+			// Steps the water by deltaTime (in as many small steps as it needs to stay stable) and writes the surface.
+			// frameSlot: the frame in flight (its readback is only reused once that frame has finished).
+			void Record(VkCommandBuffer cmd, float deltaTime, const Parameters& parameters, uint32_t frameSlot);
+
+			// The water as it was a few frames ago (read back every frame, for floating bodies): its surface height,
+			// normal and flow velocity (x, z) at a world position. False where there is none (dry, or off the grid).
+			bool SampleSurface(float worldX, float worldZ, float& height, glm::vec3& normal, glm::vec2& velocity) const;
 
 			const Grid& GetGrid() const { return grid; }
 			uint32_t LastSubsteps() const { return lastSubsteps; }
@@ -105,9 +110,13 @@ namespace Fox {
 			static constexpr uint32_t MAX_DROPS = 64;
 			std::vector<glm::vec4> pendingDrops;
 
-			// The volume: read back now and then, and what drops and rounding took is spread back over the water
-			// (FOX_WATER_DEBUG=1 logs it)
-			std::unique_ptr<Fox::Graphics::Vulkan::Buffer> readback;
+			// Depth and velocities, read back every frame into the buffer of its frame in flight: for floating bodies,
+			// and the volume (what drops and rounding took is spread back over the water; FOX_WATER_DEBUG=1 logs it)
+			static constexpr uint32_t READBACK_SLOTS = 4;
+			std::unique_ptr<Fox::Graphics::Vulkan::Buffer> readback[READBACK_SLOTS];
+			bool readbackWritten[READBACK_SLOTS] = {};
+			std::vector<float> bedHeights, cpuDepth, cpuU, cpuV; // The latest read back
+			void TakeReadback(uint32_t slot, uint32_t substeps, float dt);
 			uint32_t frame = 0;
 			double initialVolume = 0.0;
 			float correction = 0.0f; // Metres per second added to every wet cell

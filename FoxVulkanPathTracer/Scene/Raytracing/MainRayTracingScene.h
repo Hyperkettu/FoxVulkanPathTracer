@@ -127,6 +127,17 @@ namespace Fox {
                 bool SplashWater(const glm::vec3& origin, const glm::vec3& direction);
                 void RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) override;
 
+                // --- Physics (PhysicsComponent, Scene/Physics.h): Physics > Play (F5) ---
+                // Entities with a PhysicsComponent become rigid bodies on the ground or terrain; dynamic ones fall,
+                // collide and float in water, and their transforms follow. Stopping puts every entity back where it was.
+                bool StartPhysics(std::string& error);
+                void StopPhysics();
+                bool IsPhysicsPlaying() const { return physicsPlaying; }
+                size_t GetPhysicsBodyCount() const { return playingBodies.size(); }
+                // New entities with a dynamic body: a ball (a sphere mesh) and a box (Models/box.glb, a metre across)
+                Entity AddPhysicsBall(const glm::vec3& position);
+                Entity AddPhysicsCrate(const glm::vec3& position);
+
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
                     const bool changed = objectsChanged;
@@ -202,6 +213,27 @@ namespace Fox {
                     uint32_t droplets = 0;
                 };
                 std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
+
+                // Physics while it plays: the bodies of the entities, and where every entity was before it started
+                std::unique_ptr<Fox::Scene::PhysicsWorld> physics;
+                bool physicsPlaying = false;
+                struct PlayingBody {
+                    Entity entity;
+                    uint32_t body = 0;
+                    Fox::Scene::PhysicsComponent::Motion motion = Fox::Scene::PhysicsComponent::Motion::Dynamic;
+                    glm::vec3 scale{ 1.0f };
+                    bool floats = true;
+                    float buoyancy = 1.0f;   // Water's density over the body's
+                    float waterDrag = 0.5f;
+                    float extent = 0.5f;     // Half its horizontal size, metres
+                    bool inWater = false;
+                    float wakeTimer = 0.0f;
+                    glm::mat4 written{ 1.0f }; // The world matrix physics last gave it (anything else: it was moved by hand)
+                };
+                std::vector<PlayingBody> playingBodies;
+                std::vector<std::pair<Entity, Fox::Scene::Transform>> playSnapshot;
+                bool DescribeBody(Entity entity, const Fox::Scene::PhysicsComponent& component, Fox::Scene::PhysicsWorld::BodyDesc& desc);
+                void UpdatePhysics(float dt);
                 float frameTime = 0.0f;
                 float waterMovedFor = -1.0f;            // Seconds since water was last moved (-1: not moving)
                 std::mt19937 waterRandom{ 4242u };
