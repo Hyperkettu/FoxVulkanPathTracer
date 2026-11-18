@@ -138,6 +138,23 @@ namespace Fox {
                 Entity AddPhysicsBall(const glm::vec3& position);
                 Entity AddPhysicsCrate(const glm::vec3& position);
 
+                // --- Navigation (NavAgentComponent, Scene/Navigation.h) ---
+                // Agents walk to their targets while the scene plays (F5, with physics), on paths found with A* over
+                // the ground: around meshes in the way, slopes too steep and water too deep. In edit mode their
+                // paths are planned (and shown) as they are moved.
+                // The way for the agent from one point to another (status says how it went)
+                // grid: receives the grid it was planned on (where obstacles, slopes and water block it)
+                Fox::Scene::NavigationGrid::Result FindPath(Entity agent, const glm::vec3& from, const glm::vec3& to, std::string& status,
+                    std::shared_ptr<const Fox::Scene::NavigationGrid>* grid = nullptr);
+                // Sends the agent to a point on the ground (it plans its way at once)
+                void SetNavTarget(Entity agent, const glm::vec3& target);
+                // Every agent plans again (obstacles or the ground changed)
+                void InvalidatePaths();
+                // A new agent: a ball with a nose, facing +z
+                Entity AddNavAgent(const glm::vec3& position);
+                // Where a ray from the camera meets the ground (terrain or ground plane)
+                bool RaycastGround(const glm::vec3& origin, const glm::vec3& direction, glm::vec3& hit) const;
+
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
                     const bool changed = objectsChanged;
@@ -234,6 +251,24 @@ namespace Fox {
                 std::vector<std::pair<Entity, Fox::Scene::Transform>> playSnapshot;
                 bool DescribeBody(Entity entity, const Fox::Scene::PhysicsComponent& component, Fox::Scene::PhysicsWorld::BodyDesc& desc);
                 void UpdatePhysics(float dt);
+                // Agents: plans their paths, and walks them while playing
+                void UpdateNavigation(float dt);
+                void StartNavigation();
+                // A model as an obstacle: its triangles (without displacement) with its glTF nodes' transforms applied,
+                // as the renderer places them. Kept by file; null when it cannot be loaded.
+                struct NavShape {
+                    std::vector<glm::vec3> positions;
+                    std::vector<uint32_t> indices;
+                    glm::vec3 low{ 0.0f }, high{ 0.0f };
+                };
+                std::map<std::string, std::shared_ptr<NavShape>> navShapes;
+                const NavShape* NavShapeOf(const std::string& file);
+                // An enabled agent or part of one (they move: not obstacles)
+                bool IsNavAgentPart(Entity entity) const;
+                uint64_t obstacleGeneration = 0; // Counts the frames obstacles moved in
+                bool meshesMoved = false;        // Set by SyncMeshes: obstacles may be elsewhere
+                bool pathsStale = false;         // Edit mode: agents plan again once things stop moving
+                float meshesQuietFor = 0.0f;
                 float frameTime = 0.0f;
                 float waterMovedFor = -1.0f;            // Seconds since water was last moved (-1: not moving)
                 std::mt19937 waterRandom{ 4242u };

@@ -1379,6 +1379,19 @@ namespace Fox {
 					if (terrainEditor.MouseDown(*raytracingScene, GizmoView(), mouse)) {
 						return; // Sculpting or painting
 					}
+					// Shift + click on the ground sends the selected agent there
+					const bool shift = inputManager->IsKeyDown(SDL_SCANCODE_LSHIFT) || inputManager->IsKeyDown(SDL_SCANCODE_RSHIFT);
+					const auto selected = gizmo.GetSelected();
+					auto& graph = raytracingScene->GetSceneGraph();
+					if (shift && graph.IsValid(selected) && graph.GetRegistry().Has<Fox::Scene::NavAgentComponent>(selected)) {
+						glm::vec3 origin, direction, hit;
+						Fox::Editor::TransformGizmo::MouseRay(GizmoView(), mouse, origin, direction);
+						if (raytracingScene->RaycastGround(origin, direction, hit)) {
+							raytracingScene->SetNavTarget(selected, hit);
+							std::cout << "Navigation: " << graph.GetName(selected) << " to " << hit.x << ", " << hit.y << ", " << hit.z << "\n";
+							return;
+						}
+					}
 					if (!gizmo.MouseDown(mouse, GizmoView(), raytracingScene->GetSceneGraph())) {
 						// Not a gizmo handle: a click on water (with splashing on) splashes it; anywhere else selects
 						glm::vec3 origin, direction;

@@ -157,6 +157,8 @@ namespace Fox {
 				Fox::Editor::MeshPainter meshPainter;
 				bool painterWasActive = false, terrainBrushWasActive = false; // Only one brush at a time
 				Fox::ECS::Entity lastSelection;          // Selecting something new opens the Inspector
+				bool showAgentPaths = true;               // Physics > Show Agent Paths: agents' ways in the view
+				void DrawAgentPaths();
 				std::vector<std::function<void()>> deferredCommands; // Menu commands run between frames
 
 				// The editor (VulkanRHIEditor.cpp)

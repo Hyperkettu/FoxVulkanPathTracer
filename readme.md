@@ -425,6 +425,43 @@ read back every frame (a few frames late). Hitting the water makes a splash as d
 foam and spray), and a body moving through the surface leaves a wake. The water does not flow around bodies: they
 stir it only through these splashes.
 
+### Navigation
+
+Agents walk from where they are to a target over the ground (the terrain or the ground plane), on paths found with A*.
+Give an entity a **Nav Agent** component (Inspector > Add Component, or **Physics > Add Nav Agent to Selection**), or
+make one from **Create > Navigation > Agent** (a ball with a nose, facing +z). Select it and **Shift + click** the
+ground: it plans its way there at once and the way shows in the view (cyan; orange when the target cannot be reached
+and it goes as near as it can). **Play** (`F5`, with physics) walks it: it turns towards each turn of the path as
+fast as its turn rate lets it, slowing while it turns, keeps the height above the ground it started at, and faces
+where it walks (or tilts with the slope too). Shift + click while playing sends it somewhere else from where it is;
+stopping puts it back.
+
+The ground is a grid of square cells (**Grid cell**, 0.5 m; at most 1024 a side) around the way (30 m or half its
+length beyond its ends, within the terrain if there is one). A cell is blocked by:
+
+* meshes standing into the space it walks through: higher above the ground than its **Step** and lower than its
+  **Height** (it walks under a high bridge or a roof's eaves, over a low kerb). Models block by their triangles
+  (without displacement, placed by their glTF nodes as they are rendered): every triangle blocks the cells it covers
+  from above where it is at a height in the way, so walls block and open doors do not. Spheres block by their sphere,
+  trees by their trunk, physics bodies where they are when it plans. Other agents do not block (they move).
+* water deeper than it **Wades to** (the simulated surface where there is one).
+
+Blocked cells grow by the agent's **Radius**. A step to one of the eight neighbours climbs no steeper than the
+**Steepest slope**, or no higher than a **Step**; steps cost their length along the ground, more uphill. The cells
+A* finds are then straightened: the path goes straight wherever the ground between two of its points is walkable,
+so it turns only at corners. An agent standing in something (or a target in something) starts from (or aims at) the
+nearest open cell. A 73 m plan on the terrain scene (184 x 285 cells, two cabins' 557 000 triangles) takes about
+50 ms; the default scene's plans take a few ms.
+
+In edit mode an agent plans again when it is moved, once moved meshes have stood still a moment, after a terrain
+stroke, and with **Plan again**. While playing it plans again (at most once a second) when something other than an
+agent moved: a body falling or rolling into its way. The selected agent shows its blocked cells within 15 m (red dots); **Physics >
+Show Agent Paths** hides the overlay. An agent with a dynamic Physics body moves it as a kinematic one, pushing what
+is in its way. Agents do not avoid each other.
+
+The code: `Scene/Navigation` (the grid, A* and straightening), `MainRayTracingSceneNavigation.cpp` (the grid from the
+scene, and walking).
+
 ### Leaves, alpha testing and opacity micromaps
 
 The tree's thinner branches (level 2 and up) carry leaf cards: two along each branch segment, and one at each tip.
@@ -526,6 +563,7 @@ entity-component system whose registry keeps each component type in a packed arr
 | Light | The entity gives light: directional (the sun), point or spot. It shines along the entity's -Z axis; point and spot lights are where the entity is. **On** off darkens it without a rebuild |
 | Water | A body of water, simulated and refracting (see *Water*) |
 | Physics | A rigid body, simulated while physics plays (see *Physics*) |
+| Nav Agent | It walks over the ground to a target on a path found with A* (see *Navigation*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot
@@ -691,7 +729,8 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
 | `P` | Fly the active camera path, or stop (see *Camera paths*) |
-| `F5` | Play physics, or stop (everything goes back where it was; see *Physics*) |
+| `F5` | Play physics and agents, or stop (everything goes back where it was; see *Physics*) |
+| `Shift` + click (edit mode) | Send the selected agent there (see *Navigation*) |
 | `E` | Edit mode: select, move, rotate and scale objects, the Scene, Trees and Camera windows (see *Editing the scene*, *Scene files*, *Camera paths*, *Tree editor*) |
 | `Esc` | Quit |
 

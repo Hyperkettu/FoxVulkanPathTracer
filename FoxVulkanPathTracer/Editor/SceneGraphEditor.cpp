@@ -14,6 +14,7 @@ namespace Fox {
 			using Fox::Scene::LightComponent;
 			using Fox::Scene::WaterComponent;
 			using Fox::Scene::PhysicsComponent;
+			using Fox::Scene::NavAgentComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -354,6 +355,59 @@ namespace Fox {
 				}
 			}
 
+			void DrawNavAgent(Scene& scene, Entity entity, State&) {
+				NavAgentComponent& nav = scene.GetSceneGraph().GetRegistry().Get<NavAgentComponent>(entity);
+				bool replan = false;
+
+				ImGui::Checkbox("On", &nav.enabled);
+				ImGui::SeparatorText("Target");
+				if (nav.hasTarget) {
+					replan |= ImGui::DragFloat3("Target", &nav.target.x, 0.05f, -100000.0f, 100000.0f, "%.2f");
+					if (ImGui::Button("Clear target")) {
+						nav.hasTarget = false;
+						nav.path.clear();
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Plan again")) {
+						replan = true;
+					}
+				}
+				ImGui::TextDisabled("Shift + click the ground sends it there");
+				if (!nav.status.empty()) {
+					ImGui::TextWrapped("%s", nav.status.c_str());
+				}
+
+				ImGui::SeparatorText("Walking");
+				ImGui::DragFloat("Speed (m/s)", &nav.speed, 0.05f, 0.0f, 50.0f, "%.2f");
+				ImGui::DragFloat("Turn rate (deg/s)", &nav.turnRate, 5.0f, 1.0f, 3600.0f, "%.0f");
+				int forward = static_cast<int>(nav.forward);
+				const char* forwards[] = { "+Z", "-Z", "+X", "-X" };
+				if (ImGui::Combo("Front", &forward, forwards, 4)) {
+					nav.forward = static_cast<NavAgentComponent::Forward>(forward);
+				}
+				ImGui::SetItemTooltip("Which of its own axes points where it walks");
+				ImGui::Checkbox("Tilt with the ground", &nav.alignToGround);
+
+				ImGui::SeparatorText("Where it can go");
+				replan |= ImGui::DragFloat("Radius (m)", &nav.radius, 0.01f, 0.0f, 20.0f, "%.2f");
+				ImGui::SetItemTooltip("It keeps this far from obstacles");
+				replan |= ImGui::DragFloat("Height (m)", &nav.height, 0.01f, 0.1f, 50.0f, "%.2f");
+				ImGui::SetItemTooltip("Meshes higher above the ground than this do not block it (it walks under them)");
+				replan |= ImGui::SliderFloat("Steepest slope", &nav.maxSlope, 1.0f, 89.0f, "%.0f deg");
+				replan |= ImGui::DragFloat("Step (m)", &nav.maxStep, 0.01f, 0.0f, 5.0f, "%.2f");
+				ImGui::SetItemTooltip("Climbs this small are allowed anywhere; meshes lower than this do not block it");
+				replan |= ImGui::DragFloat("Wades to (m)", &nav.maxWaterDepth, 0.01f, 0.0f, 20.0f, "%.2f");
+				ImGui::SetItemTooltip("Water deeper than this is in its way");
+				replan |= ImGui::DragFloat("Grid cell (m)", &nav.cellSize, 0.01f, 0.1f, 5.0f, "%.2f");
+				ImGui::SetItemTooltip("Finer finds narrower gaps, slower (at most 1024 cells a side)");
+
+				if (replan) {
+					nav.Invalidate();
+					nav.replanTimer = 0.0f;
+				}
+				ImGui::TextDisabled(scene.IsPhysicsPlaying() ? "Playing: it walks" : "Play (F5) to walk it");
+			}
+
 			const ComponentEditor COMPONENT_EDITORS[] = {
 				{
 					"Transform", false,
@@ -436,6 +490,17 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<PhysicsComponent>(entity); },
 					DrawPhysics,
+				},
+				{
+					"Nav Agent", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<NavAgentComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Nav Agent")) {
+							scene.GetSceneGraph().GetRegistry().Add<NavAgentComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<NavAgentComponent>(entity); },
+					DrawNavAgent,
 				},
 			};
 		}
@@ -669,6 +734,10 @@ namespace Fox {
 			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s body%s", PhysicsComponent::MotionName(body->motion), body->enabled ? "" : " (off)");
+			}
+			if (const NavAgentComponent* nav = graph.GetRegistry().TryGet<NavAgentComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("Agent%s", nav->enabled ? "" : " (off)");
 			}
 
 			if (open && !leaf) {

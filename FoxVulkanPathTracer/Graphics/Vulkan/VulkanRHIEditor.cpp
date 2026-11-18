@@ -130,6 +130,10 @@ namespace Fox {
 				painterWasActive = meshPainter.IsActive();
 				terrainBrushWasActive = terrainEditor.IsBrushActive();
 
+				if (showAgentPaths) {
+					DrawAgentPaths();
+				}
+
 				if (shell.IsOpen(Window::Controls)) {
 					shell.Place(Window::Controls, uiScale);
 					DrawControls();
@@ -144,9 +148,118 @@ namespace Fox {
 				}
 				std::string hint = graph.IsValid(selected) ? graph.GetName(selected) + "   |   " : std::string();
 				hint += Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode());
-				hint += raytracingScene->IsPhysicsPlaying() ? "   |   Physics playing: F5 stops" : "   |   F5 physics";
+				hint += raytracingScene->IsPhysicsPlaying() ? "   |   Playing: F5 stops" : "   |   F5 play";
+				if (graph.IsValid(selected) && graph.GetRegistry().Has<Fox::Scene::NavAgentComponent>(selected)) {
+					hint += "   |   Shift+click: send it there";
+				}
 				hint += "   |   F1 find   Ctrl+Space content   E leave edit mode";
 				shell.DrawStatusBar(status, isError, hint, uiScale);
+			}
+
+			void VulkanRHI::DrawAgentPaths() {
+				// Every agent's way: its path along the ground, the waypoint it walks to, and its target
+				auto& scene = *raytracingScene;
+				auto& graph = scene.GetSceneGraph();
+				const auto view = GizmoView();
+				const auto selected = gizmo.GetSelected();
+				ImDrawList* draw = ImGui::GetBackgroundDrawList();
+				graph.GetRegistry().Each<Fox::Scene::NavAgentComponent>([&](Fox::ECS::Entity entity, Fox::Scene::NavAgentComponent& nav) {
+					if (!nav.enabled || !nav.hasTarget || !graph.IsActiveInHierarchy(entity)) {
+						return;
+					}
+					const bool isSelected = entity == selected;
+
+					// Around the selected agent: the cells it may not stand on (obstacles grown by its radius, slopes
+					// too steep to stand on are not marked: they block only steps between cells)
+					if (isSelected && nav.grid) {
+						const auto& grid = *nav.grid;
+						const glm::vec3 at(graph.GetWorldMatrix(entity)[3]);
+						const float reach = 15.0f;
+						int c0, r0, c1, r1;
+						grid.CellAt(at.x - reach, at.z - reach, c0, r0);
+						grid.CellAt(at.x + reach, at.z + reach, c1, r1);
+						c0 = std::max(c0, 0);
+						r0 = std::max(r0, 0);
+						c1 = std::min(c1, grid.Columns() - 1);
+						r1 = std::min(r1, grid.Rows() - 1);
+						for (int r = r0; r <= r1; r++) {
+							for (int c = c0; c <= c1; c++) {
+								if (!grid.IsBlocked(c, r)) {
+									continue;
+								}
+								const glm::vec2 p = grid.CellCentre(c, r);
+								glm::vec2 pixel;
+								if (Fox::Editor::TransformGizmo::Project(view, glm::vec3(p.x, grid.Height(c, r) + 0.05f, p.y), pixel)) {
+									draw->AddCircleFilled(ImVec2(pixel.x, pixel.y), 1.6f * uiScale, IM_COL32(255, 70, 60, 150), 6);
+								}
+							}
+						}
+					}
+
+					const ImU32 color = !nav.reachable ? IM_COL32(255, 150, 70, isSelected ? 240 : 140)
+						: IM_COL32(90, 220, 255, isSelected ? 240 : 140);
+					const float width = (isSelected ? 2.5f : 1.5f) * uiScale;
+
+					// Along the ground (split into short pieces, so it follows the terrain), from where it is now
+					std::vector<glm::vec3> way;
+					if (scene.IsPhysicsPlaying() && nav.next < nav.path.size()) {
+						way.push_back(glm::vec3(graph.GetWorldMatrix(entity)[3]));
+						way.insert(way.end(), nav.path.begin() + nav.next, nav.path.end());
+					}
+					else if (!scene.IsPhysicsPlaying()) {
+						way = nav.path;
+					}
+					std::vector<ImVec2> points;
+					auto flush = [&] {
+						if (points.size() > 1) {
+							draw->AddPolyline(points.data(), static_cast<int>(points.size()), color, ImDrawFlags_None, width);
+						}
+						points.clear();
+					};
+					for (size_t i = 0; i + 1 < way.size(); i++) {
+						const glm::vec3 a = way[i], b = way[i + 1];
+						const int pieces = std::max(1, static_cast<int>(glm::distance(glm::vec2(a.x, a.z), glm::vec2(b.x, b.z)) / 0.5f));
+						for (int k = (i == 0 ? 0 : 1); k <= pieces; k++) {
+							glm::vec3 p = glm::mix(a, b, static_cast<float>(k) / pieces);
+							p.y = scene.GetGroundHeightAt(p.x, p.z) + 0.08f;
+							glm::vec2 pixel;
+							if (Fox::Editor::TransformGizmo::Project(view, p, pixel)) {
+								points.emplace_back(pixel.x, pixel.y);
+							}
+							else {
+								flush();
+							}
+						}
+					}
+					flush();
+					// Turns
+					for (size_t i = 1; i + 1 < way.size(); i++) {
+						glm::vec3 p = way[i];
+						p.y = scene.GetGroundHeightAt(p.x, p.z) + 0.08f;
+						glm::vec2 pixel;
+						if (Fox::Editor::TransformGizmo::Project(view, p, pixel)) {
+							draw->AddCircleFilled(ImVec2(pixel.x, pixel.y), 2.5f * uiScale, color);
+						}
+					}
+					// The target: a ring on the ground
+					const int segments = 24;
+					ImVec2 ring[segments];
+					int count = 0;
+					for (int i = 0; i < segments; i++) {
+						const float angle = glm::two_pi<float>() * i / segments;
+						glm::vec3 p = nav.target + glm::vec3(std::cos(angle), 0.0f, std::sin(angle)) * 0.4f;
+						p.y = scene.GetGroundHeightAt(p.x, p.z) + 0.08f;
+						glm::vec2 pixel;
+						if (!Fox::Editor::TransformGizmo::Project(view, p, pixel)) {
+							count = 0;
+							break;
+						}
+						ring[count++] = ImVec2(pixel.x, pixel.y);
+					}
+					if (count > 2) {
+						draw->AddPolyline(ring, count, color, ImDrawFlags_Closed, width);
+					}
+				});
 			}
 
 			void VulkanRHI::BuildMenus(const Fox::Scene::RayTracing::MainRayTracingScene::CameraPose& pose, const glm::vec3& spawn) {
@@ -227,6 +340,8 @@ namespace Fox {
 					"rigid body sphere drop");
 				shell.Add("Create/Physics/Box", [&] { gizmo.Select(scene.AddPhysicsCrate(spawn + glm::vec3(1.0f, 3.0f, 0.0f))); }, "", true, -1,
 					"rigid body crate cube drop");
+				shell.Add("Create/Navigation/Agent", [&] { gizmo.Select(scene.AddNavAgent(spawn)); }, "", true, -1,
+					"nav agent walker pathfinding a star character");
 				shell.Separator("Create");
 				shell.Add("Create/Light/Directional Light", [&] {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Directional, spawn + glm::vec3(0.0f, 20.0f, 0.0f)));
@@ -247,6 +362,14 @@ namespace Fox {
 						registry.Add<Fox::Scene::PhysicsComponent>(selected);
 					}
 				}, "", hasSelection, -1, "rigid body component");
+				shell.Add("Physics/Add Nav Agent to Selection", [&scene, selected] {
+					auto& registry = scene.GetSceneGraph().GetRegistry();
+					if (!registry.Has<Fox::Scene::NavAgentComponent>(selected)) {
+						registry.Add<Fox::Scene::NavAgentComponent>(selected);
+					}
+				}, "", hasSelection, -1, "navigation pathfinding a star walk agent component");
+				shell.Add("Physics/Show Agent Paths", [this] { showAgentPaths = !showAgentPaths; }, "", true, showAgentPaths ? 1 : 0,
+					"navigation pathfinding a star route overlay");
 
 				// --- Window ---
 				auto windowItem = [&](Window window, const std::string& label, const std::string& shortcut, const std::string& keywords) {

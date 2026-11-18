@@ -197,6 +197,7 @@
       <ObjectFileName>$(IntDir)Jolt\%(RecursiveDir)</ObjectFileName>
     </ClCompile>
     <ClCompile Include="Scene\Physics.cpp" />
+    <ClCompile Include="Scene\Navigation.cpp" />
     <ClCompile Include="..\ThirdParty\meshoptimizer\allocator.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -332,6 +333,7 @@
     <ClCompile Include="Platform\Vulkan\Application.cpp" />
     <ClCompile Include="Scene\MainScene.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp" />
+    <ClCompile Include="Scene\Raytracing\MainRayTracingSceneNavigation.cpp" />
     <ClCompile Include="Scene\Raytracing\RaytracingScene.cpp" />
     <ClCompile Include="Scene\Scene.cpp" />
   </ItemGroup>
@@ -399,6 +401,7 @@
     <ClInclude Include="Scene\SceneGraph.h" />
     <ClInclude Include="Scene\WaterSimulation.h" />
     <ClInclude Include="Scene\Physics.h" />
+    <ClInclude Include="Scene\Navigation.h" />
     <ClInclude Include="Scene\SceneContent.h" />
     <ClInclude Include="Scene\ECS\Entity.h" />
     <ClInclude Include="Scene\ECS\Registry.h" />

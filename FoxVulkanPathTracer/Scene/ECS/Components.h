@@ -16,6 +16,7 @@
 //   LightComponent      it gives light: a directional light (the sun), a point light or a spot light
 //   WaterComponent      it is a body of water, simulated (shallow water equations) and refracting
 //   PhysicsComponent    it is a rigid body (Jolt Physics, Scene/Physics.h): it falls, collides and floats in play mode
+//   NavAgentComponent   it walks over the ground to a target, on a path found with A* (Scene/Navigation.h)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -27,6 +28,7 @@ namespace Fox {
 	namespace Scene {
 
 		class WaterSimulation;
+		class NavigationGrid;
 
 		using Transform = Fox::Scene::RayTracing::RayTracingScene::ObjectTransform;
 
@@ -194,6 +196,62 @@ namespace Fox {
 				case Shape::ConvexHull: return "Convex hull";
 				default: return "Triangle mesh";
 				}
+			}
+		};
+
+		// The entity walks over the ground (Scene/Navigation.h): given a target (Shift + click on the ground in edit
+		// mode, or the Inspector), it finds a way there with A* around obstacles (meshes taller than a step), slopes
+		// too steep and water too deep, and walks it while the scene plays (F5), turning to face where it goes and
+		// keeping its height above the ground. In edit mode the way shows in the view.
+		struct NavAgentComponent {
+			enum class Forward { PlusZ, MinusZ, PlusX, MinusX };
+
+			bool enabled = true;
+			float speed = 2.0f;          // m/s
+			float turnRate = 360.0f;     // Degrees per second
+			float radius = 0.4f;         // Metres it keeps from obstacles
+			float height = 1.8f;         // Metres: what is higher above the ground than this does not block it
+			float maxSlope = 35.0f;      // Degrees
+			float maxStep = 0.3f;        // Metres it can step up or down anywhere
+			float maxWaterDepth = 0.4f;  // Metres it wades through
+			float cellSize = 0.5f;       // Metres: the grid it plans on
+			Forward forward = Forward::PlusZ; // Which of its axes is its front
+			bool alignToGround = false;  // Tilts with the slope
+
+			bool hasTarget = false;
+			glm::vec3 target{ 0.0f };
+
+			// Kept by the scene
+			std::vector<glm::vec3> path;   // On the ground, from where it was planned
+			size_t next = 1;               // The waypoint it walks to
+			bool planned = false;          // path is for the current target and start
+			bool reachable = false;        // The path ends at the target (not just near it)
+			bool arrived = false;
+			glm::vec3 plannedFrom{ 0.0f };
+			uint64_t plannedGeneration = 0; // The scene's obstacle generation it was planned with
+			std::shared_ptr<const NavigationGrid> grid; // The grid it was planned on (shown for the selected agent)
+			float replanTimer = 0.0f;
+			std::string status;
+			// While the scene plays
+			float groundOffset = 0.0f;     // Its height above the ground when play started
+			float yaw = 0.0f;              // Heading of its front, radians from +x towards +z
+			float startYaw = 0.0f;
+			glm::quat startRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+			glm::vec3 scale{ 1.0f };
+
+			glm::vec3 ForwardAxis() const {
+				switch (forward) {
+				case Forward::PlusZ: return glm::vec3(0.0f, 0.0f, 1.0f);
+				case Forward::MinusZ: return glm::vec3(0.0f, 0.0f, -1.0f);
+				case Forward::PlusX: return glm::vec3(1.0f, 0.0f, 0.0f);
+				default: return glm::vec3(-1.0f, 0.0f, 0.0f);
+				}
+			}
+
+			// Plan again (the target, the ground or obstacles changed)
+			void Invalidate() {
+				planned = false;
+				arrived = false;
 			}
 		};
 

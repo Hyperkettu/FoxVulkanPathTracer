@@ -292,11 +292,13 @@ namespace Fox {
 						SetObjectTransform(mesh.object, graph.GetWorldTransform(entity));
 						mesh.placedMatrix = world;
 						objectsChanged = true;
+						meshesMoved = meshesMoved || !IsNavAgentPart(entity);
 					}
 					const bool show = mesh.enabled && graph.IsActiveInHierarchy(entity);
 					if (show != IsObjectVisible(mesh.object)) {
 						SetObjectVisible(mesh.object, show);
 						objectsChanged = true;
+						meshesMoved = meshesMoved || !IsNavAgentPart(entity);
 					}
 					mesh.shown = show;
 				});
@@ -481,7 +483,9 @@ namespace Fox {
 
 				// The scene graph's world transforms, and the meshes placed and shown as their entities are
 				graph.UpdateTransforms();
+				UpdateNavigation(dt);
 				if (physicsPlaying) {
+					graph.UpdateTransforms();
 					UpdatePhysics(dt);
 					graph.UpdateTransforms();
 				}
@@ -614,6 +618,9 @@ namespace Fox {
 			void MainRayTracingScene::ApplyTerrainEdits(bool strokeEnded) {
 				if (!terrainPlaced) {
 					return;
+				}
+				if (strokeEnded) {
+					InvalidatePaths(); // The ground changed under them
 				}
 				int first, last;
 				if (terrain.TakeDirtyRows(first, last)) {
@@ -1239,6 +1246,12 @@ namespace Fox {
 					}
 					Fox::Scene::PhysicsWorld::BodyDesc desc;
 					DescribeBody(entity, component, desc);
+					// An agent walks: its body follows it and pushes, as a kinematic one
+					const auto* agent = graph.GetRegistry().TryGet<Fox::Scene::NavAgentComponent>(entity);
+					const bool walks = agent && agent->enabled;
+					if (walks && desc.motion == Fox::Scene::PhysicsWorld::Motion::Dynamic) {
+						desc.motion = Fox::Scene::PhysicsWorld::Motion::Kinematic;
+					}
 					std::string bodyError;
 					const uint32_t body = physics->AddBody(desc, bodyError);
 					if (body == Fox::Scene::PhysicsWorld::INVALID_BODY) {
@@ -1250,7 +1263,8 @@ namespace Fox {
 					PlayingBody playing;
 					playing.entity = entity;
 					playing.body = body;
-					playing.motion = component.motion;
+					playing.motion = walks && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic
+						? Fox::Scene::PhysicsComponent::Motion::Kinematic : component.motion;
 					glm::vec3 position;
 					glm::quat rotation;
 					DecomposeWorld(graph.GetWorldMatrix(entity), position, rotation, playing.scale);
@@ -1264,9 +1278,14 @@ namespace Fox {
 				});
 				physics->Optimize();
 				physicsPlaying = true;
+				StartNavigation();
 				std::cout << "Physics: playing, " << playingBodies.size() << " bodies" << (failed ? " (some failed, see above)" : "") << "\n";
-				if (playingBodies.empty()) {
-					error = "No entity has a Physics component (Inspector > Add Component > Physics)";
+				size_t agents = 0;
+				graph.GetRegistry().Each<Fox::Scene::NavAgentComponent>([&](Entity, Fox::Scene::NavAgentComponent& agent) {
+					agents += agent.enabled ? 1 : 0;
+				});
+				if (playingBodies.empty() && agents == 0) {
+					error = "No entity has a Physics or Nav Agent component (Inspector > Add Component)";
 				}
 				return true;
 			}
@@ -1290,6 +1309,7 @@ namespace Fox {
 					physics->Reset();
 				}
 				graph.UpdateTransforms();
+				InvalidatePaths(); // Planned again from where they are back at
 				std::cout << "Physics: stopped (everything is back where it was)\n";
 			}
 

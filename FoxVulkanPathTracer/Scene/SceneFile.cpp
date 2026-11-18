@@ -291,6 +291,39 @@ namespace Fox {
 					return body;
 				}
 
+				json NavAgentToJson(const Fox::Scene::NavAgentComponent& nav) {
+					json j{
+						{ "enabled", nav.enabled }, { "speed", nav.speed }, { "turnRate", nav.turnRate }, { "radius", nav.radius },
+						{ "height", nav.height }, { "maxSlope", nav.maxSlope }, { "maxStep", nav.maxStep },
+						{ "maxWaterDepth", nav.maxWaterDepth }, { "cellSize", nav.cellSize }, { "forward", static_cast<int>(nav.forward) },
+						{ "alignToGround", nav.alignToGround },
+					};
+					if (nav.hasTarget) {
+						j["target"] = nav.target;
+					}
+					return j;
+				}
+
+				Fox::Scene::NavAgentComponent NavAgentFromJson(const json& j) {
+					Fox::Scene::NavAgentComponent nav;
+					nav.enabled = j.value("enabled", nav.enabled);
+					nav.speed = j.value("speed", nav.speed);
+					nav.turnRate = j.value("turnRate", nav.turnRate);
+					nav.radius = j.value("radius", nav.radius);
+					nav.height = j.value("height", nav.height);
+					nav.maxSlope = j.value("maxSlope", nav.maxSlope);
+					nav.maxStep = j.value("maxStep", nav.maxStep);
+					nav.maxWaterDepth = j.value("maxWaterDepth", nav.maxWaterDepth);
+					nav.cellSize = j.value("cellSize", nav.cellSize);
+					nav.forward = static_cast<Fox::Scene::NavAgentComponent::Forward>(std::clamp(j.value("forward", 0), 0, 3));
+					nav.alignToGround = j.value("alignToGround", nav.alignToGround);
+					if (j.contains("target")) {
+						nav.target = j.value("target", nav.target);
+						nav.hasTarget = true;
+					}
+					return nav;
+				}
+
 				json WaterToJson(const Fox::Scene::WaterComponent& water) {
 					return {
 						{ "enabled", water.enabled }, { "size", water.size }, { "cellSize", water.cellSize },
@@ -408,6 +441,20 @@ namespace Fox {
 						},
 						[](SceneGraph& graph, Entity entity, const json& j) {
 							graph.GetRegistry().Add<Fox::Scene::PhysicsComponent>(entity, PhysicsFromJson(j));
+						},
+					},
+					{
+						"navAgent",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::NavAgentComponent* nav = graph.GetRegistry().TryGet<Fox::Scene::NavAgentComponent>(entity);
+							if (!nav) {
+								return false;
+							}
+							j = NavAgentToJson(*nav);
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::NavAgentComponent>(entity, NavAgentFromJson(j));
 						},
 					},
 				};
