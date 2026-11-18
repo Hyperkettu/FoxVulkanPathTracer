@@ -786,6 +786,9 @@ namespace Fox {
 					return;
 				}
 
+				// Menu commands of the previous frame that replace rendering resources (as their keys do)
+				RunDeferredCommands();
+
 				HandleCameraInput(deltaTime);
 				UpdateWindowTitle(deltaTime);
 
@@ -1119,26 +1122,21 @@ namespace Fox {
 				ImGui_ImplSDL2_NewFrame();
 				ImGui::NewFrame();
 
+				// Ctrl+Space: the content browser; F1: find a command. Both bring up edit mode first.
+				const bool contentKey = ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Space);
+				const bool findKey = ImGui::IsKeyPressed(ImGuiKey_F1, false);
+				if ((contentKey || findKey) && !editMode) {
+					SetEditMode(true);
+				}
+				if (contentKey) {
+					shell.Toggle(Fox::Editor::EditorShell::Window::ContentBrowser);
+				}
+				if (findKey) {
+					shell.FocusFind();
+				}
+
 				if (editMode) {
-					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
-					Fox::Scene::RayTracing::MainRayTracingScene::CameraPose pose;
-					pose.position = camera->GetPosition();
-					pose.target = camera->GetPosition() + camera->GetForward();
-					sceneEditor.Draw(*raytracingScene, gizmo, pose, uiScale);
-					{
-						// New entities stand on the ground in front of the camera
-						glm::vec3 forward = camera->GetForward();
-						forward.y = 0.0f;
-						forward = glm::dot(forward, forward) > 1e-6f ? glm::normalize(forward) : glm::vec3(1.0f, 0.0f, 0.0f);
-						glm::vec3 spawn = camera->GetPosition() + forward * 12.0f;
-						spawn.y = raytracingScene->GetGroundHeightAt(spawn.x, spawn.z);
-						sceneGraphEditor.Draw(*raytracingScene, gizmo, spawn, uiScale);
-					}
-					treeEditor.Draw(*raytracingScene, gizmo, camera->GetPosition(), camera->GetForward(), uiScale);
-					if (cameraEditor.Draw(raytracingScene->GetCameraManager(), *camera, GizmoView(), uiScale)) {
-						ResetHistory(); // The camera jumped
-					}
-					terrainEditor.Draw(*raytracingScene, GizmoView(), MouseInDisplayPixels(), ImGui::GetIO().WantCaptureMouse, uiScale);
+					BuildEditor();
 				}
 
 				ImGui::Render();
@@ -1346,114 +1344,121 @@ namespace Fox {
 				});
 
 				keyInputBind = input.OnKeyReleased.Connect([this](SDL_Scancode key) {
-					using Managers::TextureManager;
-					using Mode = Fox::Editor::TransformGizmo::Mode;
-
-					switch (key) {
-					case SDL_SCANCODE_E:
-						SetEditMode(!editMode);
-						break;
-
-					// Delete the selected entity (and everything under it)
-					case SDL_SCANCODE_DELETE:
-						if (editMode && gizmo.GetSelected()) {
-							raytracingScene->DestroyEntity(gizmo.GetSelected());
-							gizmo.Select({});
-						}
-						break;
-
-					// Fly the active camera path, or stop
-					case SDL_SCANCODE_P: {
-						auto& cameraManager = raytracingScene->GetCameraManager();
-						const bool playing = cameraManager.TogglePlay();
-						if (playing) {
-							std::cout << "Camera path: playing " << cameraManager.ActivePath()->name << "\n";
-						}
-						else if (!cameraManager.ActivePath() || !cameraManager.ActivePath()->IsFlyable()) {
-							std::cout << "Camera path: none to play (edit mode: K adds keys from the view)\n";
-						}
-						else {
-							std::cout << "Camera path: stopped\n";
-						}
-						UpdateWindowTitle(0.0f);
-						break;
-					}
-
-					// Terrain brush on / off, and its size
-					case SDL_SCANCODE_B:
-						if (editMode) {
-							terrainEditor.ToggleBrush();
-						}
-						break;
-					case SDL_SCANCODE_LEFTBRACKET:
-					case SDL_SCANCODE_RIGHTBRACKET:
-						if (editMode) {
-							terrainEditor.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
-						}
-						break;
-
-					// A camera path key where the camera is
-					case SDL_SCANCODE_K:
-						if (editMode) {
-							auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
-							cameraEditor.AddKeyFromView(raytracingScene->GetCameraManager(), *camera);
-						}
-						break;
-
-					// Gizmo modes
-					case SDL_SCANCODE_Z:
-					case SDL_SCANCODE_X:
-					case SDL_SCANCODE_C:
-						if (editMode) {
-							gizmo.SetMode(key == SDL_SCANCODE_Z ? Mode::Translate : key == SDL_SCANCODE_X ? Mode::Rotate : Mode::Scale);
-							UpdateWindowTitle(0.0f);
-						}
-						break;
-
-					case SDL_SCANCODE_N:
-						SelectDenoiser(activeDenoiser + 1);
-						break;
-
-					case SDL_SCANCODE_V:
-						vsync = !vsync;
-						std::cout << "Vsync: " << (vsync ? "on" : "off") << "\n";
-						Resize(0, 0);
-						UpdateWindowTitle(0.0f);
-						break;
-
-					// Render resolution relative to the display: quality against frame rate
-					case SDL_SCANCODE_U:
-						SetUpscalingMode(static_cast<RayTracing::UpscalingMode>(
-							(static_cast<int>(upscalingMode) + 1) % static_cast<int>(RayTracing::UpscalingMode::Count)));
-						break;
-
-					// Exposure, in thirds of a stop like a camera dial
-					case SDL_SCANCODE_1:
-					case SDL_SCANCODE_2:
-						postProcessor->SetExposure(postProcessor->GetExposure() + (key == SDL_SCANCODE_2 ? 1.0f : -1.0f) / 3.0f);
-						std::cout << "Exposure: " << postProcessor->GetExposure() << " EV\n";
-						break;
-
-					// Paths per pixel: quality against frame rate
-					case SDL_SCANCODE_3:
-					case SDL_SCANCODE_4:
-						samplesPerPixel = static_cast<uint32_t>(std::clamp(static_cast<int>(samplesPerPixel) + (key == SDL_SCANCODE_4 ? 1 : -1), 1, 16));
-						std::cout << "Samples per pixel: " << samplesPerPixel << "\n";
-						break;
-
-					case SDL_SCANCODE_9:
-					case SDL_SCANCODE_0:
-						TextureManager::ENVIRONMENT_MAP_INTENSITY = std::max(0.0f, TextureManager::ENVIRONMENT_MAP_INTENSITY + (key == SDL_SCANCODE_0 ? 0.1f : -0.1f));
-						TextureManager::Get().UpdateEnvironment();
-						std::cout << "Environment map intensity: " << TextureManager::ENVIRONMENT_MAP_INTENSITY << "\n";
-						// The lighting changed: accumulated frames are stale
-						ResetHistory();
-						break;
-
-					default:
-						break;
-					}
+					RunKeyCommand(key);
 				});
+			}
+
+			void VulkanRHI::RunKeyCommand(SDL_Scancode key) {
+				using Managers::TextureManager;
+				using Mode = Fox::Editor::TransformGizmo::Mode;
+
+				switch (key) {
+				case SDL_SCANCODE_E:
+					SetEditMode(!editMode);
+					break;
+
+				// Delete the selected entity (and everything under it)
+				case SDL_SCANCODE_DELETE:
+					if (editMode && gizmo.GetSelected()) {
+						raytracingScene->DestroyEntity(gizmo.GetSelected());
+						gizmo.Select({});
+					}
+					break;
+
+				// Fly the active camera path, or stop
+				case SDL_SCANCODE_P: {
+					auto& cameraManager = raytracingScene->GetCameraManager();
+					const bool playing = cameraManager.TogglePlay();
+					if (playing) {
+						std::cout << "Camera path: playing " << cameraManager.ActivePath()->name << "\n";
+					}
+					else if (!cameraManager.ActivePath() || !cameraManager.ActivePath()->IsFlyable()) {
+						std::cout << "Camera path: none to play (edit mode: K adds keys from the view)\n";
+					}
+					else {
+						std::cout << "Camera path: stopped\n";
+					}
+					UpdateWindowTitle(0.0f);
+					break;
+				}
+
+				// Terrain brush on / off, and its size
+				case SDL_SCANCODE_B:
+					if (editMode) {
+						terrainEditor.ToggleBrush();
+						if (terrainEditor.IsBrushActive()) {
+							shell.SetOpen(Fox::Editor::EditorShell::Window::Terrain, true); // The brush works with its window
+						}
+					}
+					break;
+				case SDL_SCANCODE_LEFTBRACKET:
+				case SDL_SCANCODE_RIGHTBRACKET:
+					if (editMode) {
+						terrainEditor.ScaleBrush(key == SDL_SCANCODE_RIGHTBRACKET ? 1.25f : 0.8f);
+					}
+					break;
+
+				// A camera path key where the camera is
+				case SDL_SCANCODE_K:
+					if (editMode) {
+						auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+						cameraEditor.AddKeyFromView(raytracingScene->GetCameraManager(), *camera);
+					}
+					break;
+
+				// Gizmo modes
+				case SDL_SCANCODE_Z:
+				case SDL_SCANCODE_X:
+				case SDL_SCANCODE_C:
+					if (editMode) {
+						gizmo.SetMode(key == SDL_SCANCODE_Z ? Mode::Translate : key == SDL_SCANCODE_X ? Mode::Rotate : Mode::Scale);
+						UpdateWindowTitle(0.0f);
+					}
+					break;
+
+				case SDL_SCANCODE_N:
+					SelectDenoiser(activeDenoiser + 1);
+					break;
+
+				case SDL_SCANCODE_V:
+					vsync = !vsync;
+					std::cout << "Vsync: " << (vsync ? "on" : "off") << "\n";
+					Resize(0, 0);
+					UpdateWindowTitle(0.0f);
+					break;
+
+				// Render resolution relative to the display: quality against frame rate
+				case SDL_SCANCODE_U:
+					SetUpscalingMode(static_cast<RayTracing::UpscalingMode>(
+						(static_cast<int>(upscalingMode) + 1) % static_cast<int>(RayTracing::UpscalingMode::Count)));
+					break;
+
+				// Exposure, in thirds of a stop like a camera dial
+				case SDL_SCANCODE_1:
+				case SDL_SCANCODE_2:
+					postProcessor->SetExposure(postProcessor->GetExposure() + (key == SDL_SCANCODE_2 ? 1.0f : -1.0f) / 3.0f);
+					std::cout << "Exposure: " << postProcessor->GetExposure() << " EV\n";
+					break;
+
+				// Paths per pixel: quality against frame rate
+				case SDL_SCANCODE_3:
+				case SDL_SCANCODE_4:
+					samplesPerPixel = static_cast<uint32_t>(std::clamp(static_cast<int>(samplesPerPixel) + (key == SDL_SCANCODE_4 ? 1 : -1), 1, 16));
+					std::cout << "Samples per pixel: " << samplesPerPixel << "\n";
+					break;
+
+				case SDL_SCANCODE_9:
+				case SDL_SCANCODE_0:
+					TextureManager::ENVIRONMENT_MAP_INTENSITY = std::max(0.0f, TextureManager::ENVIRONMENT_MAP_INTENSITY + (key == SDL_SCANCODE_0 ? 0.1f : -0.1f));
+					TextureManager::Get().UpdateEnvironment();
+					std::cout << "Environment map intensity: " << TextureManager::ENVIRONMENT_MAP_INTENSITY << "\n";
+					// The lighting changed: accumulated frames are stale
+					ResetHistory();
+					break;
+
+				default:
+					break;
+				}
 			}
 
 		}

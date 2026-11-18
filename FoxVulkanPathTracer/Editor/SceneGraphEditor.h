@@ -19,8 +19,10 @@ namespace Fox {
 		// Component types get an inspector entry in COMPONENT_EDITORS (SceneGraphEditor.cpp).
 		class SceneGraphEditor {
 		public:
-			// spawnPosition: where new root entities go (in front of the camera)
-			void Draw(Fox::Scene::RayTracing::MainRayTracingScene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition, float uiScale);
+			// spawnPosition: where new root entities go (in front of the camera). open: the window's close button.
+			void DrawHierarchy(Fox::Scene::RayTracing::MainRayTracingScene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition,
+				bool* open, float uiScale);
+			void DrawInspector(Fox::Scene::RayTracing::MainRayTracingScene& scene, TransformGizmo& gizmo, bool* open, float uiScale);
 
 			// What the component editors share across frames
 			struct InspectorState {
@@ -38,9 +40,8 @@ namespace Fox {
 			using Scene = Fox::Scene::RayTracing::MainRayTracingScene;
 			using Entity = Fox::ECS::Entity;
 
-			void DrawHierarchy(Scene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition, float uiScale);
 			void DrawNode(Scene& scene, TransformGizmo& gizmo, Entity entity);
-			void DrawInspector(Scene& scene, TransformGizmo& gizmo, float uiScale);
+			void ForgetLostSelection(Scene& scene, TransformGizmo& gizmo);
 			void ApplyPending(Scene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition);
 
 			// Changes asked for while the tree is drawn, made after it
@@ -50,6 +51,12 @@ namespace Fox {
 				int index = -1;
 			};
 			std::vector<Move> moves;
+			struct ModelDrop {
+				std::string file;
+				bool displacement = false;
+				Entity parent; // Null: a root
+			};
+			std::vector<ModelDrop> modelDrops;
 			Entity toDelete;
 			Entity toDuplicate;
 			bool create = false;

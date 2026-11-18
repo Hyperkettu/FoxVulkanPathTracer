@@ -15,11 +15,12 @@ namespace Fox {
 			using Scene = Fox::Scene::RayTracing::MainRayTracingScene;
 
 			// mouse: display pixels; overUserInterface: the pointer is over an editor window
-			void Draw(Scene& scene, const TransformGizmo::View& view, glm::vec2 mouse, bool overUserInterface, float uiScale);
+			void Draw(Scene& scene, const TransformGizmo::View& view, glm::vec2 mouse, bool overUserInterface, bool* open, float uiScale);
 
 			// Clicks in the view go to the brush while it is on and the pointer is over the terrain
 			bool IsBrushActive() const { return brushActive; }
 			void ToggleBrush() { brushActive = !brushActive; }
+			void SetBrushActive(bool active) { brushActive = active; }
 			bool MouseDown(Scene& scene, const TransformGizmo::View& view, glm::vec2 mouse);
 			void MouseUp() { if (stroking) { stroking = false; strokeEnded = true; } }
 

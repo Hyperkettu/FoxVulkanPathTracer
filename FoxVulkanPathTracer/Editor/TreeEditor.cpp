@@ -39,7 +39,7 @@ namespace Fox {
 			}
 		}
 
-		void TreeEditor::Draw(Scene& scene, TransformGizmo& gizmo, const glm::vec3& cameraPosition, const glm::vec3& cameraForward, float uiScale) {
+		void TreeEditor::Draw(Scene& scene, TransformGizmo& gizmo, const glm::vec3& cameraPosition, const glm::vec3& cameraForward, bool* open, float uiScale) {
 			const std::vector<Fox::ECS::Entity> trees = scene.GetTreeEntities();
 
 			// A tree selected (in the scene or the hierarchy) becomes the one being edited
@@ -50,9 +50,7 @@ namespace Fox {
 				selected = trees.empty() ? Fox::ECS::Entity{} : trees.front();
 			}
 
-			ImGui::SetNextWindowPos(ImVec2(10.0f * uiScale, 10.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(440.0f * uiScale, 820.0f * uiScale), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Trees")) {
+			if (!ImGui::Begin("Trees", open)) {
 				ImGui::End();
 				return;
 			}

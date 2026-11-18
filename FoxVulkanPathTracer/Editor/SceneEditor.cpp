@@ -60,132 +60,99 @@ namespace Fox {
 			return material;
 		}
 
-		void SceneEditor::Draw(Scene& scene, TransformGizmo& gizmo, const Scene::CameraPose& camera, float uiScale) {
-			ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 400.0f * uiScale - 10.0f * uiScale, 10.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(400.0f * uiScale, 560.0f * uiScale), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Scene")) {
+		void SceneEditor::Draw(Scene& scene, bool* open, float uiScale) {
+			if (!ImGui::Begin("Environment", open)) {
 				ImGui::End();
 				return;
 			}
 
-			// --- File ---
-			ImGui::SetNextItemWidth(-1.0f);
-			ImGui::InputText("##path", path, sizeof(path));
-			if (ImGui::Button("Save")) {
-				std::string error;
-				if (scene.SaveToFile(path, camera, error)) {
-					status = std::string("Saved ") + path;
-					statusIsError = false;
-				}
-				else {
-					status = error;
-					statusIsError = true;
-				}
-			}
+			auto& environment = scene.GetEnvironment();
+			bool changed = false;
+
+			changed |= ImGui::Checkbox("Ground", &environment.ground);
 			ImGui::SameLine();
-			if (ImGui::Button("Load")) {
+			changed |= ImGui::Checkbox("Terrain instead", &environment.terrain);
+			ImGui::SetItemTooltip("Sculpt and paint it in the Terrain window (Window menu)");
+			changed |= ImGui::DragFloat("Ground height", &environment.groundHeight, 0.01f, -100.0f, 100.0f, "%.2f m");
+			changed |= ImGui::ColorEdit3("Ground colour", &environment.groundMaterial.color.x);
+			changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");
+
+			ImGui::Spacing();
+			ImGui::TextWrapped("The sun and other lights are entities with a Light component: select the Sun in the Hierarchy.");
+			(void)uiScale;
+
+			if (changed) {
+				scene.MarkStructureChanged();
+			}
+			ImGui::End();
+		}
+
+		void SceneEditor::NewScene(Scene& scene, TransformGizmo& gizmo) {
+			gizmo.Select({});
+			scene.ClearContent();
+			path.clear();
+			SetStatus("New scene", false);
+		}
+
+		void SceneEditor::Open(Scene& scene, TransformGizmo& gizmo, const std::string& file) {
+			Scene::CameraPose loaded;
+			std::string error;
+			if (scene.LoadFromFile(file, loaded, error)) {
 				gizmo.Select({});
-				Scene::CameraPose loaded;
-				std::string error;
-				if (scene.LoadFromFile(path, loaded, error)) {
-					status = std::string("Loading ") + path + "...";
-					statusIsError = false;
-				}
-				else {
-					status = error;
-					statusIsError = true;
-				}
+				path = file;
+				SetStatus("Loading " + file + "...", false);
 			}
-			ImGui::SameLine();
-			if (ImGui::Button("New")) {
-				gizmo.Select({});
-				scene.ClearContent();
-				status = "New scene";
-				statusIsError = false;
+			else {
+				SetStatus(error, true);
 			}
-			ImGui::SameLine();
-			ImGui::TextDisabled("(the scene starts from %s)", Scene::DEFAULT_SCENE_FILE);
+		}
 
-			if (!status.empty()) {
-				if (statusIsError) {
-					ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f), "%s", status.c_str());
-				}
-				else {
-					ImGui::TextDisabled("%s", status.c_str());
-				}
+		void SceneEditor::Save(Scene& scene, const Scene::CameraPose& camera, const std::string& file) {
+			const std::string target = file.empty() ? path : file;
+			if (target.empty()) {
+				RequestSaveAs();
+				return;
 			}
+			std::string error;
+			if (scene.SaveToFile(target, camera, error)) {
+				path = target;
+				SetStatus("Saved " + target, false);
+			}
+			else {
+				SetStatus(error, true);
+			}
+		}
 
-			// New objects stand on the ground in front of the camera
-			glm::vec3 forward = camera.target - camera.position;
-			forward.y = 0.0f;
-			forward = glm::dot(forward, forward) > 1e-6f ? glm::normalize(forward) : glm::vec3(1.0f, 0.0f, 0.0f);
-			glm::vec3 inFront = camera.position + forward * 12.0f;
-			inFront.y = scene.GetGroundHeightAt(inFront.x, inFront.z);
+		void SceneEditor::RequestSaveAs() {
+			saveAsOpen = true;
+			saveAsFocus = true;
+			std::snprintf(saveAsPath, sizeof(saveAsPath), "%s", path.empty() ? "Scenes/scene.json" : path.c_str());
+		}
 
-			// --- Add ---
-			if (ImGui::CollapsingHeader("Add", ImGuiTreeNodeFlags_DefaultOpen)) {
-				if (!modelsListed) {
-					modelFiles = ListModels("Models");
-					modelsListed = true;
+		void SceneEditor::DrawSaveAs(Scene& scene, const Scene::CameraPose& camera, float uiScale) {
+			if (!saveAsOpen) {
+				return;
+			}
+			const ImVec2 display = ImGui::GetIO().DisplaySize;
+			ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, display.y * 0.35f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowSize(ImVec2(480.0f * uiScale, 0.0f), ImGuiCond_Appearing);
+			if (ImGui::Begin("Save Scene As", &saveAsOpen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+				ImGui::TextDisabled("Path from the working directory; Scenes/default.json is what the renderer starts with");
+				if (saveAsFocus) {
+					ImGui::SetKeyboardFocusHere();
+					saveAsFocus = false;
 				}
-				modelChoice = std::clamp(modelChoice, 0, std::max(static_cast<int>(modelFiles.size()) - 1, 0));
-				const char* preview = modelFiles.empty() ? "(no models in Models/)" : modelFiles[modelChoice].c_str();
-				if (ImGui::BeginCombo("Model", preview)) {
-					for (int i = 0; i < static_cast<int>(modelFiles.size()); i++) {
-						if (ImGui::Selectable(modelFiles[i].c_str(), i == modelChoice)) {
-							modelChoice = i;
-						}
-					}
-					ImGui::EndCombo();
+				ImGui::SetNextItemWidth(-1.0f);
+				const bool enter = ImGui::InputText("##saveAsPath", saveAsPath, sizeof(saveAsPath), ImGuiInputTextFlags_EnterReturnsTrue);
+				if (ImGui::Button("Save") || enter) {
+					Save(scene, camera, saveAsPath);
+					saveAsOpen = false;
 				}
-				ImGui::Checkbox("Displacement from normal maps", &displacement);
-				ImGui::SetItemTooltip("Real relief reconstructed from the model's normal maps: much more geometry, slower to load");
-				ImGui::BeginDisabled(modelFiles.empty());
-				if (ImGui::Button("Add model") && !modelFiles.empty()) {
-					glm::vec3 position = inFront;
-					// Models carry their own height above the ground plane (e.g. the cabin's foundation); on
-					// terrain they follow it
-					position.y = inFront.y - scene.GetEnvironment().groundHeight;
-					gizmo.Select(scene.AddModel(modelFiles[modelChoice], displacement, position));
-					status = "Loading " + modelFiles[modelChoice] + "...";
-					statusIsError = false;
-				}
-				ImGui::EndDisabled();
 				ImGui::SameLine();
-				if (ImGui::SmallButton("Rescan Models folder")) {
-					modelsListed = false;
-				}
-
-				ImGui::Spacing();
-				ImGui::Combo("Sphere", &spherePreset, SPHERE_PRESETS, SPHERE_PRESET_COUNT);
-				ImGui::SliderFloat("Radius (m)", &sphereRadius, 0.1f, 5.0f, "%.2f");
-				if (ImGui::Button("Add sphere")) {
-					gizmo.Select(scene.AddSphereObject(inFront + glm::vec3(0.0f, sphereRadius, 0.0f), sphereRadius, SpherePreset(spherePreset)));
+				if (ImGui::Button("Cancel")) {
+					saveAsOpen = false;
 				}
 			}
-
-			ImGui::TextDisabled("The scene's entities: the Hierarchy window; their components: the Inspector");
-
-			// --- Environment ---
-			if (ImGui::CollapsingHeader("Environment")) {
-				auto& environment = scene.GetEnvironment();
-				bool changed = false;
-
-				changed |= ImGui::Checkbox("Ground", &environment.ground);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("Terrain instead (see the Terrain window)", &environment.terrain);
-				changed |= ImGui::DragFloat("Ground height", &environment.groundHeight, 0.01f, -100.0f, 100.0f, "%.2f m");
-				changed |= ImGui::ColorEdit3("Ground colour", &environment.groundMaterial.color.x);
-				changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");
-
-				ImGui::Spacing();
-				ImGui::TextDisabled("The sun and other lights: entities with a Light component (Hierarchy, Inspector)");
-
-				if (changed) {
-					scene.MarkStructureChanged();
-				}
-			}
-
 			ImGui::End();
 		}
 

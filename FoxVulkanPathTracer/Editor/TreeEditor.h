@@ -15,7 +15,7 @@ namespace Fox {
 		public:
 			// Draws the window and makes the changes in the scene. cameraPosition / cameraForward place new trees.
 			void Draw(Fox::Scene::RayTracing::MainRayTracingScene& scene, TransformGizmo& gizmo,
-				const glm::vec3& cameraPosition, const glm::vec3& cameraForward, float uiScale);
+				const glm::vec3& cameraPosition, const glm::vec3& cameraForward, bool* open, float uiScale);
 
 			// Changes wait until no control is being dragged, unless live update is on
 			bool LiveUpdate() const { return liveUpdate; }

@@ -150,6 +150,19 @@ namespace Fox {
 				Fox::Editor::TreeEditor treeEditor;
 				Fox::Editor::SceneEditor sceneEditor;
 				Fox::Editor::SceneGraphEditor sceneGraphEditor;
+				Fox::Editor::EditorShell shell;          // Menu bar, Find, window layout, status bar
+				Fox::Editor::ContentBrowser contentBrowser;
+				Fox::ECS::Entity lastSelection;          // Selecting something new opens the Inspector
+				std::vector<std::function<void()>> deferredCommands; // Menu commands run between frames
+
+				// The editor (VulkanRHIEditor.cpp)
+				void BuildEditor();
+				void BuildMenus(const Fox::Scene::RayTracing::MainRayTracingScene::CameraPose& pose, const glm::vec3& spawn);
+				void DrawControls();
+				void Defer(std::function<void()> command);
+				void RunDeferredCommands();
+				// What a key does when released (the same as its menu command)
+				void RunKeyCommand(SDL_Scancode key);
 				Fox::Editor::CameraEditor cameraEditor;
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written

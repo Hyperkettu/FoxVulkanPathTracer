@@ -270,25 +270,21 @@ namespace Fox {
 			};
 		}
 
-		void SceneGraphEditor::Draw(Scene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition, float uiScale) {
+		void SceneGraphEditor::ForgetLostSelection(Scene& scene, TransformGizmo& gizmo) {
 			// A selection whose entity is gone (deleted, another scene loaded)
 			if (gizmo.GetSelected() && !scene.GetSceneGraph().IsValid(gizmo.GetSelected())) {
 				gizmo.Select({});
 			}
-
-			DrawHierarchy(scene, gizmo, spawnPosition, uiScale);
-			ApplyPending(scene, gizmo, spawnPosition);
-			DrawInspector(scene, gizmo, uiScale);
 		}
 
 		// --- Hierarchy ---
 
-		void SceneGraphEditor::DrawHierarchy(Scene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition, float uiScale) {
-			const ImVec2 display = ImGui::GetIO().DisplaySize;
-			ImGui::SetNextWindowPos(ImVec2(display.x - 400.0f * uiScale - 10.0f * uiScale, 580.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(400.0f * uiScale, 360.0f * uiScale), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Hierarchy")) {
+		void SceneGraphEditor::DrawHierarchy(Scene& scene, TransformGizmo& gizmo, const glm::vec3& spawnPosition, bool* open, float uiScale) {
+			ForgetLostSelection(scene, gizmo);
+			(void)uiScale;
+			if (!ImGui::Begin("Hierarchy", open)) {
 				ImGui::End();
+				ApplyPending(scene, gizmo, spawnPosition);
 				return;
 			}
 			Fox::Scene::SceneGraph& graph = scene.GetSceneGraph();
@@ -323,7 +319,7 @@ namespace Fox {
 				if (ImGui::MenuItem("Spot light")) {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Spot, spawnPosition + glm::vec3(0.0f, 4.0f, 0.0f)));
 				}
-				ImGui::TextDisabled("Models: the Scene window's Add section");
+				ImGui::TextDisabled("Models: drag one in from the Content Browser (Ctrl+Space)");
 				ImGui::EndPopup();
 			}
 			ImGui::SameLine();
@@ -346,6 +342,10 @@ namespace Fox {
 				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ENTITY_PAYLOAD)) {
 					moves.push_back({ *static_cast<const Entity*>(payload->Data), Entity{}, -1 });
 				}
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ContentBrowser::MODEL_PAYLOAD)) {
+					const auto* model = static_cast<const ContentBrowser::ModelPayload*>(payload->Data);
+					modelDrops.push_back({ model->file, model->displacement, Entity{} });
+				}
 				ImGui::EndDragDropTarget();
 			}
 			if (ImGui::BeginPopupContextItem("##emptyMenu")) {
@@ -358,9 +358,6 @@ namespace Fox {
 
 			// Keys while the hierarchy has the focus
 			if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && graph.IsValid(selected)) {
-				if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) {
-					toDuplicate = selected;
-				}
 				// Delete is the renderer's key; it only gets it when the windows do not take the keyboard
 				if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && ImGui::GetIO().WantCaptureKeyboard) {
 					toDelete = selected;
@@ -368,6 +365,7 @@ namespace Fox {
 			}
 			ImGui::EndChild();
 			ImGui::End();
+			ApplyPending(scene, gizmo, spawnPosition);
 		}
 
 		void SceneGraphEditor::DrawNode(Scene& scene, TransformGizmo& gizmo, Entity entity) {
@@ -445,6 +443,11 @@ namespace Fox {
 						}
 					}
 				}
+				// A model from the Content Browser becomes its child
+				if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ContentBrowser::MODEL_PAYLOAD)) {
+					const auto* model = static_cast<const ContentBrowser::ModelPayload*>(payload->Data);
+					modelDrops.push_back({ model->file, model->displacement, entity });
+				}
 				ImGui::EndDragDropTarget();
 			}
 
@@ -503,6 +506,14 @@ namespace Fox {
 			}
 			moves.clear();
 
+			for (const ModelDrop& drop : modelDrops) {
+				// Under an entity: where it is; a root: in front of the camera
+				const bool child = graph.IsValid(drop.parent);
+				const glm::vec3 position = child ? glm::vec3(graph.GetWorldMatrix(drop.parent)[3]) : spawnPosition;
+				gizmo.Select(scene.AddModel(drop.file, drop.displacement, position, child ? drop.parent : Entity{}));
+			}
+			modelDrops.clear();
+
 			if (create) {
 				create = false;
 				const bool child = graph.IsValid(createUnder);
@@ -531,11 +542,9 @@ namespace Fox {
 
 		// --- Inspector ---
 
-		void SceneGraphEditor::DrawInspector(Scene& scene, TransformGizmo& gizmo, float uiScale) {
-			const ImVec2 display = ImGui::GetIO().DisplaySize;
-			ImGui::SetNextWindowPos(ImVec2(display.x - 820.0f * uiScale - 20.0f * uiScale, 10.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(410.0f * uiScale, 560.0f * uiScale), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Inspector")) {
+		void SceneGraphEditor::DrawInspector(Scene& scene, TransformGizmo& gizmo, bool* open, float uiScale) {
+			ForgetLostSelection(scene, gizmo);
+			if (!ImGui::Begin("Inspector", open)) {
 				ImGui::End();
 				return;
 			}

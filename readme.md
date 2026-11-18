@@ -311,6 +311,21 @@ Not modelled yet: light passing through leaves (translucency), so backlit leaves
 
 Press `E` for edit mode: the mouse pointer appears and the window title shows the gizmo mode and the selection.
 
+Edit mode has a menu bar (File, Edit, Create, Window, Render, Camera, Help), a status bar at the bottom and, at
+first, only the **Hierarchy**. The rest open from the **Window** menu; the **Inspector** also opens when something is
+selected. Windows go where they belong around the view: Hierarchy on the left, Inspector on the right, the tool
+windows (Environment, Trees, Terrain, Camera Paths) beside it, the Content Browser along the bottom.
+**Window > Reset Layout** puts them back, and a new window size (`T` fullscreen) does too.
+
+| Input | Action |
+| --- | --- |
+| `F1` | **Find a command**: type part of any menu command's name (`light`, `save`, `trees`, `denoiser`...), Up / Down to choose, Enter to run. The field at the right of the menu bar does the same with the mouse |
+| `Ctrl+Space` | **Content Browser** on / off: `Models/`, `Scenes/` and `Textures/`. Double-click a model to add it in front of the camera, or drag it onto an entity in the Hierarchy to add it as that entity's child; double-click a scene to open it |
+| `Ctrl+S` | Save the scene |
+| `Ctrl+D` | Duplicate the selected entity |
+
+**Help > Controls** lists every key. Both `F1` and `Ctrl+Space` switch on edit mode when it is off.
+
 | Input | Action |
 | --- | --- |
 | Left click | Select the entity under the pointer (the ground cannot be selected) |
@@ -372,13 +387,13 @@ rebuilds the scene; trees only rebuild the trees.
 ### Scene files
 
 Nothing is built into the code: the scene starts from `Scenes/default.json` (relative to the working directory), and
-without that file it starts empty, with only the ground and the sun. In edit mode the **Scene** window:
+without that file it starts empty, with only the ground and the sun. In edit mode:
 
-| Part | What it does |
+| Where | What it does |
 | --- | --- |
-| Path, **Save** / **Load** / **New** | Save the scene (with the current view) to the path, load a scene file, or start an empty scene. Save to `Scenes/default.json` to change what the renderer starts with |
-| **Add** | Add any glTF model from `Models/` (`.glb` / `.gltf`, optionally with displacement from its normal maps), or a sphere with a glass, frosted glass, chrome, gold or plastic material. New objects stand on the ground 12 m in front of the camera. Trees are added in the **Trees** window |
-| **Environment** | Ground (height, colour, roughness). The sun is an entity with a Light component |
+| **File** menu | New Scene, Open Scene (the Content Browser's `Scenes/`), Save Scene (`Ctrl+S`, with the current view), Save Scene As. Save to `Scenes/default.json` to change what the renderer starts with. The scene's file shows in the status bar |
+| **Create** menu | Empty entities, a model (the Content Browser's `Models/`, optionally with displacement from its normal maps), spheres with a glass, frosted glass, chrome, gold or plastic material, a tree, and lights. New entities stand on the ground 12 m in front of the camera |
+| **Environment** window | Ground (height, colour, roughness). The sun is an entity with a Light component |
 
 The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for what a file leaves out:
 
@@ -540,7 +555,7 @@ Below is the active development checklist for the renderer.
 - [ ] Acceleration structure (BLAS/TLAS) refitting
 - [ ] Full hierarchical scene graph
 - [x] Instance buffer updates for dynamic object movement (editor gizmos)
-- [x] Scene configuration files using JSON (`Scenes/*.json`, saved and loaded in the Scene window)
+- [x] Scene configuration files using JSON (`Scenes/*.json`, saved and loaded from the File menu)
 
 ### 🏃 Animation & Physics
 - [x] GPU skinning (procedural tree in the wind, angular springs)

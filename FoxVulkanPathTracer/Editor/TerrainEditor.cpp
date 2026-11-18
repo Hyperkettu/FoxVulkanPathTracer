@@ -179,16 +179,14 @@ namespace Fox {
 			return changed;
 		}
 
-		void TerrainEditor::Draw(Scene& scene, const TransformGizmo::View& view, glm::vec2 mouse, bool overUserInterface, float uiScale) {
+		void TerrainEditor::Draw(Scene& scene, const TransformGizmo::View& view, glm::vec2 mouse, bool overUserInterface, bool* open, float uiScale) {
 			if (!listed) {
 				images = Fox::Scene::TextureLibrary::ListImages("Textures");
 				folders = ListTextureFolders("Textures");
 				listed = true;
 			}
 
-			ImGui::SetNextWindowPos(ImVec2(470.0f * uiScale, 10.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(380.0f * uiScale, 520.0f * uiScale), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Terrain")) {
+			if (!ImGui::Begin("Terrain", open)) {
 				ImGui::End();
 				return;
 			}

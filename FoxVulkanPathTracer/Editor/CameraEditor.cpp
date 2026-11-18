@@ -27,13 +27,10 @@ namespace Fox {
 		}
 
 		bool CameraEditor::Draw(Fox::Scene::CameraManager& manager, Fox::Graphics::Vulkan::Camera& camera,
-			const TransformGizmo::View& view, float uiScale) {
+			const TransformGizmo::View& view, bool* open, float uiScale) {
 			bool moved = false;
 
-			const ImVec2 display = ImGui::GetIO().DisplaySize;
-			ImGui::SetNextWindowPos(ImVec2(display.x - 410.0f * uiScale, 580.0f * uiScale), ImGuiCond_FirstUseEver);
-			ImGui::SetNextWindowSize(ImVec2(400.0f * uiScale, std::max(display.y - 590.0f * uiScale, 200.0f * uiScale)), ImGuiCond_FirstUseEver);
-			if (!ImGui::Begin("Camera")) {
+			if (!ImGui::Begin("Camera", open)) {
 				ImGui::End();
 				return false;
 			}

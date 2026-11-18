@@ -11,7 +11,7 @@ namespace Fox {
 		public:
 			// Returns true when it put the camera somewhere else (the renderer drops its image history)
 			bool Draw(Fox::Scene::CameraManager& manager, Fox::Graphics::Vulkan::Camera& camera,
-				const TransformGizmo::View& view, float uiScale);
+				const TransformGizmo::View& view, bool* open, float uiScale);
 
 			// A key where the camera is, after the selected one (K); makes a path if there is none
 			void AddKeyFromView(Fox::Scene::CameraManager& manager, Fox::Graphics::Vulkan::Camera& camera);
