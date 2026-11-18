@@ -118,17 +118,17 @@ enum class LightType
 // Mirrors Fox::Graphics::Vulkan::Light (Light.h)
 struct Light
 {
-    float3 position;   // Center of the quad
+    float3 position;   // Quad: center. Point / spot: where it is
     float  _pad0;
-    float3 normal;     // Quad: surface normal. Directional: direction towards the light
+    float3 normal;     // Quad: surface normal. Directional: direction towards the light. Spot: direction it shines
     float  _pad1;
-    float3 tangentX;   // Half extent of the quad along its first edge
+    float3 tangentX;   // Quad: half extent along its first edge. Spot: x = cos(outer cone angle), y = cos(inner)
     float  _pad2;
     float3 tangentY;   // Half extent along its second edge
     float  _pad3;
-    float3 color;      // Quad: emitted radiance. Directional: irradiance on a surface facing the light
+    float3 color;      // Quad: emitted radiance. Directional: irradiance on a surface facing the light. Point / spot: intensity
     float  _pad4;
-    float  area;       // Quad: surface area. Directional: angular radius of the disc in radians
+    float  area;       // Quad: surface area. Directional: angular radius of the disc in radians. Point / spot: bulb radius
     int    type;
     int2   _pad5;
 };
@@ -214,6 +214,45 @@ LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
             result.radiance = light.color;
             result.pdf = AreaLightPdf(int(index), lightCount, distance, cosAtLight);
             result.valid = true;
+        }
+    }
+    else if (light.type == (int)LightType::Point || light.type == (int)LightType::Spot)
+    {
+        // A point in the bulb (soft shadows when it has a size). The bulb itself is never hit by rays, so the
+        // light is sampled only here, like the sun.
+        float3 lightPosition = light.position;
+        if (light.area > 0.0f)
+        {
+            float2 u = NextRandomFloat2(rng);
+            float z = 1.0f - 2.0f * u.x;
+            float r = sqrt(saturate(1.0f - z * z));
+            float phi = 2.0f * PI * u.y;
+            float radius = light.area * pow(NextRandomFloat(rng), 1.0f / 3.0f);
+            lightPosition += float3(r * cos(phi), r * sin(phi), z) * radius;
+        }
+
+        float3 toLight = lightPosition - position;
+        float distance = length(toLight);
+        if (distance > 1e-4f)
+        {
+            float3 L = toLight / distance;
+            float falloff = 1.0f;
+            if (light.type == (int)LightType::Spot)
+            {
+                // Full inside the inner cone, none outside the outer one
+                float cosAngle = dot(-L, normalize(light.normal));
+                falloff = smoothstep(light.tangentX.x, light.tangentX.y, cosAngle);
+            }
+
+            if (falloff > 0.0f)
+            {
+                result.L = L;
+                result.distance = distance;
+                result.radiance = light.color * falloff / (distance * distance);
+                result.pdf = LightSelectionProbability(lightCount);
+                result.isDelta = true;
+                result.valid = true;
+            }
         }
     }
 

@@ -1,15 +1,17 @@
 // Scene files: the content of MainRayTracingScene as JSON (Scenes/*.json).
 //
 // {
-//   "version": 2,
+//   "version": 3,
 //   "camera":      { "position": [x, y, z], "target": [x, y, z] },
-//   "environment": { "ground": true, "groundHeight": -3.73, "groundMaterial": {...}, "sun": true, ... },
+//   "environment": { "ground": true, "groundHeight": -3.73, "groundMaterial": {...} },
 //   "entities": [
 //     { "name": "Cabin", "active": true, "parent": -1,
 //       "components": { "transform": {...}, "mesh": { "type": "model", "file": "Models/cabin.glb", "displacement": true } } },
 //     { "name": "Glass ball", "parent": 0,
 //       "components": { "transform": {...}, "mesh": { "type": "sphere", "radius": 1.2, "material": {...} } } },
-//     { "name": "Tree 1", "components": { "transform": {...}, "mesh": { "type": "tree", "shape": {...}, "look": {...}, "wind": {...} } } }
+//     { "name": "Tree 1", "components": { "transform": {...}, "mesh": { "type": "tree", "shape": {...}, "look": {...}, "wind": {...} } } },
+//     { "name": "Sun", "components": { "transform": {...}, "light": { "type": "directional", "color": [1, 0.58, 0.3], "intensity": 18,
+//                                                                        "angularRadius": 1.2 } } }
 //   ],
 //   "cameraPaths": [ { "name": "Path 1", "speed": 4, "ease": 1.5, "loop": false, "lookAlongPath": false,
 //                      "keys": [ { "position": [x, y, z], "target": [x, y, z] }, ... ] } ],
@@ -20,6 +22,8 @@
 // siblings keep their order. An entity has the components listed (no "transform": it has none).
 // A transform is { "position": [x, y, z], "rotation": [x, y, z] (Euler angles, degrees), "scale": [x, y, z] }.
 // Version 1 files (lists of "models", "spheres" and "trees" in place of "entities") still load, as root entities.
+// Before version 3 the sun was part of the environment ("sun", "sunDirection", "sunColor", "sunIntensity",
+// "sunAngularRadius"): such files get a "Sun" entity with a directional light in its place.
 // Every value is optional: what a file leaves out keeps its default, so files stay readable by later versions.
 
 #include "FoxRenderer.h"
@@ -104,16 +108,17 @@ namespace Fox {
 			using Scene = MainRayTracingScene;
 
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial, sun, sunDirection, sunColor, sunIntensity, sunAngularRadius)
+				ground, terrain, groundHeight, groundMaterial)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
-				const int FILE_VERSION = 2;
+				const int FILE_VERSION = 3;
 
 				using Fox::ECS::Entity;
 				using Fox::Scene::SceneGraph;
 				using Fox::Scene::MeshComponent;
 				using Fox::Scene::TransformComponent;
+				using Fox::Scene::LightComponent;
 
 				json TransformToJson(const RayTracingScene::ObjectTransform& transform) {
 					return {
@@ -188,6 +193,41 @@ namespace Fox {
 					return mesh;
 				}
 
+				json LightToJson(const LightComponent& light) {
+					const char* types[] = { "directional", "point", "spot" };
+					json j = {
+						{ "type", types[static_cast<int>(light.type)] },
+						{ "enabled", light.enabled },
+						{ "color", light.color },
+						{ "intensity", light.intensity },
+					};
+					if (light.type == LightComponent::Type::Directional) {
+						j["angularRadius"] = light.angularRadius;
+					}
+					else {
+						j["radius"] = light.radius;
+					}
+					if (light.type == LightComponent::Type::Spot) {
+						j["innerConeAngle"] = light.innerConeAngle;
+						j["outerConeAngle"] = light.outerConeAngle;
+					}
+					return j;
+				}
+
+				LightComponent LightFromJson(const json& j) {
+					LightComponent light;
+					const std::string type = j.value("type", std::string("directional"));
+					light.type = type == "point" ? LightComponent::Type::Point : type == "spot" ? LightComponent::Type::Spot : LightComponent::Type::Directional;
+					light.enabled = j.value("enabled", light.enabled);
+					light.color = j.value("color", light.color);
+					light.intensity = j.value("intensity", light.intensity);
+					light.angularRadius = j.value("angularRadius", light.angularRadius);
+					light.radius = j.value("radius", light.radius);
+					light.innerConeAngle = j.value("innerConeAngle", light.innerConeAngle);
+					light.outerConeAngle = j.value("outerConeAngle", light.outerConeAngle);
+					return light;
+				}
+
 				// How each component type is saved: under "components", by its key. A component type that is saved
 				// gets an entry here (see Scene/ECS/Components.h).
 				struct ComponentSerializer {
@@ -226,7 +266,38 @@ namespace Fox {
 							graph.GetRegistry().Add<MeshComponent>(entity, MeshFromJson(j));
 						},
 					},
+					{
+						"light",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const LightComponent* light = graph.GetRegistry().TryGet<LightComponent>(entity);
+							if (!light) {
+								return false;
+							}
+							j = LightToJson(*light);
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<LightComponent>(entity, LightFromJson(j));
+						},
+					},
 				};
+
+				// Before version 3: the environment's sun, as an entity
+				void SunFromEnvironment(const json& environment, SceneGraph& graph) {
+					if (!environment.is_object()) {
+						MainRayTracingScene::CreateSun(graph);
+						return;
+					}
+					if (!environment.value("sun", true)) {
+						return;
+					}
+					MainRayTracingScene::Sun sun;
+					sun.direction = environment.value("sunDirection", sun.direction);
+					sun.color = environment.value("sunColor", sun.color);
+					sun.intensity = environment.value("sunIntensity", sun.intensity);
+					sun.angularRadius = environment.value("sunAngularRadius", sun.angularRadius);
+					MainRayTracingScene::CreateSun(graph, sun);
+				}
 
 				json EntitiesToJson(const SceneGraph& graph) {
 					const std::vector<Entity> entities = graph.DepthFirst();
@@ -395,6 +466,9 @@ namespace Fox {
 					}
 					else {
 						Version1FromJson(file, newGraph);
+					}
+					if (file.value("version", 1) < 3) {
+						SunFromEnvironment(file.value("environment", json()), newGraph);
 					}
 				}
 				catch (const std::exception& e) {

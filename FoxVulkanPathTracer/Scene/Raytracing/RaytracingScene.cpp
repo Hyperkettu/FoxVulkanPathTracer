@@ -1234,6 +1234,18 @@ namespace Fox {
                 lights.push_back(sun);
             }
 
+            size_t RayTracingScene::AddLight(const Fox::Graphics::Vulkan::Light& light) {
+                lights.push_back(light);
+                return lights.size() - 1;
+            }
+
+            void RayTracingScene::SetLight(size_t index, const Fox::Graphics::Vulkan::Light& light) {
+                if (index < lightCount && index < lights.size()) {
+                    lights[index] = light;
+                    lightsDirty = true;
+                }
+            }
+
             void RayTracingScene::UploadGeometry() {
                 // The scene is always lit by the environment map; analytic lights are optional.
                 lightCount = static_cast<uint32_t>(lights.size());

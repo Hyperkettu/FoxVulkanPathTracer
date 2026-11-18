@@ -179,20 +179,7 @@ namespace Fox {
 				changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");
 
 				ImGui::Spacing();
-				changed |= ImGui::Checkbox("Sun", &environment.sun);
-				const glm::vec3 direction = glm::normalize(environment.sunDirection);
-				float azimuth = glm::degrees(std::atan2(direction.z, direction.x));
-				float elevation = glm::degrees(std::asin(glm::clamp(direction.y, -1.0f, 1.0f)));
-				bool turned = ImGui::SliderFloat("Sun direction", &azimuth, -180.0f, 180.0f, "%.0f deg");
-				turned |= ImGui::SliderFloat("Sun elevation", &elevation, -5.0f, 90.0f, "%.1f deg");
-				if (turned) {
-					const float a = glm::radians(azimuth), e = glm::radians(elevation);
-					environment.sunDirection = glm::vec3(std::cos(e) * std::cos(a), std::sin(e), std::cos(e) * std::sin(a));
-					changed = true;
-				}
-				changed |= ImGui::ColorEdit3("Sun colour", &environment.sunColor.x);
-				changed |= ImGui::SliderFloat("Sun strength", &environment.sunIntensity, 0.0f, 100.0f, "%.1f");
-				changed |= ImGui::SliderFloat("Sun size", &environment.sunAngularRadius, 0.1f, 10.0f, "%.2f deg");
+				ImGui::TextDisabled("The sun and other lights: entities with a Light component (Hierarchy, Inspector)");
 
 				if (changed) {
 					scene.MarkStructureChanged();

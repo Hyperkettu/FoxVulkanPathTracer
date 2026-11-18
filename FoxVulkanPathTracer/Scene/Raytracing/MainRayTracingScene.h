@@ -44,12 +44,19 @@ namespace Fox {
                     bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
                     float groundHeight = -3.73f;
                     SurfaceMaterial groundMaterial{ glm::vec3(0.07f, 0.07f, 0.08f), 0.12f };
-                    bool sun = true;
-                    glm::vec3 sunDirection{ 0.876f, 0.22f, 0.479f }; // Towards the sun
-                    glm::vec3 sunColor{ 1.0f, 0.58f, 0.30f };
-                    float sunIntensity = 18.0f;                       // Irradiance = colour * intensity
-                    float sunAngularRadius = 1.2f;                    // Degrees
                 };
+
+                // The sun a new scene starts with (an entity with a directional LightComponent)
+                struct Sun {
+                    glm::vec3 direction{ 0.876f, 0.22f, 0.479f }; // Towards the sun
+                    glm::vec3 color{ 1.0f, 0.58f, 0.30f };
+                    float intensity = 18.0f;                       // Irradiance = colour * intensity
+                    float angularRadius = 1.2f;                    // Degrees
+                };
+                // A root entity "Sun" in the graph with a directional light shining from direction
+                static Entity CreateSun(Fox::Scene::SceneGraph& graph, const Sun& sun = Sun{});
+                // The rotation that turns an entity's light to shine from this direction (towards the light)
+                static glm::quat RotationTowards(const glm::vec3& towardsLight);
 
                 struct CameraPose {
                     glm::vec3 position{ 29.0f, -2.6f, 17.0f };
@@ -90,6 +97,13 @@ namespace Fox {
                 // A copy of the entity and everything under it (trees are generated anew)
                 Entity DuplicateEntity(Entity entity);
 
+                // A new entity with a light of this type at position (a directional light shines straight down)
+                Entity AddLight(Fox::Scene::LightComponent::Type type, const glm::vec3& position, Entity parent = {});
+                // Gives the entity a light of this type (with defaults), or takes it away (dark right away). The scene
+                // rebuilds once to make room for it; changes to a light afterwards need no rebuild.
+                Fox::Scene::LightComponent& AddLightComponent(Entity entity, Fox::Scene::LightComponent::Type type);
+                void RemoveLightComponent(Entity entity);
+
                 // Gives the entity a mesh of this type (with defaults), or takes it away (hidden right away)
                 Fox::Scene::MeshComponent& AddMeshComponent(Entity entity, Fox::Scene::MeshComponent::Type type);
                 void RemoveMeshComponent(Entity entity);
@@ -121,7 +135,7 @@ namespace Fox {
                 // Models that fail to load are left out and reported in error (returns false).
                 bool RebuildScene(std::string& error);
 
-                // An empty scene (default environment, no objects)
+                // An empty scene (default environment, the sun, no objects)
                 void ClearContent();
 
                 // Saves the content, where objects are now (gizmos included) and the camera
@@ -155,6 +169,8 @@ namespace Fox {
 
                 // Moves and shows / hides the placed meshes as their entities are now
                 void SyncMeshes();
+                // The placed lights as their entities are now
+                void SyncLights();
                 bool objectsChanged = false;
                 // Meshes whose object is no longer theirs (the objects were rebuilt without them) are not placed
                 void ForgetStalePlacements();

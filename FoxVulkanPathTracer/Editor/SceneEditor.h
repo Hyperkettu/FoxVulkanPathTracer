@@ -8,7 +8,7 @@ namespace Fox {
 	namespace Editor {
 
 		// The scene window (edit mode, E key): save and load scene files, add models (any glTF file under
-		// Models/) and spheres, and the environment (ground, sun). The entities themselves are in the Hierarchy
+		// Models/) and spheres, and the environment (ground; lights are entities). The entities themselves are in the Hierarchy
 		// and Inspector windows (SceneGraphEditor). Adding or removing meshes rebuilds the scene; the renderer
 		// does that between frames.
 		class SceneEditor {

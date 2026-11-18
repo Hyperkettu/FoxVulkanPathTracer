@@ -27,7 +27,7 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Refraction** Solid glass bends light where it enters and leaves, with exact dielectric Fresnel reflection, total
   internal reflection, rough (frosted) glass through GGX microfacets and coloured absorption inside (Beer–Lambert).
   The default scene (`Scenes/default.json`) has a glass ball in the foreground.
-* **Lighting** Importance-sampled HDR environment map, emissive quads as area lights and a sun with soft shadows.
+* **Lighting** Importance-sampled HDR environment map, emissive quads as area lights, and light components: a sun with soft shadows, point and spot lights.
 * **Displacement Mapping** Surfaces are tessellated and displaced when a model loads, so the relief is real geometry
   (silhouettes, shadows, reflections). Height maps can be assigned per material; models without them (glTF has no slot
   for displacement) get heights reconstructed from their normal maps.
@@ -343,13 +343,21 @@ entity-component system whose registry keeps each component type in a packed arr
 | --- | --- |
 | Transform | Position, rotation and scale relative to the parent (the world for a root). Every new entity has one |
 | Mesh | The entity is rendered: a glTF model, a sphere or a generated tree. **Rendered** off hides it without a rebuild |
+| Light | The entity gives light: directional (the sun), point or spot. It shines along the entity's -Z axis; point and spot lights are where the entity is. **On** off darkens it without a rebuild |
+
+Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
+**Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot
+light's **Bulb radius** does the same. Point and spot intensity is the irradiance 1 m away, falling off with the
+square of the distance; a spot is full inside its inner angle and fades out towards its outer angle. Lights have no
+geometry: they are not seen directly or in mirrors, only by what they light. Adding or removing a light rebuilds the
+scene once (room in the light buffer); anything else about a light (moving it, colour, type) needs no rebuild.
 
 Every entity also has a name and an **active** flag; an inactive entity hides everything under it. A child moves,
 turns and scales with its parent. In edit mode:
 
 | Window | What it does |
 | --- | --- |
-| **Hierarchy** | Every entity as a tree. Click to select (the same selection as clicking in the view). Drag onto an entity to make it a child, onto the top or bottom edge of one to place it before or after, onto the empty space below to make it a root. Right-click: create an empty child, duplicate (`Ctrl+D`), unparent, active, delete. **+ Create**: an empty entity, a sphere or a tree |
+| **Hierarchy** | Every entity as a tree. Click to select (the same selection as clicking in the view). Drag onto an entity to make it a child, onto the top or bottom edge of one to place it before or after, onto the empty space below to make it a root. Right-click: create an empty child, duplicate (`Ctrl+D`), unparent, active, delete. **+ Create**: an empty entity, a sphere, a tree or a light |
 | **Inspector** | The selected entity: active, name, and each component in a section (transform with Euler angles in degrees, the mesh's type, file, sphere material). **Add Component** adds one; a section's close button (or right-click on Transform) removes it |
 
 Adding a component type (physics, audio, ...) takes its struct in `Scene/ECS/Components.h`, an inspector entry in
@@ -370,15 +378,15 @@ without that file it starts empty, with only the ground and the sun. In edit mod
 | --- | --- |
 | Path, **Save** / **Load** / **New** | Save the scene (with the current view) to the path, load a scene file, or start an empty scene. Save to `Scenes/default.json` to change what the renderer starts with |
 | **Add** | Add any glTF model from `Models/` (`.glb` / `.gltf`, optionally with displacement from its normal maps), or a sphere with a glass, frosted glass, chrome, gold or plastic material. New objects stand on the ground 12 m in front of the camera. Trees are added in the **Trees** window |
-| **Environment** | Ground (height, colour, roughness) and sun (direction, elevation, colour, strength, size) |
+| **Environment** | Ground (height, colour, roughness). The sun is an entity with a Light component |
 
 The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for what a file leaves out:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "camera": { "position": [29, -2.6, 17], "target": [4, -0.6, -3] },
-  "environment": { "ground": true, "groundHeight": -3.73, "sun": true, "sunDirection": [0.876, 0.22, 0.479], "sunIntensity": 18 },
+  "environment": { "ground": true, "groundHeight": -3.73 },
   "entities": [
     { "name": "Cabin", "active": true, "parent": -1,
       "components": {
@@ -391,14 +399,19 @@ The format (`Scene/SceneFile.cpp`), every value optional, defaults filled in for
                   "material": { "color": [1, 1, 1], "roughness": 0, "transmission": 1, "ior": 1.5,
                                 "attenuationColor": [0.8, 0.94, 0.9], "attenuationDistance": 2 } } } },
     { "name": "Tree 1", "components": { "transform": { "position": [14, -3.73, 12] },
-                                         "mesh": { "type": "tree", "shape": {}, "look": {}, "wind": {} } } }
+                                         "mesh": { "type": "tree", "shape": {}, "look": {}, "wind": {} } } },
+    { "name": "Sun", "components": { "transform": { "rotation": [-13, 61, 0] },
+                                     "light": { "type": "directional", "color": [1, 0.58, 0.3], "intensity": 18, "angularRadius": 1.2 } } },
+    { "name": "Lamp", "components": { "transform": { "position": [18, 1, 4] },
+                                      "light": { "type": "spot", "intensity": 50, "radius": 0.05, "innerConeAngle": 20, "outerConeAngle": 30 } } }
   ]
 }
 ```
 
 Entities are listed parents first; `parent` is the index of the parent in the list (`-1` or none: a root), and a
 child's transform is relative to its parent. An entity without `"transform"` has no Transform component. Version 1
-files (`"models"`, `"spheres"` and `"trees"` lists) still load, as root entities. Rotations are Euler angles in
+files (`"models"`, `"spheres"` and `"trees"` lists) still load, as root entities, and files before version 3 have
+their environment's sun (`"sun"`, `"sunDirection"`, ...) turned into a Sun entity. Rotations are Euler angles in
 degrees. A tree's `shape`, `look` and `wind` hold everything the Trees window edits
 (saved in full, so a file shows every parameter). Adding, removing or loading rebuilds the scene's acceleration
 structures; models already loaded once are kept in memory, so this takes about half a second with two displaced

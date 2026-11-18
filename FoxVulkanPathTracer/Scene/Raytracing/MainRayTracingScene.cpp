@@ -25,6 +25,7 @@ namespace Fox {
 		namespace RayTracing {
 
 			using Fox::Scene::MeshComponent;
+			using Fox::Scene::LightComponent;
 
 			void MainRayTracingScene::Initialize() {
 				textureLibrary = std::make_unique<Fox::Scene::TextureLibrary>(device, physicalDevice, commandPool->Get(), queue);
@@ -38,6 +39,7 @@ namespace Fox {
 					}
 				}
 				else {
+					CreateSun(graph);
 					std::cout << "Scene: no " << DEFAULT_SCENE_FILE << ", starting with an empty scene\n";
 				}
 
@@ -115,8 +117,17 @@ namespace Fox {
 				else if (environment.ground) {
 					AddGroundPlane(environment.groundHeight, 2000.0f, environment.groundMaterial.ToMaterial());
 				}
-				if (environment.sun) {
-					AddSun(environment.sunDirection, environment.sunColor * environment.sunIntensity, environment.sunAngularRadius);
+
+				// Lights: one per entity with a light, dark while it is off (so turning it on needs no rebuild)
+				for (Entity entity : entities) {
+					LightComponent* light = registry.TryGet<LightComponent>(entity);
+					if (!light) {
+						continue;
+					}
+					light->uploaded = light->ToLight(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix,
+						light->enabled && graph.IsActiveInHierarchy(entity));
+					light->index = RayTracingScene::AddLight(light->uploaded);
+					light->placed = true;
 				}
 				objectEntities.resize(GetObjectCount());
 
@@ -144,6 +155,81 @@ namespace Fox {
 
 				error = problems;
 				return problems.empty();
+			}
+
+			void MainRayTracingScene::SyncLights() {
+				auto& registry = graph.GetRegistry();
+				registry.Each<LightComponent>([&](Entity entity, LightComponent& light) {
+					if (!light.placed) {
+						return;
+					}
+					const Fox::Graphics::Vulkan::Light now = light.ToLight(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix,
+						light.enabled && graph.IsActiveInHierarchy(entity));
+					if (!LightComponent::Same(now, light.uploaded)) {
+						SetLight(light.index, now);
+						light.uploaded = now;
+						objectsChanged = true;
+					}
+				});
+			}
+
+			glm::quat MainRayTracingScene::RotationTowards(const glm::vec3& towardsLight) {
+				const glm::vec3 direction = glm::dot(towardsLight, towardsLight) > 1e-12f ? glm::normalize(towardsLight) : glm::vec3(0.0f, 1.0f, 0.0f);
+				return glm::normalize(glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), direction));
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::CreateSun(Fox::Scene::SceneGraph& graph, const Sun& sun) {
+				const Entity entity = graph.CreateEntity("Sun");
+				Fox::Scene::Transform transform;
+				transform.position = glm::vec3(0.0f, 20.0f, 0.0f); // Out of the way: a directional light's position does not matter
+				transform.rotation = RotationTowards(sun.direction);
+				graph.SetLocalTransform(entity, transform);
+
+				LightComponent light;
+				light.type = LightComponent::Type::Directional;
+				light.color = sun.color;
+				light.intensity = sun.intensity;
+				light.angularRadius = sun.angularRadius;
+				graph.GetRegistry().Add<LightComponent>(entity, std::move(light));
+				return entity;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddLight(LightComponent::Type type, const glm::vec3& position, Entity parent) {
+				const Entity entity = graph.CreateEntity(LightComponent::TypeName(type), parent);
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				transform.rotation = RotationTowards(glm::vec3(0.0f, 1.0f, 0.0f)); // Shining down
+				graph.SetWorldTransform(entity, transform);
+				AddLightComponent(entity, type);
+				return entity;
+			}
+
+			LightComponent& MainRayTracingScene::AddLightComponent(Entity entity, LightComponent::Type type) {
+				RemoveLightComponent(entity);
+				LightComponent light;
+				light.type = type;
+				if (type != LightComponent::Type::Directional) {
+					light.color = glm::vec3(1.0f, 0.85f, 0.65f); // Warm, like a bulb
+					light.intensity = 50.0f;
+					light.radius = 0.05f;
+				}
+				structureChanged = true; // Room for it in the light buffer
+				return graph.GetRegistry().Add<LightComponent>(entity, std::move(light));
+			}
+
+			void MainRayTracingScene::RemoveLightComponent(Entity entity) {
+				LightComponent* light = graph.GetRegistry().TryGet<LightComponent>(entity);
+				if (!light) {
+					return;
+				}
+				if (light->placed) {
+					Fox::Graphics::Vulkan::Light dark = light->uploaded;
+					dark.color = glm::vec3(0.0f); // Dark until the rebuild takes it out
+					SetLight(light->index, dark);
+					objectsChanged = true;
+				}
+				graph.GetRegistry().Remove<LightComponent>(entity);
+				structureChanged = true;
 			}
 
 			void MainRayTracingScene::ForgetStalePlacements() {
@@ -180,6 +266,7 @@ namespace Fox {
 
 			void MainRayTracingScene::ClearContent() {
 				graph.Clear();
+				CreateSun(graph);
 				environment = Environment{};
 				cameraManager.Clear();
 				ResetTerrain();
@@ -283,6 +370,7 @@ namespace Fox {
 						const MeshComponent::Type type = mesh->type;
 						MeshChanged(nullptr, &type);
 					}
+					RemoveLightComponent(e);
 				}
 				graph.DestroyEntity(entity);
 			}
@@ -301,6 +389,10 @@ namespace Fox {
 							mesh->tree = mesh->tree->CloneSettings();
 						}
 						MeshChanged(mesh, nullptr);
+					}
+					if (LightComponent* light = registry.TryGet<LightComponent>(e)) {
+						light->placed = false; // A light of its own, with the rebuild
+						structureChanged = true;
 					}
 				}
 				graph.SetName(copy, graph.GetName(copy) + " (copy)");
@@ -337,6 +429,7 @@ namespace Fox {
 				// The scene graph's world transforms, and the meshes placed and shown as their entities are
 				graph.UpdateTransforms();
 				SyncMeshes();
+				SyncLights();
 
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to
 				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {

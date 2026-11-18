@@ -11,6 +11,7 @@ namespace Fox {
 			using Entity = Fox::ECS::Entity;
 			using Fox::Scene::MeshComponent;
 			using Fox::Scene::TransformComponent;
+			using Fox::Scene::LightComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -160,6 +161,60 @@ namespace Fox {
 				}
 			}
 
+			void DrawLight(Scene& scene, Entity entity, State&) {
+				Fox::Scene::SceneGraph& graph = scene.GetSceneGraph();
+				LightComponent& light = graph.GetRegistry().Get<LightComponent>(entity);
+
+				ImGui::Checkbox("On", &light.enabled);
+
+				int type = static_cast<int>(light.type);
+				const char* types[] = { "Directional (sun)", "Point", "Spot" };
+				if (ImGui::Combo("Type", &type, types, IM_ARRAYSIZE(types))) {
+					light.type = static_cast<LightComponent::Type>(type); // Same room in the light buffer: no rebuild
+				}
+
+				ImGui::ColorEdit3("Colour", &light.color.x);
+				if (light.type == LightComponent::Type::Directional) {
+					ImGui::DragFloat("Strength", &light.intensity, 0.1f, 0.0f, 1000.0f, "%.1f");
+					ImGui::SetItemTooltip("Irradiance on a surface facing it (times the colour)");
+					ImGui::SliderFloat("Size", &light.angularRadius, 0.05f, 10.0f, "%.2f deg");
+					ImGui::SetItemTooltip("Apparent radius of its disc in the sky (the real sun: 0.27). Larger = softer shadows");
+
+					// Where it shines from: the entity's rotation, as direction and elevation in the sky
+					glm::vec3 direction = glm::vec3(graph.GetWorldMatrix(entity)[2]);
+					direction = glm::dot(direction, direction) > 1e-12f ? glm::normalize(direction) : glm::vec3(0.0f, 1.0f, 0.0f);
+					float azimuth = glm::degrees(std::atan2(direction.z, direction.x));
+					float elevation = glm::degrees(std::asin(glm::clamp(direction.y, -1.0f, 1.0f)));
+					bool turned = ImGui::SliderFloat("Direction", &azimuth, -180.0f, 180.0f, "%.0f deg");
+					turned |= ImGui::SliderFloat("Elevation", &elevation, -10.0f, 90.0f, "%.1f deg");
+					if (turned && graph.HasTransform(entity)) {
+						const float a = glm::radians(azimuth), e = glm::radians(elevation);
+						Fox::Scene::Transform transform = graph.GetWorldTransform(entity);
+						transform.rotation = Scene::RotationTowards(glm::vec3(std::cos(e) * std::cos(a), std::sin(e), std::cos(e) * std::sin(a)));
+						graph.SetWorldTransform(entity, transform);
+					}
+				}
+				else {
+					ImGui::DragFloat("Intensity", &light.intensity, 0.5f, 0.0f, 100000.0f, "%.1f");
+					ImGui::SetItemTooltip("Irradiance 1 m away (times the colour); it falls off with the square of the distance");
+					ImGui::DragFloat("Bulb radius (m)", &light.radius, 0.005f, 0.0f, 5.0f, "%.3f");
+					ImGui::SetItemTooltip("0: hard shadows. The bulb itself is not seen");
+					if (light.type == LightComponent::Type::Spot) {
+						ImGui::SliderFloat("Inner angle", &light.innerConeAngle, 0.0f, 89.0f, "%.1f deg");
+						ImGui::SliderFloat("Outer angle", &light.outerConeAngle, 0.5f, 90.0f, "%.1f deg");
+						light.innerConeAngle = std::min(light.innerConeAngle, light.outerConeAngle);
+						ImGui::TextDisabled("It shines along the entity's -Z axis");
+					}
+				}
+
+				if (light.placed) {
+					ImGui::TextDisabled("Light %zu", light.index);
+				}
+				else {
+					ImGui::TextDisabled("Not in the scene yet: it rebuilds once no control is held");
+				}
+			}
+
 			const ComponentEditor COMPONENT_EDITORS[] = {
 				{
 					"Transform", false,
@@ -191,6 +246,26 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.RemoveMeshComponent(entity); },
 					DrawMesh,
+				},
+				{
+					"Light", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<LightComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::BeginMenu("Light")) {
+							if (ImGui::MenuItem("Directional (sun)")) {
+								scene.AddLightComponent(entity, LightComponent::Type::Directional);
+							}
+							if (ImGui::MenuItem("Point")) {
+								scene.AddLightComponent(entity, LightComponent::Type::Point);
+							}
+							if (ImGui::MenuItem("Spot")) {
+								scene.AddLightComponent(entity, LightComponent::Type::Spot);
+							}
+							ImGui::EndMenu();
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.RemoveLightComponent(entity); },
+					DrawLight,
 				},
 			};
 		}
@@ -237,6 +312,16 @@ namespace Fox {
 				}
 				if (ImGui::MenuItem("Tree")) {
 					gizmo.Select(scene.AddTree(spawnPosition));
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Directional light")) {
+					gizmo.Select(scene.AddLight(LightComponent::Type::Directional, spawnPosition + glm::vec3(0.0f, 20.0f, 0.0f)));
+				}
+				if (ImGui::MenuItem("Point light")) {
+					gizmo.Select(scene.AddLight(LightComponent::Type::Point, spawnPosition + glm::vec3(0.0f, 2.0f, 0.0f)));
+				}
+				if (ImGui::MenuItem("Spot light")) {
+					gizmo.Select(scene.AddLight(LightComponent::Type::Spot, spawnPosition + glm::vec3(0.0f, 4.0f, 0.0f)));
 				}
 				ImGui::TextDisabled("Models: the Scene window's Add section");
 				ImGui::EndPopup();
@@ -390,6 +475,10 @@ namespace Fox {
 			if (const MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s%s", MeshComponent::TypeName(mesh->type), mesh->enabled ? "" : " (off)");
+			}
+			if (const LightComponent* light = graph.GetRegistry().TryGet<LightComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s%s", LightComponent::TypeName(light->type), light->enabled ? "" : " (off)");
 			}
 
 			if (open && !leaf) {

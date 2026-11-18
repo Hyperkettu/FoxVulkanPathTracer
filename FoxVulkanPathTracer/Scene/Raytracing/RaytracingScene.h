@@ -194,6 +194,11 @@ namespace Fox {
                 //   angularRadius:  apparent radius of the disc in degrees (the real sun: 0.27). Larger = softer shadows
                 void AddSun(const glm::vec3& directionToSun, const glm::vec3& irradiance, float angularRadius);
 
+                // Adds an analytic light (directional, point or spot; see Light.h) before Build; returns its index
+                size_t AddLight(const Fox::Graphics::Vulkan::Light& light);
+                // Replaces a light added with AddLight, uploaded with the next RecordFrameUpdate (no rebuild)
+                void SetLight(size_t index, const Fox::Graphics::Vulkan::Light& light);
+
                 // Uploads the geometry added so far and builds the acceleration structures.
                 // Call once, after the last AddMesh.
                 void Build();
