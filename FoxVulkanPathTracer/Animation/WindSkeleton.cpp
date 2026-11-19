@@ -17,19 +17,23 @@ namespace Fox {
 			}
 		}
 
-		void WindSkeleton::UpdateLean(Lean& lean, const Settings& settings, const glm::vec3& worldBase, float time, float deltaTime) {
-			if (deltaTime <= 0.0f) {
-				return;
-			}
+		float WindSkeleton::LeanTarget(const Settings& settings, const glm::vec3& worldBase, float time) {
 			glm::vec3 direction(settings.windDirection.x, 0.0f, settings.windDirection.z);
 			direction = glm::dot(direction, direction) > 1e-8f ? glm::normalize(direction) : glm::vec3(1.0f, 0.0f, 0.0f);
 
-			// The gust where the tree stands, and the lean it holds against it: drag grows with the square of the speed
+			// The gust where it stands, and the lean it holds against it: drag grows with the square of the speed
 			// (8 m/s: about 4 degrees; with response, as the rig's)
 			const float gustTime = time - glm::dot(worldBase, direction) / std::max(settings.gustSpeed, 0.1f);
 			const float speed = settings.windSpeed * std::max(1.0f + settings.gustStrength * Gust(gustTime), 0.0f);
 			const float LEAN_PER_SPEED_SQUARED = 0.0012f;
-			const float target = std::min(LEAN_PER_SPEED_SQUARED * (settings.response / 5.0f) * speed * speed, settings.maxAngle);
+			return std::min(LEAN_PER_SPEED_SQUARED * (settings.response / 5.0f) * speed * speed, settings.maxAngle);
+		}
+
+		void WindSkeleton::UpdateLean(Lean& lean, const Settings& settings, const glm::vec3& worldBase, float time, float deltaTime) {
+			if (deltaTime <= 0.0f) {
+				return;
+			}
+			const float target = LeanTarget(settings, worldBase, time);
 
 			const float w = glm::two_pi<float>() * std::max(settings.trunkFrequency, 0.05f);
 			const int substeps = std::clamp(static_cast<int>(std::ceil(deltaTime / (2.0f * SUBSTEP))), 1, 32);

@@ -22,6 +22,7 @@ namespace Fox {
 			using Fox::Scene::ScriptComponent;
 			using Fox::Scene::PrefabComponent;
 			using Fox::Scene::SoundComponent;
+			using Fox::Scene::ClutterComponent;
 
 			// Prefab instances in the Hierarchy: the instance blue, what is under it a paler blue
 			const ImVec4 PREFAB_COLOR(0.45f, 0.72f, 1.0f, 1.0f);
@@ -708,6 +709,94 @@ namespace Fox {
 				}
 			}
 
+			void DrawClutter(Scene& scene, Entity entity, State&) {
+				ClutterComponent& clutter = scene.GetSceneGraph().GetRegistry().Get<ClutterComponent>(entity);
+				bool changed = ImGui::Checkbox("On", &clutter.enabled);
+
+				static std::vector<std::string> models;
+				static double listed = -10.0;
+				if (ImGui::GetTime() - listed > 2.0) {
+					models = Fox::Editor::SceneEditor::ListModels("Models");
+					listed = ImGui::GetTime();
+				}
+				if (ImGui::BeginCombo("Mesh", clutter.model.empty() ? "Grass (generated)" : clutter.model.c_str(), ImGuiComboFlags_HeightLarge)) {
+					if (ImGui::Selectable("Grass (generated)", clutter.model.empty())) {
+						clutter.model.clear();
+						changed = true;
+					}
+					for (const std::string& file : models) {
+						if (ImGui::Selectable(file.c_str(), file == clutter.model)) {
+							clutter.model = file;
+							changed = true;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SetItemTooltip("What is scattered: a generated tuft of grass or any model (flowers, stones, bushes, cards)");
+				if (clutter.model.empty()) {
+					changed |= ImGui::ColorEdit3("Grass colour", &clutter.grassColor.x);
+					changed |= ImGui::SliderFloat("Grass height (m)", &clutter.grassHeight, 0.05f, 2.0f, "%.2f");
+					changed |= ImGui::SliderInt("Blades per tuft", &clutter.blades, 1, 64);
+				}
+
+				ImGui::SeparatorText("Scatter");
+				changed |= ImGui::DragFloat2("Area (m)", &clutter.size.x, 0.25f, 0.1f, 2000.0f, "%.1f");
+				changed |= ImGui::SliderFloat("Density (per m2)", &clutter.density, 0.01f, 200.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				int seed = static_cast<int>(clutter.seed);
+				if (ImGui::InputInt("Seed", &seed)) {
+					clutter.seed = static_cast<uint32_t>(std::max(seed, 0));
+					changed = true;
+				}
+				changed |= ImGui::DragFloatRange2("Scale", &clutter.minScale, &clutter.maxScale, 0.01f, 0.01f, 20.0f, "%.2f");
+				changed |= ImGui::Checkbox("Random turn", &clutter.randomTurn);
+				changed |= ImGui::SliderFloat("Align to ground", &clutter.alignToGround, 0.0f, 1.0f, "%.2f");
+				ImGui::SetItemTooltip("0: every copy upright; 1: tilted with the ground's slope");
+				changed |= ImGui::SliderFloat("Max slope", &clutter.maxSlope, 0.0f, 90.0f, "%.0f deg");
+				changed |= ImGui::SliderFloat("Sink (m)", &clutter.sink, 0.0f, 0.5f, "%.2f");
+				changed |= ImGui::SliderFloat("Edge fade", &clutter.edgeFade, 0.0f, 1.0f, "%.2f");
+				ImGui::SetItemTooltip("How far in from the area's edges the copies thin out: 0 a hard border, 1 thinning from the middle");
+				{
+					const auto& layers = scene.GetTerrain().settings.layers;
+					auto layerName = [&layers](int index) {
+						return index < 0 ? std::string("Anywhere") : index < static_cast<int>(layers.size()) && !layers[index].name.empty()
+							? layers[index].name : "Layer " + std::to_string(index + 1);
+					};
+					if (ImGui::BeginCombo("On terrain layer", layerName(clutter.terrainLayer).c_str())) {
+						for (int index = -1; index < static_cast<int>(std::min<size_t>(layers.size(), 4)); index++) {
+							if (ImGui::Selectable(layerName(index).c_str(), index == clutter.terrainLayer)) {
+								clutter.terrainLayer = index;
+								changed = true;
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SetItemTooltip("Only where this layer is painted on the terrain (Terrain window), thinning out where it fades");
+				}
+
+				ImGui::SeparatorText("Motion");
+				ImGui::Checkbox("Face the camera", &clutter.faceCamera);
+				ImGui::SetItemTooltip("Billboards: every copy turns about its up axis so its +Z faces the camera, every frame. For flat cards;\n"
+					"in a path tracer shadows and reflections see them turned towards the camera too");
+				ImGui::SliderFloat("Sway", &clutter.sway, 0.0f, 3.0f, "%.2f");
+				ImGui::SetItemTooltip("In the wind (Environment window > Wind towards). Copies within 80 m sway");
+
+				if (clutter.copies > 0) {
+					ImGui::TextDisabled("%u copies, %llu triangles each (%.1f M in all)", clutter.copies,
+						static_cast<unsigned long long>(clutter.triangles), clutter.copies * static_cast<double>(clutter.triangles) / 1e6);
+				}
+				if (!clutter.problem.empty()) {
+					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", clutter.problem.c_str());
+				}
+				if (ImGui::Button("Scatter again")) {
+					changed = true;
+				}
+				ImGui::SetItemTooltip("After sculpting the terrain: the copies onto the ground as it is now");
+				if (changed) {
+					clutter.placed = false; // Scattered with the rebuild (once a slider is let go)
+					scene.MarkStructureChanged();
+				}
+			}
+
 			void DrawSound(Scene& scene, Entity entity, State&) {
 				SoundComponent& sound = scene.GetSceneGraph().GetRegistry().Get<SoundComponent>(entity);
 				if (!scene.GetAudio()) {
@@ -950,6 +1039,21 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<ScriptComponent>(entity); },
 					DrawScript,
+				},
+				{
+					"Clutter", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<ClutterComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Clutter (grass, stones...)")) {
+							scene.GetSceneGraph().GetRegistry().Add<ClutterComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.GetSceneGraph().GetRegistry().Remove<ClutterComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawClutter,
 				},
 				{
 					"Sound", true,

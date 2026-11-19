@@ -66,6 +66,9 @@ namespace Fox {
 				float velocity = 0.0f;
 			};
 			static void UpdateLean(Lean& lean, const Settings& settings, const glm::vec3& worldBase, float time, float deltaTime);
+			// The angle the gusty wind pushes a plant at worldBase to (radians, towards the wind), with no spring
+			// (grass and other clutter: light and quick, it follows the gusts)
+			static float LeanTarget(const Settings& settings, const glm::vec3& worldBase, float time);
 
 			// Per bone: pose * inverse(bind), in mesh space (for RayTracingScene::SetJointMatrices)
 			const std::vector<glm::mat4>& GetSkinMatrices() const { return skinMatrices; }

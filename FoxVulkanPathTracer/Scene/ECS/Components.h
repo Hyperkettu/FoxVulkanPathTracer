@@ -23,6 +23,7 @@
 //   ScriptComponent     C# scripts run on it while the game plays (Scripts/*.cs, see Scripting/ScriptHost.h)
 //   PrefabComponent     it is an instance of a prefab (Prefabs/*.prefab.json): what is under it comes from there
 //   SoundComponent      it plays a sound (in the world, from where it is) or background music (Audio/AudioEngine.h)
+//   ClutterComponent    it scatters copies of a mesh over the ground around it: grass, flowers, stones (instanced)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -307,6 +308,50 @@ namespace Fox {
 			float maxDistance = 60.0f; // Metres: quieter until this far
 
 			int64_t voice = 0;         // Playing (Audio::AudioEngine handle; 0: not)
+		};
+
+		// The entity scatters copies of a mesh over the ground around it: grass, flowers, stones, bushes. The mesh can be
+		// any glTF model or a generated tuft of grass blades. Every copy is its own top level instance of the one mesh
+		// (its acceleration structure is shared), so thousands cost little memory. Copies stand on the ground (the
+		// terrain or the ground plane) on a jittered grid, with random size and turn, tilted towards the ground's
+		// slope; too steep ground is left bare. They can turn to face the camera every frame (billboards: for flat
+		// cards) and sway in the wind (the scene's direction). Moving the entity moves them; once it stops they are
+		// scattered again over the ground where it is.
+		struct ClutterComponent {
+			bool enabled = true;
+			std::string model;                 // Models/*.glb or .gltf; empty: a generated tuft of grass
+			glm::vec2 size{ 20.0f, 20.0f };    // Metres along the entity's x and z, centred on it
+			float density = 4.0f;              // Copies per square metre
+			uint32_t seed = 1;
+			float minScale = 0.7f;
+			float maxScale = 1.3f;
+			bool randomTurn = true;            // Random turn about the up axis
+			float alignToGround = 0.5f;        // 0: upright, 1: along the ground's normal
+			float maxSlope = 40.0f;            // Degrees: steeper ground is left bare
+			float sink = 0.02f;                // Metres into the ground (times the copy's scale)
+			float edgeFade = 0.2f;             // How much of the area (from its edges in) the copies thin out over: no hard border
+			int terrainLayer = -1;             // Only where this terrain layer is painted (thinning out where it fades); -1: anywhere
+			bool faceCamera = false;           // Billboards: each copy turns about its up axis to face the camera (+Z towards it)
+			float sway = 1.0f;                 // In the wind: 0 still, 1 grass-like
+			// The generated grass
+			glm::vec3 grassColor{ 0.20f, 0.33f, 0.07f };
+			float grassHeight = 0.35f;         // Metres
+			int blades = 14;                   // Per tuft
+
+			// Set by the scene
+			bool placed = false;               // In the last rebuild (whether or not any copy fit)
+			bool placedEnabled = false;
+			size_t object = SIZE_MAX;          // Its object, SIZE_MAX if none
+			glm::mat4 placedMatrix{ 1.0f };    // Its world matrix when scattered
+			float movedAgo = -1.0f;            // Seconds since it last moved (scattered again after a moment); < 0: not moved
+			uint32_t copies = 0;
+			uint64_t triangles = 0;            // Per copy
+			std::string problem;
+			// Per copy, for turning and swaying them
+			std::vector<glm::vec3> positions;
+			std::vector<glm::mat4> shapes;     // Tilt to the ground and size (no turn, no position)
+			std::vector<float> turns;          // Radians about the up axis
+			std::vector<float> phases;
 		};
 
 		// The entity is an instance of a prefab: an entity tree saved in a file (Prefabs/*.prefab.json), placed any

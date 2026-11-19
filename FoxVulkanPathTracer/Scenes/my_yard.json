@@ -4861,6 +4861,116 @@
           }
         }
       }
+    },
+    {
+      "name": "Grass",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Valley grass",
+      "active": true,
+      "parent": 153,
+      "components": {
+        "transform": {
+          "position": [
+            -20.0,
+            0.0,
+            10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "clutter": {
+          "terrainLayer": 0,
+          "minScale": 0.6,
+          "maxScale": 1.4,
+          "maxSlope": 32.0,
+          "grassColor": [
+            0.1,
+            0.17,
+            0.04
+          ],
+          "blades": 18,
+          "size": [
+            240.0,
+            240.0
+          ],
+          "density": 1.6,
+          "seed": 7,
+          "edgeFade": 0.15
+        }
+      }
+    },
+    {
+      "name": "Meadow grass",
+      "active": true,
+      "parent": 153,
+      "components": {
+        "transform": {
+          "position": [
+            -30.0,
+            0.0,
+            72.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "clutter": {
+          "terrainLayer": 0,
+          "minScale": 0.6,
+          "maxScale": 1.4,
+          "maxSlope": 32.0,
+          "grassColor": [
+            0.1,
+            0.17,
+            0.04
+          ],
+          "blades": 18,
+          "size": [
+            80.0,
+            70.0
+          ],
+          "density": 6.0,
+          "seed": 11,
+          "edgeFade": 0.5
+        }
+      }
     }
   ],
   "treeAssets": [

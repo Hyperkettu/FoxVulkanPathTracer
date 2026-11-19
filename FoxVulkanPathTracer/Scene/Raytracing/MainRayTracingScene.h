@@ -300,6 +300,8 @@ namespace Fox {
                 size_t FillVolumeConstants(Fox::Graphics::Vulkan::CameraUBO& constants) const;
                 // A new entity with a smoke volume at position
                 Entity AddSmoke(const glm::vec3& position, bool glowing = false);
+                // An entity scattering grass around position (ClutterComponent)
+                Entity AddClutter(const glm::vec3& position);
 
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
@@ -368,6 +370,11 @@ namespace Fox {
                 void SyncMeshes();
                 // Water: drops (rain and wind gusts) and a rebuild once moved water has come to rest
                 void UpdateWater(float dt);
+                // Clutter (ClutterComponent): scattered with the rebuild; turned, swayed and followed every frame
+                void PlaceClutter(const std::vector<Entity>& entities, std::string& problems);
+                void UpdateClutter(float dt);
+                static void MakeGrassTuft(const Fox::Scene::ClutterComponent& clutter, std::vector<Fox::Graphics::Vulkan::Vertex>& vertices,
+                    std::vector<uint32_t>& indices);
                 bool windLevelOfDetail = true;
                 WindStats windStats;
                 uint32_t windFrame = 0;

@@ -125,6 +125,22 @@ namespace Fox {
 			return true;
 		}
 
+		bool Terrain::LayerWeightAt(float x, float z, int layer, float& weight) const {
+			if (!IsCreated() || blend.empty() || layer < 0 || layer > 3) {
+				return false;
+			}
+			const float half = settings.size * 0.5f;
+			const float lx = x - settings.position.x, lz = z - settings.position.z;
+			if (std::abs(lx) > half || std::abs(lz) > half) {
+				return false;
+			}
+			const int resolution = settings.blendResolution;
+			const int column = std::clamp(static_cast<int>((lx + half) / settings.size * resolution), 0, resolution - 1);
+			const int row = std::clamp(static_cast<int>((lz + half) / settings.size * resolution), 0, resolution - 1);
+			weight = blend[static_cast<size_t>(row) * resolution + column][layer];
+			return true;
+		}
+
 		void Terrain::HeightBounds() const {
 			if (boundsValid) {
 				return;

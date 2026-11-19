@@ -43,6 +43,21 @@ namespace Fox {
                 // different transforms: its geometry and acceleration structures are stored once and instanced.
                 void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name = "Mesh");
 
+                // Instanced objects (clutter: grass, flowers, stones): one object, many copies of one mesh, each copy its
+                // own top level instance sharing the mesh's structures. items: each copy's matrix (world space as placed;
+                // the object's transform then moves them all). Copies past the clutter budget (MAX_CLUTTER_INSTANCES top
+                // level instances in all) are left out: GetObjectItems tells how many were placed. No light sampling of
+                // emissive clutter (it still glows where rays hit it). Before Build.
+                size_t AddInstancedMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, std::vector<glm::mat4> items, const std::string& name);
+                size_t AddInstancedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices, const std::vector<uint32_t>& surfaceIndices,
+                    const Fox::Graphics::Vulkan::Material& material, std::vector<glm::mat4> items, const std::string& name);
+                const std::vector<glm::mat4>& GetObjectItems(size_t object) const { return placements[object].items; }
+                // To move copies (the same count): traced from the next frame
+                std::vector<glm::mat4>& EditObjectItems(size_t object) {
+                    tlasDirty = true;
+                    return placements[object].items;
+                }
+
                 // Adds a large horizontal quad at the given height, e.g. as the ground. Not movable.
                 void AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material);
 
@@ -220,7 +235,8 @@ namespace Fox {
                 static constexpr uint32_t DYNAMIC_INDEX_CAPACITY = 24'000'000; // Cluster levels: about twice a mesh's triangles
                 static constexpr uint32_t MAX_SUBMESHES = 131'072;              // One per cluster of a mesh traced through clusters
                 static constexpr uint32_t MAX_MATERIALS = 4'096;
-                static constexpr uint32_t MAX_INSTANCES = 16'384; // Painted forests: one per tree
+                static constexpr uint32_t MAX_INSTANCES = 131'072; // Painted forests: one per tree; clutter: one per copy
+                static constexpr uint32_t MAX_CLUTTER_INSTANCES = 98'304; // Of them, at most this many for instanced objects
                 uint32_t GetDynamicVertexCount() const { return static_cast<uint32_t>(vertices.size()) - staticCounts.vertices; }
                 uint32_t GetDynamicIndexCount() const { return static_cast<uint32_t>(indices.size()) - staticCounts.indices; }
 
@@ -578,6 +594,9 @@ namespace Fox {
                     glm::mat4 previousMatrix{ 1.0f }; // As traced in the previous frame
                     bool visible = true;
                     glm::mat4 sway{ 1.0f }; // World space, after its transform: a tree's lean in the wind (SetObjectSway)
+                    // Instanced objects: each copy's matrix (before the transform) and, per top level instance, its copy
+                    std::vector<glm::mat4> items;
+                    std::vector<uint32_t> instanceItems;
 
                     glm::mat4 TracedMatrix() const { return sway * transform.Matrix(); }
                 };
@@ -596,6 +615,9 @@ namespace Fox {
 
                 bool tlasDirty = false;
                 bool lightsDirty = false;
+                uint32_t clutterInstances = 0; // Top level instances taken by instanced objects
+                size_t AddInstancedPlacement(size_t record, std::vector<glm::mat4> items, const std::string& name);
+                std::vector<InstanceMotion> uploadedMotion; // As last written to instanceMotionSSBO (only changes are uploaded)
                 VkDeviceAddress tlasScratchAddress = 0;
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Buffer>> frameInstanceBuffers; // Per frame in flight
 

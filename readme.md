@@ -56,6 +56,20 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind. One wind direction for the whole scene: every tree sways the same way.
+* **Clutter (instanced grass, flowers, stones)** **Create > Clutter (grass)**, or add a **Clutter** component to any entity.
+  * **What is scattered:** copies of any glTF model, or a generated tuft of grass blades (colour, height, blades per tuft).
+  * **Where:** over the ground around the entity, on a jittered grid: area, density per m², seed, scale range, random turn, alignment to the ground's slope, a maximum slope, and sink.
+  * **Where not:** never under water, meaning ground below a Water component's surface inside its rectangle.
+  * **On terrain layer:** copies grow only where that layer is painted, thinning out where it fades. Grass follows the painted grass and leaves paths bare.
+  * **Edge fade:** copies thin out toward the area's border, so patches have no hard edges and overlapping patches blend.
+  * **In my_yard:** a valley-wide patch, 240 × 240 m at 1.6 per m², and a denser meadow near the default camera, 80 × 70 m at 6 per m². Both sit on the Grass layer, under the "Grass" entity. On an RTX 3070 Laptop on AC power, the frame took about 12.5 ms of GPU time with the grass.
+  * **How it's instanced:** every copy is its own top-level instance of the one mesh, sharing its acceleration structure. 10,000 tufts of grass cost one tuft's memory. The grass blades are real geometry, not alpha-tested cards, so rays pass between them at full speed.
+  * **Face the camera:** billboards. Each copy turns about its up axis every frame so its +Z faces the camera, for flat cards. In a path tracer, shadows and reflections also see them turned toward the camera.
+  * **Sway:** copies within 80 m lean with the gusts of the scene's wind and flutter.
+  * **Moving the entity:** the copies follow it, and half a second after it stops they are scattered again over the ground there. **Scatter again** does it by hand, for example after sculpting the terrain.
+  * **Budget:** up to 98,304 top-level instances for all clutter; the top-level structure now holds 131,072.
+  * **Saved:** with the scene, as `"clutter"` in the entity's components.
+  * **Measured** in my_yard (laptop on battery): a 40 × 40 m grass patch at 6 tufts per m² (9,600 copies, about 1 M triangles traced) made the top-level build go from 0.2 to 0.7 ms. The trace time did not measurably change.
 * **Leaves & Opacity Micromaps** The tree carries alpha tested leaf cards. Opacity micromaps (`VK_EXT_opacity_micromap`)
   resolve most of each leaf's cutout in hardware; an any-hit shader alpha tests the rest.
 * **Tree Editor** Add, duplicate and remove trees while the scene renders, and change everything about each one: shape,

@@ -68,6 +68,8 @@ namespace Fox {
 
 			// World height at a horizontal position; false outside the terrain
 			bool HeightAt(float x, float z, float& y) const;
+			// How much a layer is painted at a horizontal position (0..1, nearest blend texel); false outside the terrain
+			bool LayerWeightAt(float x, float z, int layer, float& weight) const;
 			// Where a ray (world) first meets the terrain
 			bool Raycast(const glm::vec3& origin, const glm::vec3& direction, glm::vec3& hit) const;
 

@@ -89,6 +89,8 @@ namespace Fox {
                 materials.clear();
                 lights.clear();
                 lightCount = 0;
+                clutterInstances = 0;
+                uploadedMotion.clear();
                 meshRecords.clear();
                 placements.clear();
                 instances.clear();
@@ -650,6 +652,71 @@ namespace Fox {
 
                 meshRecords.push_back(record);
                 return meshRecords.size() - 1;
+            }
+
+            size_t RayTracingScene::AddInstancedPlacement(size_t record, std::vector<glm::mat4> items, const std::string& name) {
+                // Within the budget: a copy takes a top level instance per surface kind of the mesh
+                const MeshRecord& meshRecord = meshRecords[record];
+                uint32_t kinds = 0;
+                for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                    kinds += meshRecord.count[kind] > 0 ? 1 : 0;
+                }
+                kinds = std::max(kinds, 1u);
+                const size_t room = (MAX_CLUTTER_INSTANCES - std::min(clutterInstances, MAX_CLUTTER_INSTANCES)) / kinds;
+                if (items.size() > room) {
+                    items.resize(room);
+                }
+                clutterInstances += static_cast<uint32_t>(items.size()) * kinds;
+
+                Placement placement;
+                placement.record = record;
+                placement.name = name;
+                placement.movable = true;
+                placement.firstLight = meshRecord.firstLight; // Its lights are not sampled (see RecordFrameUpdate)
+                placement.items = std::move(items);
+                placements.push_back(std::move(placement));
+                return placements.size() - 1;
+            }
+
+            size_t RayTracingScene::AddInstancedMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, std::vector<glm::mat4> items, const std::string& name) {
+                auto existing = std::find_if(meshRecords.begin(), meshRecords.end(),
+                    [&mesh](const MeshRecord& record) { return record.mesh == &mesh; });
+                const size_t record = existing != meshRecords.end()
+                    ? static_cast<size_t>(existing - meshRecords.begin())
+                    : AddMeshGeometry(&mesh);
+                return AddInstancedPlacement(record, std::move(items), name);
+            }
+
+            size_t RayTracingScene::AddInstancedSurface(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material, std::vector<glm::mat4> items,
+                const std::string& name) {
+                vertices.insert(vertices.end(), surfaceVertices.begin(), surfaceVertices.end());
+                for (uint32_t index : surfaceIndices) {
+                    indices.push_back(vertexOffset + index);
+                }
+
+                Fox::Graphics::Vulkan::Submesh submesh{};
+                submesh.vertexOffset = vertexOffset;
+                submesh.indexOffset = indexOffset;
+                submesh.vertexCount = static_cast<uint32_t>(surfaceVertices.size());
+                submesh.indexCount = static_cast<uint32_t>(surfaceIndices.size());
+                submesh.materialIndex = materialOffset;
+
+                MeshRecord record;
+                record.firstSubmesh = static_cast<uint32_t>(submeshes.size());
+                record.count[KindOf(material)] = 1;
+                record.firstLight = static_cast<uint32_t>(lights.size());
+                meshRecords.push_back(record);
+                submeshes.push_back(submesh);
+
+                Fox::Graphics::Vulkan::Material surfaceMaterial = material;
+                surfaceMaterial.lightIndex = -1;
+                materials.push_back(surfaceMaterial);
+
+                vertexOffset += submesh.vertexCount;
+                indexOffset += submesh.indexCount;
+                materialOffset += 1;
+                return AddInstancedPlacement(meshRecords.size() - 1, std::move(items), name);
             }
 
             void RayTracingScene::AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name) {
@@ -1258,7 +1325,9 @@ namespace Fox {
                         }
                     }
                     placement.previousMatrix = current;
-                    const int lightOffset = static_cast<int>(placement.firstLight) - static_cast<int>(meshRecords[placement.record].firstLight);
+                    // Instanced objects' surfaces are not sampled as lights: a hit gets no light index (full weight)
+                    const int lightOffset = !placement.items.empty() ? -(1 << 30)
+                        : static_cast<int>(placement.firstLight) - static_cast<int>(meshRecords[placement.record].firstLight);
                     for (uint32_t instance : placement.instances) {
                         motion[instance].lights = glm::ivec4(lightOffset, held[placement.record] ? 1 : 0, 0, 0);
                     }
@@ -1286,10 +1355,17 @@ namespace Fox {
                 vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, 1, &beforeWrite, 0, nullptr, 0, nullptr);
 
+                // Only the pieces that changed: with clutter there are many instances, most of them still
+                const VkDeviceSize uploadedSize = sizeof(InstanceMotion) * uploadedMotion.size();
                 for (VkDeviceSize done = 0; done < motionSize; done += 65536) {
-                    vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), done, std::min<VkDeviceSize>(65536, motionSize - done),
-                        reinterpret_cast<const uint8_t*>(motion.data()) + done);
+                    const VkDeviceSize size = std::min<VkDeviceSize>(65536, motionSize - done);
+                    const uint8_t* data = reinterpret_cast<const uint8_t*>(motion.data()) + done;
+                    if (done + size <= uploadedSize && std::memcmp(data, reinterpret_cast<const uint8_t*>(uploadedMotion.data()) + done, size) == 0) {
+                        continue;
+                    }
+                    vkCmdUpdateBuffer(cmd, instanceMotionSSBO->GetBuffer().Get(), done, size, data);
                 }
+                uploadedMotion = std::move(motion);
                 if (uploadLights) {
                     for (VkDeviceSize done = 0; done < lightsSize; done += 65536) {
                         vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), done, std::min<VkDeviceSize>(65536, lightsSize - done),
@@ -1337,9 +1413,10 @@ namespace Fox {
                 // Rebuild the top level structure in place. It holds one instance per object and surface kind,
                 // so a full rebuild costs microseconds and keeps tracing as fast as the original build.
                 for (const Placement& placement : placements) {
-                    const glm::mat4 transform = placement.TracedMatrix();
-                    for (uint32_t instance : placement.instances) {
-                        instances[instance].transform = {
+                    const glm::mat4 traced = placement.TracedMatrix();
+                    for (size_t k = 0; k < placement.instances.size(); k++) {
+                        const glm::mat4 transform = placement.instanceItems.empty() ? traced : traced * placement.items[placement.instanceItems[k]];
+                        instances[placement.instances[k]].transform = {
                             transform[0][0], transform[1][0], transform[2][0], transform[3][0],
                             transform[0][1], transform[1][1], transform[2][1], transform[3][1],
                             transform[0][2], transform[1][2], transform[2][2], transform[3][2]
@@ -1643,6 +1720,7 @@ namespace Fox {
                     motion.rows[2] = glm::vec4(0, 0, 1, 0);
                 }
                 instanceMotionSSBO = ShaderStorageBuffer<InstanceMotion>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Instance Motion", identity);
+                uploadedMotion.clear();
 
                 // Skinning: the previous positions start out at the bind pose. Room for every skinned vertex there
                 // can be; the shaders bind it even without skinned meshes.
@@ -1746,12 +1824,22 @@ namespace Fox {
                     AddInstance(NO_BLAS, placement.previousMatrix, record.firstSubmesh, placement.visible ? INSTANCE_MASK_OPAQUE : 0u);
                     return;
                 }
+                placement.instanceItems.clear();
                 for (int kind = 0; kind < SurfaceKindCount; kind++) {
-                    if (record.blas[kind] >= 0) {
+                    if (record.blas[kind] < 0) {
+                        continue;
+                    }
+                    // An instanced object: an instance per copy
+                    const size_t copies = placement.items.empty() ? 1 : placement.items.size();
+                    for (size_t item = 0; item < copies; item++) {
                         placement.instances.push_back(static_cast<uint32_t>(instances.size()));
                         placement.masks.push_back(masks[kind]);
                         instancePlacements.push_back(static_cast<uint32_t>(p));
-                        AddInstance(static_cast<uint32_t>(record.blas[kind]), placement.previousMatrix, record.FirstOf(kind), placement.visible ? masks[kind] : 0u);
+                        const glm::mat4 matrix = placement.items.empty() ? placement.previousMatrix : placement.previousMatrix * placement.items[item];
+                        AddInstance(static_cast<uint32_t>(record.blas[kind]), matrix, record.FirstOf(kind), placement.visible ? masks[kind] : 0u);
+                        if (!placement.items.empty()) {
+                            placement.instanceItems.push_back(static_cast<uint32_t>(item));
+                        }
                     }
                 }
             }

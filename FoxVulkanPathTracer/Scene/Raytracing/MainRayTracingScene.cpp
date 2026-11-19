@@ -1,6 +1,7 @@
 #include "FoxRenderer.h"
 
 #include <filesystem>
+#include <random>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -95,7 +96,7 @@ namespace Fox {
 
 				// Static content: models and spheres, then the ground and sun. A placement can take up to three top
 				// level instances (one per surface kind); half the room goes to them, the rest to trees.
-				const size_t staticBudget = MAX_INSTANCES / 2;
+				const size_t staticBudget = 8'192; // The rest: trees and clutter
 				size_t leftOut = 0;
 				for (Entity entity : entities) {
 					MeshComponent* mesh = registry.TryGet<MeshComponent>(entity);
@@ -144,6 +145,9 @@ namespace Fox {
 				else if (environment.ground) {
 					AddGroundPlane(environment.groundHeight, 2000.0f, environment.groundMaterial.ToMaterial());
 				}
+
+				// Clutter: on the ground just placed
+				PlaceClutter(entities, problems);
 
 				// Lights: one per entity with a light, dark while it is off (so turning it on needs no rebuild)
 				for (Entity entity : entities) {
@@ -543,6 +547,7 @@ namespace Fox {
 					graph.UpdateTransforms();
 				}
 				SyncMeshes();
+				UpdateClutter(dt);
 				SyncLights();
 				UpdateAudio();
 				UpdateWater(step);
@@ -635,6 +640,289 @@ namespace Fox {
 					SetJointMatrices(tree->handle.skinnedMesh, tree->skeleton->GetSkinMatrices());
 					SetSkinGrowth(tree->handle.skinnedMesh, tree->skeleton->GetLeafFront(), tree->skeleton->GetLeafSpan());
 					SetSkinUpdate(tree->handle.skinnedMesh, SkinUpdate::Deform);
+				});
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddClutter(const glm::vec3& position) {
+				const Entity entity = graph.CreateEntity("Grass");
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+				graph.GetRegistry().Add<Fox::Scene::ClutterComponent>(entity);
+				structureChanged = true;
+				return entity;
+			}
+
+			void MainRayTracingScene::MakeGrassTuft(const Fox::Scene::ClutterComponent& clutter, std::vector<Fox::Graphics::Vulkan::Vertex>& vertices,
+				std::vector<uint32_t>& indices) {
+				// Blades: thin strips, widest at the base, bending out to one side, in a loose clump. Real geometry (no
+				// alpha tested cards): opaque, so rays pass the gaps between blades at full speed.
+				std::mt19937 rng(clutter.seed * 7919u + 17u);
+				std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+				const float height = std::max(clutter.grassHeight, 0.01f);
+				const int SEGMENTS = 4;
+				for (int b = 0; b < std::clamp(clutter.blades, 1, 256); b++) {
+					const float around = unit(rng) * glm::two_pi<float>();
+					const float spread = std::sqrt(unit(rng)) * 0.25f * height;
+					const glm::vec3 base(std::cos(around) * spread, 0.0f, std::sin(around) * spread);
+					const float bladeHeight = height * (0.55f + 0.45f * unit(rng));
+					const float width = height * 0.035f * (0.8f + 0.4f * unit(rng));
+					const float facing = unit(rng) * glm::two_pi<float>();
+					const glm::vec3 side(std::cos(facing), 0.0f, std::sin(facing));
+					// Bends away from the clump's middle, more or less
+					glm::vec3 out = glm::cross(side, glm::vec3(0.0f, 1.0f, 0.0f));
+					if (glm::dot(out, base) < 0.0f) out = -out;
+					const float bend = bladeHeight * (0.15f + 0.4f * unit(rng));
+
+					const uint32_t first = static_cast<uint32_t>(vertices.size());
+					for (int k = 0; k <= SEGMENTS; k++) {
+						const float t = static_cast<float>(k) / SEGMENTS;
+						const glm::vec3 centre = base + glm::vec3(0.0f, bladeHeight * t, 0.0f) + out * (bend * t * t);
+						const glm::vec3 along = glm::normalize(glm::vec3(0.0f, bladeHeight, 0.0f) + out * (2.0f * bend * t));
+						const glm::vec3 normal = glm::normalize(glm::cross(side, along));
+						const float half = 0.5f * width * std::pow(1.0f - t, 0.8f);
+						const int count = k < SEGMENTS ? 2 : 1;
+						for (int c = 0; c < count; c++) {
+							const float s = count == 1 ? 0.0f : (c == 0 ? -1.0f : 1.0f);
+							const glm::vec3 p = centre + side * (s * half);
+							Fox::Graphics::Vulkan::Vertex v{};
+							v.position[0] = p.x; v.position[1] = p.y; v.position[2] = p.z; v.position[3] = 1.0f;
+							v.normal[0] = normal.x; v.normal[1] = normal.y; v.normal[2] = normal.z;
+							v.uv[0] = count == 1 ? 0.5f : static_cast<float>(c);
+							v.uv[1] = t;
+							v.tangent[0] = side.x; v.tangent[1] = side.y; v.tangent[2] = side.z; v.tangent[3] = 1.0f;
+							vertices.push_back(v);
+						}
+					}
+					for (int k = 0; k < SEGMENTS; k++) {
+						const uint32_t l0 = first + 2 * k, r0 = l0 + 1;
+						if (k < SEGMENTS - 1) {
+							const uint32_t l1 = l0 + 2, r1 = l0 + 3;
+							indices.insert(indices.end(), { l0, r0, l1, r0, r1, l1 });
+						}
+						else {
+							indices.insert(indices.end(), { l0, r0, l0 + 2 });
+						}
+					}
+				}
+			}
+
+			void MainRayTracingScene::PlaceClutter(const std::vector<Entity>& entities, std::string& problems) {
+				auto& registry = graph.GetRegistry();
+
+				// Bodies of water: no clutter on the ground under them (their rectangle, below their surface)
+				struct Pond { glm::vec3 centre; glm::vec2 half; };
+				std::vector<Pond> ponds;
+				for (Entity entity : entities) {
+					const Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(entity);
+					if (water && water->enabled && graph.IsActiveInHierarchy(entity)) {
+						ponds.push_back({ glm::vec3(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix[3]), 0.5f * water->size });
+					}
+				}
+				auto underWater = [&ponds](const glm::vec3& p) {
+					for (const Pond& pond : ponds) {
+						if (std::abs(p.x - pond.centre.x) < pond.half.x && std::abs(p.z - pond.centre.z) < pond.half.y && p.y < pond.centre.y + 0.05f) {
+							return true;
+						}
+					}
+					return false;
+				};
+				for (Entity entity : entities) {
+					Fox::Scene::ClutterComponent* clutter = registry.TryGet<Fox::Scene::ClutterComponent>(entity);
+					if (!clutter) {
+						continue;
+					}
+					const glm::mat4 world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+					clutter->placed = true;
+					clutter->placedEnabled = clutter->enabled;
+					clutter->placedMatrix = world;
+					clutter->movedAgo = -1.0f;
+					clutter->object = SIZE_MAX;
+					clutter->copies = 0;
+					clutter->triangles = 0;
+					clutter->problem.clear();
+					clutter->positions.clear();
+					clutter->shapes.clear();
+					clutter->turns.clear();
+					clutter->phases.clear();
+					if (!clutter->enabled) {
+						continue;
+					}
+
+					// --- Where: a jittered grid over the area (even, without a grid's look) ---
+					const glm::vec3 centre(world[3]);
+					glm::vec3 xAxis(world[0].x, 0.0f, world[0].z);
+					xAxis = glm::dot(xAxis, xAxis) > 1e-8f ? glm::normalize(xAxis) : glm::vec3(1.0f, 0.0f, 0.0f);
+					const glm::vec3 zAxis = glm::cross(xAxis, glm::vec3(0.0f, 1.0f, 0.0f));
+					const glm::vec2 size = glm::max(clutter->size, glm::vec2(0.1f));
+					const size_t MAX_COPIES = MAX_CLUTTER_INSTANCES;
+					float cell = 1.0f / std::sqrt(std::clamp(clutter->density, 0.001f, 1000.0f));
+					if (size.x * size.y / (cell * cell) > MAX_COPIES) {
+						cell = std::sqrt(size.x * size.y / MAX_COPIES);
+						clutter->problem = "thinned out: at most " + std::to_string(MAX_COPIES) + " copies";
+					}
+					const int nx = std::max(1, static_cast<int>(std::ceil(size.x / cell)));
+					const int nz = std::max(1, static_cast<int>(std::ceil(size.y / cell)));
+
+					std::mt19937 rng(clutter->seed);
+					std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+					const float minSlopeCos = std::cos(glm::radians(std::clamp(clutter->maxSlope, 0.0f, 90.0f)));
+					const float e = std::max(0.25f, cell * 0.5f);
+					std::vector<glm::mat4> items;
+					for (int iz = 0; iz < nz; iz++) {
+						for (int ix = 0; ix < nx; ix++) {
+							const float lx = -0.5f * size.x + (ix + unit(rng)) * size.x / nx;
+							const float lz = -0.5f * size.y + (iz + unit(rng)) * size.y / nz;
+							const float scaleRandom = unit(rng), turnRandom = unit(rng), phaseRandom = unit(rng), layerRandom = unit(rng), fadeRandom = unit(rng);
+							// Thinning out towards the edges
+							if (clutter->edgeFade > 0.0f) {
+								const float inside = std::min(0.5f * size.x - std::abs(lx), 0.5f * size.y - std::abs(lz))
+									/ (clutter->edgeFade * 0.5f * std::min(size.x, size.y));
+								if (glm::smoothstep(0.0f, 1.0f, inside) <= fadeRandom) {
+									continue;
+								}
+							}
+							glm::vec3 p = centre + xAxis * lx + zAxis * lz;
+							p.y = GetGroundHeightAt(p.x, p.z);
+							const glm::vec3 normal = glm::normalize(glm::vec3(
+								GetGroundHeightAt(p.x - e, p.z) - GetGroundHeightAt(p.x + e, p.z), 2.0f * e,
+								GetGroundHeightAt(p.x, p.z - e) - GetGroundHeightAt(p.x, p.z + e)));
+							if (normal.y < minSlopeCos || underWater(p)) {
+								continue; // Too steep, or under water
+							}
+							// On its terrain layer only: all where it is painted fully, thinning out where it fades
+							float weight = 1.0f;
+							if (clutter->terrainLayer >= 0 && environment.terrain
+								&& terrain.LayerWeightAt(p.x, p.z, clutter->terrainLayer, weight) && glm::smoothstep(0.3f, 0.7f, weight) <= layerRandom) {
+								continue;
+							}
+							const float scale = glm::mix(clutter->minScale, clutter->maxScale, scaleRandom);
+							const glm::quat tilt = glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+								glm::rotation(glm::vec3(0.0f, 1.0f, 0.0f), normal), glm::clamp(clutter->alignToGround, 0.0f, 1.0f));
+							p.y -= clutter->sink * scale;
+							const glm::mat4 shape = glm::mat4_cast(tilt) * glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+							const float turn = clutter->randomTurn ? turnRandom * glm::two_pi<float>() : 0.0f;
+							clutter->positions.push_back(p);
+							clutter->shapes.push_back(shape);
+							clutter->turns.push_back(turn);
+							clutter->phases.push_back(phaseRandom * glm::two_pi<float>());
+							items.push_back(glm::translate(glm::mat4(1.0f), p) * shape * glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 1.0f, 0.0f)));
+						}
+					}
+					if (items.empty()) {
+						clutter->problem = "no ground flat enough here";
+						continue;
+					}
+
+					// --- What: the model, or a tuft of grass ---
+					const std::string name = graph.GetName(entity);
+					try {
+						if (clutter->model.empty()) {
+							std::vector<Fox::Graphics::Vulkan::Vertex> tuftVertices;
+							std::vector<uint32_t> tuftIndices;
+							MakeGrassTuft(*clutter, tuftVertices, tuftIndices);
+							Fox::Graphics::Vulkan::Material material;
+							material.baseColor[0] = clutter->grassColor.r;
+							material.baseColor[1] = clutter->grassColor.g;
+							material.baseColor[2] = clutter->grassColor.b;
+							material.roughness = 0.55f;
+							material.specularWeight = 0.5f;
+							clutter->object = AddInstancedSurface(tuftVertices, tuftIndices, material, std::move(items), name);
+							clutter->triangles = tuftIndices.size() / 3;
+						}
+						else {
+							const auto& mesh = LoadModel(clutter->model, false);
+							clutter->object = AddInstancedMesh(mesh, std::move(items), name);
+							clutter->triangles = mesh.GetIndices().size() / 3;
+						}
+					}
+					catch (const std::exception& error) {
+						clutter->problem = clutter->model + ": " + error.what();
+						problems += std::string(problems.empty() ? "" : "; ") + name + ": " + clutter->problem;
+						continue;
+					}
+
+					clutter->copies = static_cast<uint32_t>(GetObjectItems(clutter->object).size());
+					if (clutter->copies < clutter->positions.size()) {
+						clutter->problem = "the clutter budget is full: " + std::to_string(clutter->copies) + " of "
+							+ std::to_string(clutter->positions.size()) + " copies placed";
+						problems += std::string(problems.empty() ? "" : "; ") + name + ": " + clutter->problem;
+						clutter->positions.resize(clutter->copies);
+						clutter->shapes.resize(clutter->copies);
+						clutter->turns.resize(clutter->copies);
+						clutter->phases.resize(clutter->copies);
+					}
+					objectEntities.resize(GetObjectCount());
+					objectEntities[clutter->object] = entity;
+					if (!graph.IsActiveInHierarchy(entity)) {
+						SetObjectVisible(clutter->object, false);
+					}
+				}
+			}
+
+			void MainRayTracingScene::UpdateClutter(float dt) {
+				const glm::vec3 camera = GetClusterLodView().cameraPosition;
+				const float windAngle = glm::radians(environment.windDirection);
+				Fox::Animation::WindSkeleton::Settings wind;
+				wind.windDirection = glm::vec3(std::cos(windAngle), 0.0f, std::sin(windAngle));
+				const glm::vec3 leanAxis = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), wind.windDirection));
+				const float SWAY_RANGE = 80.0f; // Metres: farther copies keep still (the motion would not show)
+
+				graph.GetRegistry().Each<Fox::Scene::ClutterComponent>([&](Entity entity, Fox::Scene::ClutterComponent& clutter) {
+					if (!clutter.placed || clutter.enabled != clutter.placedEnabled) {
+						structureChanged = true;
+						return;
+					}
+					if (clutter.object == SIZE_MAX || clutter.object >= GetObjectCount()) {
+						return;
+					}
+					const bool show = graph.IsActiveInHierarchy(entity);
+					if (show != IsObjectVisible(clutter.object)) {
+						SetObjectVisible(clutter.object, show);
+					}
+
+					// Moved: the copies follow at once, and are scattered again over the ground there once it stops
+					const glm::mat4& world = graph.GetRegistry().Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+					if (world != clutter.placedMatrix) {
+						const glm::mat4 delta = world * glm::inverse(clutter.placedMatrix);
+						const ObjectTransform moved = Decompose(delta);
+						const ObjectTransform& now = GetObjectTransform(clutter.object);
+						if (moved.position != now.position || moved.rotation != now.rotation || moved.scale != now.scale) {
+							SetObjectTransform(clutter.object, moved);
+							clutter.movedAgo = 0.0f;
+						}
+					}
+					if (clutter.movedAgo >= 0.0f) {
+						clutter.movedAgo += dt;
+						if (clutter.movedAgo > 0.5f) {
+							structureChanged = true;
+						}
+					}
+
+					// Turning to the camera and swaying: each copy's matrix, rebuilt
+					if (!show || (!clutter.faceCamera && clutter.sway <= 0.0f)) {
+						return;
+					}
+					std::vector<glm::mat4>& items = EditObjectItems(clutter.object);
+					const glm::mat4 toPlaced = glm::inverse(GetObjectTransform(clutter.object).Matrix());
+					const glm::vec3 view = glm::vec3(toPlaced * glm::vec4(camera, 1.0f)); // The camera where the copies were placed
+					for (size_t i = 0; i < items.size() && i < clutter.positions.size(); i++) {
+						const glm::vec3& p = clutter.positions[i];
+						const float distanceSquared = glm::dot(p - view, p - view);
+						const bool sways = clutter.sway > 0.0f && distanceSquared < SWAY_RANGE * SWAY_RANGE;
+						if (!clutter.faceCamera && !sways) {
+							continue;
+						}
+						const float turn = clutter.faceCamera ? std::atan2(view.x - p.x, view.z - p.z) : clutter.turns[i];
+						glm::mat4 matrix = clutter.shapes[i] * glm::rotate(glm::mat4(1.0f), turn, glm::vec3(0.0f, 1.0f, 0.0f));
+						if (sways) {
+							// Leaning with the gusts (light: no spring), and a flutter of its own
+							const float lean = clutter.sway * (2.5f * Fox::Animation::WindSkeleton::LeanTarget(wind, p, time)
+								+ 0.05f * std::sin(glm::two_pi<float>() * 1.4f * time + clutter.phases[i]));
+							matrix = glm::rotate(glm::mat4(1.0f), lean, leanAxis) * matrix;
+						}
+						items[i] = glm::translate(glm::mat4(1.0f), p) * matrix;
+					}
 				});
 			}
 

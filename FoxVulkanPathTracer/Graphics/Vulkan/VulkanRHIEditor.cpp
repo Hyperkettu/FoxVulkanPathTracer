@@ -501,6 +501,8 @@ namespace Fox {
 					}, "", true, -1, "ball mesh");
 				}
 				shell.Add("Create/Tree", [&] { gizmo.Select(scene.AddTree(spawn)); }, "", true, -1, "plant mesh");
+				shell.Add("Create/Clutter (grass)", [&] { gizmo.Select(scene.AddClutter(spawn)); }, "", true, -1,
+					"grass foliage scatter instanced instances billboard flowers stones rocks");
 				shell.Add("Create/Water", [&] { gizmo.Select(scene.AddWater(spawn + glm::vec3(0.0f, 0.8f, 0.0f))); }, "", true, -1,
 					"lake pond river sea ocean fluid simulation");
 				shell.Add("Create/Physics/Ball", [&] { gizmo.Select(scene.AddPhysicsBall(spawn + glm::vec3(-1.0f, 3.0f, 0.0f))); }, "", true, -1,

@@ -103,6 +103,8 @@ namespace Fox {
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClutterComponent, enabled, model, size, density, seed, minScale, maxScale,
+			randomTurn, alignToGround, maxSlope, sink, edgeFade, terrainLayer, faceCamera, sway, grassColor, grassHeight, blades)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
 			minDistance, maxDistance)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(VolumeComponent, enabled, size, round, softness, density, color, anisotropy,
@@ -509,6 +511,20 @@ namespace Fox {
 								component.scripts.push_back(std::move(script));
 							}
 							graph.GetRegistry().Add<Fox::Scene::ScriptComponent>(entity, std::move(component));
+						},
+					},
+					{
+						"clutter",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::ClutterComponent* clutter = graph.GetRegistry().TryGet<Fox::Scene::ClutterComponent>(entity);
+							if (!clutter) {
+								return false;
+							}
+							j = *clutter;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::ClutterComponent>(entity, j.get<Fox::Scene::ClutterComponent>());
 						},
 					},
 					{
@@ -988,6 +1004,9 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ClutterComponent>(graph,
+					[](const Fox::Scene::ClutterComponent&, const Fox::Scene::ClutterComponent&) { return true; },
+					[](const Fox::Scene::ClutterComponent&, Fox::Scene::ClutterComponent& value) { value.placed = false; }));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::SoundComponent>(graph,
 					[](const Fox::Scene::SoundComponent&, const Fox::Scene::SoundComponent&) { return true; },
 					[](const Fox::Scene::SoundComponent&, Fox::Scene::SoundComponent& value) { value.voice = 0; }));
