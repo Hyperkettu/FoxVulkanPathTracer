@@ -79,6 +79,9 @@ namespace Fox {
                     }
                 };
 
+                // How the image is graded after tone mapping (Environment window > Image)
+                using ImageGrade = Fox::Graphics::Vulkan::PostProcessor::Grade;
+
                 struct Environment {
                     bool ground = true;
                     bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
@@ -87,6 +90,7 @@ namespace Fox {
                     Fog fog;
                     Clouds clouds;
                     PhysicsLayers layers;
+                    ImageGrade image;
                 };
 
                 // The sun a new scene starts with (an entity with a directional LightComponent)
@@ -200,6 +204,17 @@ namespace Fox {
                 Entity FindGameCamera() const;
                 // A new entity with a CameraComponent, looking from position along forward
                 Entity AddGameCamera(const glm::vec3& position, const glm::vec3& forward, float fovDegrees);
+
+                // --- Audio (SoundComponent, Audio/AudioEngine.h) ---
+                Fox::Audio::AudioEngine* GetAudio() { return audio && audio->IsReady() ? audio.get() : nullptr; }
+                // The entity's sound component plays (music: as the background music), or stops
+                bool PlayEntitySound(Entity entity);
+                void StopEntitySound(Entity entity, float fadeSeconds = 0.0f);
+                bool IsEntitySoundPlaying(Entity entity) const;
+                // Where sounds are heard from (the renderer: the camera, every frame)
+                void SetListener(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up);
+                // The sound files in Sounds/
+                std::vector<std::string> ListSounds() const;
 
                 // --- Prefabs (PrefabComponent): entity trees saved in Prefabs/*.prefab.json, placed many times ---
                 static constexpr const char* PREFAB_FOLDER = "Prefabs";
@@ -350,6 +365,9 @@ namespace Fox {
                     uint32_t droplets = 0;
                 };
                 std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
+
+                std::unique_ptr<Fox::Audio::AudioEngine> audio;
+                void UpdateAudio();
 
                 // Prefabs: loaded files (kept until they change on disk; their trees shared by all instances)
                 struct PrefabAsset {

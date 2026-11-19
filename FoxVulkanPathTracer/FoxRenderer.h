@@ -42,6 +42,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Light.h"
 #include "FoxVulkanPathTracer/Input/InputManager.h"
 #include "FoxVulkanPathTracer/Input/InputActions.h"
+#include "FoxVulkanPathTracer/Audio/AudioEngine.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Camera.h"
 #include "FoxVulkanPathTracer/Core/FileSystem.h"
 #include "FoxVulkanPathTracer/Graphics/RendererConfig.h"

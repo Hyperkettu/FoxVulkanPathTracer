@@ -330,6 +330,10 @@
     <ClCompile Include="Graphics\Vulkan\VulkanRHI.cpp" />
     <ClCompile Include="Input\InputManager.cpp" />
     <ClCompile Include="Input\InputActions.cpp" />
+    <ClCompile Include="Audio\AudioEngine.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>$(SolutionDir)ThirdParty\miniaudio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Platform\IApplication.cpp" />
     <ClCompile Include="Platform\Vulkan\Application.cpp" />
@@ -447,6 +451,7 @@
     <ClInclude Include="Graphics\Vulkan\VulkanRHI.h" />
     <ClInclude Include="Input\InputManager.h" />
     <ClInclude Include="Input\InputActions.h" />
+    <ClInclude Include="Audio\AudioEngine.h" />
     <ClInclude Include="Platform\IApplication.h" />
     <ClInclude Include="Platform\Vulkan\Application.h" />
     <ClInclude Include="Scene\MainScene.h" />

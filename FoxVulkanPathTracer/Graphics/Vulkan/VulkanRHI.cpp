@@ -989,6 +989,10 @@ namespace Fox {
 				UpdateScriptInput();
 				raytracingScene->Update(deltaTime);
 				FollowGameCamera();
+				{
+					auto& listener = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					raytracingScene->SetListener(listener->GetPosition(), listener->GetForward(), listener->GetUp());
+				}
 				// Entities moved, shown or hidden from the editor windows (the gizmos say so while dragging)
 				sceneChanged = raytracingScene->TakeObjectsChanged() || sceneChanged;
 
@@ -1216,6 +1220,7 @@ namespace Fox {
 					}
 				}
 
+				postProcessor->SetGrade(raytracingScene->GetEnvironment().image);
 				postProcessor->Record(commandList, swapchain->GetFramebuffer(imageIndex), displayExtent,
 					[this, displayExtent](CommandList& pass) {
 						overlay->Record(pass, overlayVertices, currentFrame, displayExtent);
@@ -1780,8 +1785,11 @@ namespace Fox {
 				// Exposure, in thirds of a stop like a camera dial
 				case SDL_SCANCODE_1:
 				case SDL_SCANCODE_2:
-					postProcessor->SetExposure(postProcessor->GetExposure() + (key == SDL_SCANCODE_2 ? 1.0f : -1.0f) / 3.0f);
-					std::cout << "Exposure: " << postProcessor->GetExposure() << " EV\n";
+				{
+					float& exposure = raytracingScene->GetEnvironment().image.exposure;
+					exposure += (key == SDL_SCANCODE_2 ? 1.0f : -1.0f) / 3.0f;
+					std::cout << "Exposure: " << exposure << " EV\n";
+				}
 					break;
 
 				// Paths per pixel: quality against frame rate

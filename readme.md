@@ -36,6 +36,9 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   * **SVGF** (Spatiotemporal Variance-Guided Filtering): temporal reprojection + variance-guided a-trous wavelet filter, in compute shaders.
   * **Accumulation**: plain averaging while the camera is still, as the ground-truth reference.
 * **HDR Pipeline** Floating point rendering and an AgX tone mapping pass with exposure control.
+* **Image grade** The Environment window's **Image** section sets exposure (stops, before the tone curve), then brightness,
+  contrast (about mid grey) and saturation (against the luma) on the tone mapped image (`Shaders/tonemapping_frag.slang`).
+  All four are saved with the scene (`"environment": { "image": { ... } }`), and **Reset image** brings back the neutral grade.
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind.
@@ -471,6 +474,54 @@ sampling (glow is found only by the paths). The cost depends on how much of the 
 on a laptop RTX 3070 (the trace pass, before the GPU heated up and throttled): 7 ms without media, about 15 ms with
 fog everywhere, 20 to 26 ms with clouds.
 
+### Audio
+
+Sound and music play with [miniaudio](https://miniaud.io) (v0.11.22, public domain / MIT-0, vendored in
+`ThirdParty/miniaudio`). Files are mp3, wav or flac, kept in `Sounds/`. Short files are decoded once and kept, long
+ones (above 1 MB) are streamed. There are two buses under the master volume, **music** and **effects**, with their
+volumes in the Environment window's **Audio** section. The camera is the listener.
+
+**Sound component** (Inspector > Add Component > Sound, or **Create > Audio > Sound** / **Background Music**):
+
+* It plays a file while the game plays: **Play when the game starts**, or when a script asks.
+* **In the world (3D)**, it is heard from where its entity is and follows it, at full volume within **Full volume
+  within** metres and quieter until **Fades out to**.
+* **Background music** makes it the game's music instead: one track at a time, the same everywhere, and a new one
+  crossfades.
+* **Loop** repeats it; otherwise it plays once.
+* **Volume** and **Pitch** set how loud and how high it plays.
+* **Preview** plays it in edit mode too.
+
+**Scripts** play sounds on events:
+
+```csharp
+public override void OnTriggerEnter(Entity other)
+{
+    hit = Audio.PlayAt("Sounds/damn_mad_fox.mp3", Entity.Position, volume: 1.0f, pitch: 1.25f); // From here
+}
+public override void OnTriggerExit(Entity other) => hit.Stop(0.5f);   // Fades out over half a second
+
+Audio.PlayMusic("Sounds/damn_mad_fox.mp3", loop: true, volume: 0.5f, fadeSeconds: 1.5f);   // Background music
+Audio.PlayMusic("Sounds/damn_mad_fox.mp3", loop: false);                                  // Once
+Audio.StopMusic(fadeSeconds: 1.0f);
+Entity.Sound.Play();                                                  // Its Sound component
+```
+
+| | |
+| --- | --- |
+| `Audio` | `Play(file, volume, pitch, loop)` (the same everywhere), `PlayAt(file, position, volume, pitch, loop, minDistance, maxDistance)`, `PlayMusic(file, loop, volume, fadeSeconds)`, `StopMusic(fadeSeconds)`, `MasterVolume`, `MusicVolume`, `EffectsVolume` |
+| `Sound` (what they return) | `IsPlaying`, `Stop(fadeSeconds)`, `Volume`, `Pitch`, `Position` |
+| `Entity.Sound` | Its Sound component: `Play()`, `Stop()`, `IsPlaying`, `File`, `Volume`, `Pitch`, `Loop` |
+
+Pausing the game (`F6`) pauses its sound, and stopping play stops it all. In `Scenes/scripting-demo.json`:
+
+* `MusicPlayer` plays background music, looping (its **loop** field off: once). The Interact action (F) stops it and
+  starts it again.
+* `GoalZone` plays a sound from the zone while the player is in it.
+
+Without an audio device the engine says so on the console and runs silent. `Audio/AudioEngine` keeps miniaudio, and
+the `windows.h` it brings, to itself.
+
 ### Prefabs
 
 A prefab is an entity and everything under it saved as a file (`Prefabs/<Name>.prefab.json`), placed in scenes any
@@ -865,6 +916,7 @@ entity-component system whose registry keeps each component type in a packed arr
 | Camera | The game looks through it while it plays (see *Play mode*) |
 | Script | C# scripts that run on it while the game plays (see *Scripting*) |
 | Prefab | It is an instance of a prefab: what is under it comes from the prefab, with its own overrides (see *Prefabs*) |
+| Sound | It plays a sound from where it is, or background music (see *Audio*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot
@@ -1023,7 +1075,7 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `W` `A` `S` `D` | Move |
 | `R` / `F` | Move up / down |
 | `N` | Next denoiser (DLSS Ray Reconstruction → SVGF → Accumulation) |
-| `1` / `2` | Exposure down / up (1/3 stop) |
+| `1` / `2` | Exposure down / up (1/3 stop; saved with the scene) |
 | `3` / `4` | Fewer / more paths per pixel |
 | `9` / `0` | Decrease / increase environment map intensity |
 | `U` | Next upscaling mode (Native → Quality → Balanced → Performance → Ultra Performance). Chosen from the display size until pressed |

@@ -89,6 +89,10 @@ namespace Fox {
 		}
 	}
 
+	namespace Graphics::Vulkan {
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PostProcessor::Grade, exposure, brightness, contrast, saturation)
+	}
+
 	namespace Animation {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(WindSkeleton::Settings,
 			windDirection, windSpeed, gustStrength, gustSpeed, turbulence,
@@ -99,6 +103,8 @@ namespace Fox {
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
+			minDistance, maxDistance)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(VolumeComponent, enabled, size, round, softness, density, color, anisotropy,
 			glow, glowStrength, noiseSize, noiseStrength, velocity)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainLayer, name, albedo, normal, roughness, metallic, occlusion, height,
@@ -120,7 +126,7 @@ namespace Fox {
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Clouds, enabled, bottom, top, coverage, density, size, wind, anisotropy, albedo, shadows)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::PhysicsLayers, names, collides)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers)
+				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers, image)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
@@ -503,6 +509,20 @@ namespace Fox {
 								component.scripts.push_back(std::move(script));
 							}
 							graph.GetRegistry().Add<Fox::Scene::ScriptComponent>(entity, std::move(component));
+						},
+					},
+					{
+						"sound",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::SoundComponent* sound = graph.GetRegistry().TryGet<Fox::Scene::SoundComponent>(entity);
+							if (!sound) {
+								return false;
+							}
+							j = *sound;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::SoundComponent>(entity, j.get<Fox::Scene::SoundComponent>());
 						},
 					},
 					{
@@ -968,6 +988,9 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::SoundComponent>(graph,
+					[](const Fox::Scene::SoundComponent&, const Fox::Scene::SoundComponent&) { return true; },
+					[](const Fox::Scene::SoundComponent&, Fox::Scene::SoundComponent& value) { value.voice = 0; }));
 				snapshot->restores.push_back(SnapshotOf<ScriptComponent>(graph,
 					[](const ScriptComponent&, const ScriptComponent&) { return true; },
 					[](const ScriptComponent&, ScriptComponent& value) {
@@ -1074,6 +1097,20 @@ namespace Fox {
 					playScene.reset();
 					return false;
 				}
+				// Sounds that play when the game starts
+				std::vector<Entity> starting;
+				graph.GetRegistry().Each<Fox::Scene::SoundComponent>([&](Entity entity, Fox::Scene::SoundComponent& sound) {
+					sound.voice = 0;
+					if (sound.enabled && sound.playOnStart && graph.IsActiveInHierarchy(entity)) {
+						starting.push_back(entity);
+					}
+				});
+				if (audio) {
+					audio->StopAll(); // Previews
+				}
+				for (Entity entity : starting) {
+					PlayEntitySound(entity);
+				}
 				std::cout << "Play: started\n";
 				return true;
 			}
@@ -1084,6 +1121,10 @@ namespace Fox {
 					return;
 				}
 				StopScripts();  // OnStop, while everything is as the game left it
+				if (audio) {
+					audio->StopAll(); // The game's sounds end with it
+				}
+				graph.GetRegistry().Each<Fox::Scene::SoundComponent>([](Entity, Fox::Scene::SoundComponent& sound) { sound.voice = 0; });
 				StopPhysics(); // Bodies out, entities back where they were
 				if (restore) {
 					RestorePlaySnapshot();

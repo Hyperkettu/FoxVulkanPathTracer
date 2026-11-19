@@ -138,6 +138,7 @@ namespace Fox {
 					case ComponentType::Camera: return r.Has<CameraComponent>(e);
 					case ComponentType::Script: return r.Has<ScriptComponent>(e);
 					case ComponentType::Water: return r.Has<WaterComponent>(e);
+					case ComponentType::Sound: return r.Has<SoundComponent>(e);
 					}
 					return 0;
 				}
@@ -154,6 +155,7 @@ namespace Fox {
 					case ComponentType::Camera: r.Add<CameraComponent>(e); return 1;
 					case ComponentType::Script: r.Add<ScriptComponent>(e); return 1;
 					case ComponentType::Water: r.Add<WaterComponent>(e); scene->MarkStructureChanged(); return 1;
+					case ComponentType::Sound: r.Add<SoundComponent>(e).playOnStart = false; return 1;
 					}
 					return 0;
 				}
@@ -169,6 +171,7 @@ namespace Fox {
 					case ComponentType::Volume: r.Remove<VolumeComponent>(e); break;
 					case ComponentType::Camera: r.Remove<CameraComponent>(e); break;
 					case ComponentType::Script: r.Remove<ScriptComponent>(e); break; // Its scripts stop next frame
+					case ComponentType::Sound: scene->StopEntitySound(e); r.Remove<SoundComponent>(e); break;
 					case ComponentType::Water:
 						if (WaterComponent* water = r.TryGet<WaterComponent>(e)) water->enabled = false;
 						scene->MarkStructureChanged();
@@ -206,8 +209,11 @@ namespace Fox {
 					case Property::VolumeGlow: if (auto* x = r.TryGet<VolumeComponent>(e)) { v[0] = x->glowStrength; return 1; } return 0;
 					case Property::PhysicsLayer: if (auto* p = r.TryGet<PhysicsComponent>(e)) { v[0] = static_cast<float>(p->layer); return 1; } return 0;
 					case Property::PhysicsTrigger: if (auto* p = r.TryGet<PhysicsComponent>(e)) { v[0] = p->trigger ? 1.0f : 0.0f; return 1; } return 0;
+					case Property::SoundVolume: if (auto* x = r.TryGet<SoundComponent>(e)) { v[0] = x->volume; return 1; } return 0;
+					case Property::SoundPitch: if (auto* x = r.TryGet<SoundComponent>(e)) { v[0] = x->pitch; return 1; } return 0;
+					case Property::SoundLoop: if (auto* x = r.TryGet<SoundComponent>(e)) { v[0] = x->loop ? 1.0f : 0.0f; return 1; } return 0;
+					default: return 0;
 					}
-					return 0;
 				}
 
 				static int32_t SetProperty(uint64_t id, int32_t property, const float* v) {
@@ -243,6 +249,21 @@ namespace Fox {
 					case Property::VolumeDensity: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->density = std::max(v[0], 0.0f); return 1; } return 0;
 					case Property::VolumeColor: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->color = x; return 1; } return 0;
 					case Property::VolumeGlow: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->glowStrength = std::max(v[0], 0.0f); return 1; } return 0;
+					case Property::SoundVolume:
+						if (auto* x = r.TryGet<SoundComponent>(e)) {
+							x->volume = std::max(v[0], 0.0f);
+							if (auto* engine = scene->GetAudio(); engine && x->voice) engine->SetVolume(x->voice, x->volume);
+							return 1;
+						}
+						return 0;
+					case Property::SoundPitch:
+						if (auto* x = r.TryGet<SoundComponent>(e)) {
+							x->pitch = std::clamp(v[0], 0.01f, 8.0f);
+							if (auto* engine = scene->GetAudio(); engine && x->voice) engine->SetPitch(x->voice, x->pitch);
+							return 1;
+						}
+						return 0;
+					case Property::SoundLoop: if (auto* x = r.TryGet<SoundComponent>(e)) { x->loop = v[0] != 0.0f; return 1; } return 0;
 					case Property::PhysicsLayer:
 						if (auto* p = r.TryGet<PhysicsComponent>(e)) {
 							p->layer = std::clamp(static_cast<int>(v[0]), 0, PhysicsWorld::LAYER_COUNT - 1);
@@ -493,6 +514,60 @@ namespace Fox {
 					return positive - negative;
 				}
 
+				// --- Sound ---
+
+				static int64_t PlaySound(const char* file, int32_t spatial, const float* position, float volume, float pitch, int32_t loop,
+					float minDistance, float maxDistance) {
+					auto* engine = scene->GetAudio();
+					if (!engine || !file) return 0;
+					Fox::Audio::AudioEngine::PlayOptions options;
+					options.volume = volume;
+					options.pitch = pitch;
+					options.loop = loop != 0;
+					options.spatial = spatial != 0 && position;
+					if (position) options.position = { position[0], position[1], position[2] };
+					options.minDistance = minDistance;
+					options.maxDistance = maxDistance;
+					return engine->Play(file, options);
+				}
+				static void StopSound(int64_t sound, float fade) { if (auto* engine = scene->GetAudio()) engine->Stop(sound, fade); }
+				static int32_t SoundIsPlaying(int64_t sound) { auto* engine = scene->GetAudio(); return engine && engine->IsPlaying(sound) ? 1 : 0; }
+				static void SetSoundParameter(int64_t sound, int32_t parameter, const float* v) {
+					auto* engine = scene->GetAudio();
+					if (!engine) return;
+					switch (parameter) {
+					case 0: engine->SetVolume(sound, v[0]); break;
+					case 1: engine->SetPitch(sound, v[0]); break;
+					default: engine->SetPosition(sound, { v[0], v[1], v[2] }); break;
+					}
+				}
+				static int64_t PlayMusic(const char* file, int32_t loop, float volume, float fade) {
+					auto* engine = scene->GetAudio();
+					return engine && file ? engine->PlayMusic(file, loop != 0, volume, fade) : 0;
+				}
+				static void StopMusic(float fade) { if (auto* engine = scene->GetAudio()) engine->StopMusic(fade); }
+				static float GetBusVolume(int32_t bus) {
+					auto* engine = scene->GetAudio();
+					return engine ? engine->GetBusVolume(static_cast<Fox::Audio::AudioEngine::Bus>(std::clamp(bus, 0, 2))) : 0.0f;
+				}
+				static void SetBusVolume(int32_t bus, float volume) {
+					if (auto* engine = scene->GetAudio()) engine->SetBusVolume(static_cast<Fox::Audio::AudioEngine::Bus>(std::clamp(bus, 0, 2)), volume);
+				}
+				static int32_t EntitySound(uint64_t id, int32_t action) {
+					Entity e;
+					if (!Valid(id, e)) return 0;
+					switch (action) {
+					case 0: return scene->PlayEntitySound(e) ? 1 : 0;
+					case 1: scene->StopEntitySound(e); return 1;
+					default: return scene->IsEntitySoundPlaying(e) ? 1 : 0;
+					}
+				}
+				static void SetSoundFile(uint64_t id, const char* file) {
+					Entity e;
+					if (!Valid(id, e) || !file) return;
+					if (auto* sound = Graph().GetRegistry().TryGet<SoundComponent>(e)) sound->file = file;
+				}
+
 				static int32_t LayerFromName(const char* name) {
 					if (!name) return -1;
 					for (int i = 0; i < PhysicsWorld::LAYER_COUNT; i++) {
@@ -553,6 +628,16 @@ namespace Fox {
 				api.LayerFromName = ScriptBindings::LayerFromName;
 				api.GetAction = ScriptBindings::GetAction;
 				api.GetAxis = ScriptBindings::GetAxis;
+				api.PlaySound = ScriptBindings::PlaySound;
+				api.StopSound = ScriptBindings::StopSound;
+				api.SoundIsPlaying = ScriptBindings::SoundIsPlaying;
+				api.SetSoundParameter = ScriptBindings::SetSoundParameter;
+				api.PlayMusic = ScriptBindings::PlayMusic;
+				api.StopMusic = ScriptBindings::StopMusic;
+				api.GetBusVolume = ScriptBindings::GetBusVolume;
+				api.SetBusVolume = ScriptBindings::SetBusVolume;
+				api.EntitySound = ScriptBindings::EntitySound;
+				api.SetSoundFile = ScriptBindings::SetSoundFile;
 
 				// The game's named input
 				std::string inputError;

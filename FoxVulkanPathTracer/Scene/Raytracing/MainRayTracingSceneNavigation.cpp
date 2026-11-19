@@ -442,6 +442,104 @@ namespace Fox {
 				});
 			}
 
+			// --- Audio ---
+
+			namespace {
+				Fox::Audio::AudioEngine::Vec3 ToAudio(const glm::vec3& v) { return { v.x, v.y, v.z }; }
+			}
+
+			bool MainRayTracingScene::PlayEntitySound(Entity entity) {
+				Fox::Audio::AudioEngine* engine = GetAudio();
+				auto* sound = graph.IsValid(entity) ? graph.GetRegistry().TryGet<Fox::Scene::SoundComponent>(entity) : nullptr;
+				if (!engine || !sound || !sound->enabled || sound->file.empty()) {
+					return false;
+				}
+				if (sound->voice != 0) {
+					engine->Stop(sound->voice);
+				}
+				if (sound->music) {
+					sound->voice = engine->PlayMusic(sound->file, sound->loop, sound->volume, 0.5f);
+				}
+				else {
+					Fox::Audio::AudioEngine::PlayOptions options;
+					options.volume = sound->volume;
+					options.pitch = sound->pitch;
+					options.loop = sound->loop;
+					options.spatial = sound->spatial;
+					options.position = ToAudio(glm::vec3(graph.GetWorldMatrix(entity)[3]));
+					options.minDistance = sound->minDistance;
+					options.maxDistance = sound->maxDistance;
+					sound->voice = engine->Play(sound->file, options);
+				}
+				return sound->voice != 0;
+			}
+
+			void MainRayTracingScene::StopEntitySound(Entity entity, float fadeSeconds) {
+				auto* sound = graph.IsValid(entity) ? graph.GetRegistry().TryGet<Fox::Scene::SoundComponent>(entity) : nullptr;
+				if (!sound || sound->voice == 0) {
+					return;
+				}
+				if (Fox::Audio::AudioEngine* engine = GetAudio()) {
+					if (sound->music && engine->GetMusic() == sound->voice) {
+						engine->StopMusic(fadeSeconds);
+					}
+					else {
+						engine->Stop(sound->voice, fadeSeconds);
+					}
+				}
+				sound->voice = 0;
+			}
+
+			bool MainRayTracingScene::IsEntitySoundPlaying(Entity entity) const {
+				const auto* sound = graph.IsValid(entity) ? graph.GetRegistry().TryGet<Fox::Scene::SoundComponent>(entity) : nullptr;
+				return sound && sound->voice != 0 && audio && audio->IsPlaying(sound->voice);
+			}
+
+			void MainRayTracingScene::SetListener(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up) {
+				if (Fox::Audio::AudioEngine* engine = GetAudio()) {
+					engine->SetListener(ToAudio(position), ToAudio(forward), ToAudio(up));
+				}
+			}
+
+			void MainRayTracingScene::UpdateAudio() {
+				Fox::Audio::AudioEngine* engine = GetAudio();
+				if (!engine) {
+					return;
+				}
+				// Sounds in the world follow their entities; finished ones are forgotten; the game's pause pauses them
+				graph.GetRegistry().Each<Fox::Scene::SoundComponent>([&](Entity entity, Fox::Scene::SoundComponent& sound) {
+					if (sound.voice == 0) {
+						return;
+					}
+					if (!engine->IsPlaying(sound.voice) || !sound.enabled || !graph.IsActiveInHierarchy(entity)) {
+						if (engine->IsPlaying(sound.voice)) {
+							engine->Stop(sound.voice);
+						}
+						sound.voice = 0;
+						return;
+					}
+					if (sound.spatial && !sound.music) {
+						engine->SetPosition(sound.voice, ToAudio(glm::vec3(graph.GetWorldMatrix(entity)[3])));
+					}
+				});
+				engine->SetPaused(physicsPlaying && clock.paused);
+				engine->Update();
+			}
+
+			std::vector<std::string> MainRayTracingScene::ListSounds() const {
+				std::vector<std::string> files;
+				std::error_code failed;
+				for (const auto& entry : std::filesystem::recursive_directory_iterator("Sounds", failed)) {
+					std::string extension = entry.path().extension().string();
+					std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+					if (extension == ".mp3" || extension == ".wav" || extension == ".flac") {
+						files.push_back(entry.path().generic_string());
+					}
+				}
+				std::sort(files.begin(), files.end());
+				return files;
+			}
+
 			// --- Game camera ---
 
 			MainRayTracingScene::Entity MainRayTracingScene::FindGameCamera() const {

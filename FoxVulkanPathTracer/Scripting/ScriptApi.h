@@ -11,7 +11,7 @@ namespace Fox {
 		//
 		// Entities are 64 bit ids: generation << 32 | (index + 1), so 0 is "none".
 
-		enum class ComponentType : int32_t { Mesh = 0, Light, Physics, NavAgent, Volume, Camera, Script, Water };
+		enum class ComponentType : int32_t { Mesh = 0, Light, Physics, NavAgent, Volume, Camera, Script, Water, Sound };
 
 		enum class Property : int32_t {
 			PhysicsVelocity = 0,     // vec3, read / write (playing)
@@ -31,6 +31,10 @@ namespace Fox {
 			VolumeGlow,
 			PhysicsLayer,            // read / write (playing: moves the body to it)
 			PhysicsTrigger,          // read
+			SoundVolume,             // The entity's Sound component (applies to it playing too)
+			SoundPitch,
+			SoundLoop,
+			SoundFile,               // Not a number: see SetSoundFile
 		};
 
 		// Contact events to scripts (ManagedApi::Contact)
@@ -93,6 +97,19 @@ namespace Fox {
 			// Named input (Settings/Input.json): an action held / pressed / released (mode as GetKey), an axis -1..1
 			int32_t (*GetAction)(const char* name, int32_t mode);
 			float (*GetAxis)(const char* name);
+
+			// Sound (Audio/AudioEngine.h). Handles are 0 when nothing plays.
+			int64_t (*PlaySound)(const char* file, int32_t spatial, const float* position3, float volume, float pitch, int32_t loop,
+				float minDistance, float maxDistance);
+			void (*StopSound)(int64_t sound, float fadeSeconds);
+			int32_t (*SoundIsPlaying)(int64_t sound);
+			void (*SetSoundParameter)(int64_t sound, int32_t parameter, const float* value3); // 0 volume, 1 pitch, 2 position
+			int64_t (*PlayMusic)(const char* file, int32_t loop, float volume, float fadeSeconds);
+			void (*StopMusic)(float fadeSeconds);
+			float (*GetBusVolume)(int32_t bus);                  // 0 master, 1 music, 2 effects
+			void (*SetBusVolume)(int32_t bus, float volume);
+			int32_t (*EntitySound)(uint64_t entity, int32_t action); // 0 play, 1 stop, 2 is it playing
+			void (*SetSoundFile)(uint64_t entity, const char* file);
 		};
 
 		// The scripting host's functions (Host.cs; Bootstrap fills them in)

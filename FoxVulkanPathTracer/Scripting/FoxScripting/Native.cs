@@ -52,6 +52,17 @@ namespace Fox.Interop
 
         public delegate* unmanaged<byte*, int, int> GetAction;
         public delegate* unmanaged<byte*, float> GetAxis;
+
+        public delegate* unmanaged<byte*, int, float*, float, float, int, float, float, long> PlaySound;
+        public delegate* unmanaged<long, float, void> StopSound;
+        public delegate* unmanaged<long, int> SoundIsPlaying;
+        public delegate* unmanaged<long, int, float*, void> SetSoundParameter;
+        public delegate* unmanaged<byte*, int, float, float, long> PlayMusic;
+        public delegate* unmanaged<float, void> StopMusic;
+        public delegate* unmanaged<int, float> GetBusVolume;
+        public delegate* unmanaged<int, float, void> SetBusVolume;
+        public delegate* unmanaged<ulong, int, int> EntitySound;
+        public delegate* unmanaged<ulong, byte*, void> SetSoundFile;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -87,6 +98,9 @@ namespace Fox.Interop
         VolumeGlow = 14,
         PhysicsLayer = 15,
         PhysicsTrigger = 16,
+        SoundVolume = 17,
+        SoundPitch = 18,
+        SoundLoop = 19,
     }
 
     internal static unsafe class Native

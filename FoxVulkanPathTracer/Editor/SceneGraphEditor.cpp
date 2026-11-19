@@ -21,6 +21,7 @@ namespace Fox {
 			using Fox::Scene::CameraComponent;
 			using Fox::Scene::ScriptComponent;
 			using Fox::Scene::PrefabComponent;
+			using Fox::Scene::SoundComponent;
 
 			// Prefab instances in the Hierarchy: the instance blue, what is under it a paler blue
 			const ImVec4 PREFAB_COLOR(0.45f, 0.72f, 1.0f, 1.0f);
@@ -681,6 +682,59 @@ namespace Fox {
 				}
 			}
 
+			void DrawSound(Scene& scene, Entity entity, State&) {
+				SoundComponent& sound = scene.GetSceneGraph().GetRegistry().Get<SoundComponent>(entity);
+				if (!scene.GetAudio()) {
+					ImGui::TextDisabled("No audio device: sound is off");
+				}
+				ImGui::Checkbox("On", &sound.enabled);
+				static std::vector<std::string> files;
+				static double listed = -10.0;
+				if (ImGui::GetTime() - listed > 2.0) {
+					files = scene.ListSounds();
+					listed = ImGui::GetTime();
+				}
+				if (ImGui::BeginCombo("File", sound.file.empty() ? "(choose a sound)" : sound.file.c_str())) {
+					for (const std::string& file : files) {
+						if (ImGui::Selectable(file.c_str(), file == sound.file)) {
+							scene.StopEntitySound(entity);
+							sound.file = file;
+						}
+					}
+					if (files.empty()) {
+						ImGui::TextDisabled("No .mp3, .wav or .flac files in Sounds/");
+					}
+					ImGui::EndCombo();
+				}
+				const bool playing = scene.IsEntitySoundPlaying(entity);
+				if (ImGui::Button(playing ? "Stop" : "Preview")) {
+					if (playing) scene.StopEntitySound(entity);
+					else scene.PlayEntitySound(entity);
+				}
+				ImGui::SetItemTooltip("Plays it now, also in edit mode (as the game will)");
+
+				ImGui::Checkbox("Background music", &sound.music);
+				ImGui::SetItemTooltip("One track at a time, the same everywhere; a new one crossfades");
+				ImGui::SameLine();
+				ImGui::Checkbox("Loop", &sound.loop);
+				ImGui::Checkbox("Play when the game starts", &sound.playOnStart);
+				ImGui::SetItemTooltip("Off: a script plays it (Entity.Sound.Play())");
+				if (ImGui::SliderFloat("Volume", &sound.volume, 0.0f, 2.0f, "%.2f") && sound.voice) {
+					scene.GetAudio()->SetVolume(sound.voice, sound.volume);
+				}
+				if (!sound.music) {
+					if (ImGui::SliderFloat("Pitch", &sound.pitch, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic) && sound.voice) {
+						scene.GetAudio()->SetPitch(sound.voice, sound.pitch);
+					}
+					ImGui::Checkbox("In the world (3D)", &sound.spatial);
+					ImGui::SetItemTooltip("Heard from where the entity is, quieter with distance from the camera");
+					if (sound.spatial) {
+						ImGui::DragFloat("Full volume within (m)", &sound.minDistance, 0.1f, 0.1f, 1000.0f, "%.1f");
+						ImGui::DragFloat("Fades out to (m)", &sound.maxDistance, 0.5f, sound.minDistance, 10000.0f, "%.0f");
+					}
+				}
+			}
+
 			void DrawCamera(Scene& scene, Entity entity, State&) {
 				CameraComponent& camera = scene.GetSceneGraph().GetRegistry().Get<CameraComponent>(entity);
 				ImGui::Checkbox("On", &camera.enabled);
@@ -870,6 +924,22 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<ScriptComponent>(entity); },
 					DrawScript,
+				},
+				{
+					"Sound", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<SoundComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Sound")) {
+							auto& sound = scene.GetSceneGraph().GetRegistry().Add<SoundComponent>(entity);
+							const auto files = scene.ListSounds();
+							if (!files.empty()) sound.file = files.front();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.StopEntitySound(entity);
+						scene.GetSceneGraph().GetRegistry().Remove<SoundComponent>(entity);
+					},
+					DrawSound,
 				},
 				{
 					"Camera", true,
@@ -1175,6 +1245,10 @@ namespace Fox {
 				}
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s%s", names.empty() ? "Script" : names.c_str(), component->enabled ? "" : " (off)");
+			}
+			if (const SoundComponent* sound = graph.GetRegistry().TryGet<SoundComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s%s", sound->music ? "Music" : "Sound", sound->enabled ? "" : " (off)");
 			}
 			if (const CameraComponent* camera = graph.GetRegistry().TryGet<CameraComponent>(entity)) {
 				ImGui::SameLine();

@@ -12,6 +12,9 @@ namespace Fox {
 				// Must match ToneMappingConstants in Shaders/tonemapping_frag.slang
 				struct ToneMappingConstants {
 					float exposure; // Linear scale
+					float brightness;
+					float contrast;
+					float saturation;
 				};
 
 				static_assert(sizeof(ToneMappingConstants) == PostProcessor::PUSH_CONSTANT_SIZE, "Push constant size mismatch");
@@ -62,7 +65,8 @@ namespace Fox {
 				VkPipelineLayout pipelineLayout = pipelineManager.GetPipelineLayout(Managers::PipelineCategory::POST_PROCESSOR)->Get();
 				VkRenderPass renderPass = Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get();
 
-				const ToneMappingConstants constants{ std::pow(2.0f, exposureStops) };
+				const ToneMappingConstants constants{ std::pow(2.0f, grade.exposure), grade.brightness, std::max(grade.contrast, 0.0f),
+					std::max(grade.saturation, 0.0f) };
 
 				commandList
 					.BeginRenderPass(renderPass, framebuffer, extent, clearValues.data(), static_cast<uint32_t>(clearValues.size()))

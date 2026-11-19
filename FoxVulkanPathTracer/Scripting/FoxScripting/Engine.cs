@@ -54,6 +54,7 @@ namespace Fox
         Camera = 5,
         Script = 6,
         Water = 7,
+        Sound = 8,
     }
 
     /// <summary>SDL scancodes: where the key is on a US layout</summary>
@@ -224,6 +225,7 @@ namespace Fox
         public MeshView Mesh => new MeshView(this);
         public CameraView Camera => new CameraView(this);
         public VolumeView Volume => new VolumeView(this);
+        public SoundEmitter Sound => new SoundEmitter(this);
 
         /// <summary>A script of this class on it (null: none)</summary>
         public T GetScript<T>() where T : Script => Host.FindScript<T>(this);
@@ -367,6 +369,74 @@ namespace Fox
         public float Density { get => entity.GetProperty(PropertyId.VolumeDensity).X; set => entity.SetProperty(PropertyId.VolumeDensity, Entity.W(value)); }
         public Vector3 Color { get => Entity.Xyz(entity.GetProperty(PropertyId.VolumeColor)); set => entity.SetProperty(PropertyId.VolumeColor, Entity.W(value)); }
         public float Glow { get => entity.GetProperty(PropertyId.VolumeGlow).X; set => entity.SetProperty(PropertyId.VolumeGlow, Entity.W(value)); }
+    }
+
+    /// <summary>Its Sound component: the sound file it plays, from where it is (or as background music)</summary>
+    public sealed unsafe class SoundEmitter
+    {
+        private readonly Entity entity;
+        internal SoundEmitter(Entity entity) { this.entity = entity; }
+        public bool Exists => entity.Has(ComponentType.Sound);
+
+        /// <summary>Plays its sound from the start (music: as the background music)</summary>
+        public bool Play() => Native.Api->EntitySound(entity.Id, 0) != 0;
+        public void Stop() => Native.Api->EntitySound(entity.Id, 1);
+        public bool IsPlaying => Native.Api->EntitySound(entity.Id, 2) != 0;
+
+        /// <summary>Another sound file for it (from the next Play): "Sounds/hit.wav"</summary>
+        public string File { set { fixed (byte* p = Native.Utf8(value)) Native.Api->SetSoundFile(entity.Id, p); } }
+        public float Volume { get => entity.GetProperty(PropertyId.SoundVolume).X; set => entity.SetProperty(PropertyId.SoundVolume, Entity.W(value)); }
+        /// <summary>1: as recorded; 2: an octave up and twice as fast</summary>
+        public float Pitch { get => entity.GetProperty(PropertyId.SoundPitch).X; set => entity.SetProperty(PropertyId.SoundPitch, Entity.W(value)); }
+        public bool Loop { get => entity.GetProperty(PropertyId.SoundLoop).X != 0.0f; set => entity.SetProperty(PropertyId.SoundLoop, Entity.W(value ? 1.0f : 0.0f)); }
+    }
+
+    /// <summary>A playing sound (from Audio.Play / PlayAt / PlayMusic); it stops being valid when it has finished</summary>
+    public readonly unsafe struct Sound
+    {
+        public readonly long Handle;
+        internal Sound(long handle) { Handle = handle; }
+        public bool IsPlaying => Handle != 0 && Native.Api->SoundIsPlaying(Handle) != 0;
+        /// <summary>Stops it, fading out over fadeSeconds</summary>
+        public void Stop(float fadeSeconds = 0.0f) { if (Handle != 0) Native.Api->StopSound(Handle, fadeSeconds); }
+        public float Volume { set { float* v = stackalloc float[3] { value, 0, 0 }; Native.Api->SetSoundParameter(Handle, 0, v); } }
+        public float Pitch { set { float* v = stackalloc float[3] { value, 0, 0 }; Native.Api->SetSoundParameter(Handle, 1, v); } }
+        /// <summary>Moves a sound played with PlayAt</summary>
+        public Vector3 Position { set { float* v = stackalloc float[3] { value.X, value.Y, value.Z }; Native.Api->SetSoundParameter(Handle, 2, v); } }
+    }
+
+    /// <summary>
+    /// Sound and music (mp3, wav, flac; files from the working directory, e.g. "Sounds/damn_mad_fox.mp3"). Sound effects
+    /// play on the effects bus, heard the same everywhere (Play) or from a point in the world (PlayAt, quieter with
+    /// distance from the camera). Background music is one track at a time on the music bus: a new one crossfades.
+    /// Everything stops when play stops; pausing the game pauses it.
+    /// </summary>
+    public static unsafe class Audio
+    {
+        public static Sound Play(string file, float volume = 1.0f, float pitch = 1.0f, bool loop = false)
+        {
+            fixed (byte* f = Native.Utf8(file)) return new Sound(Native.Api->PlaySound(f, 0, null, volume, pitch, loop ? 1 : 0, 1.0f, 50.0f));
+        }
+
+        /// <summary>From a point in the world: full volume within minDistance, quieter until maxDistance</summary>
+        public static Sound PlayAt(string file, Vector3 position, float volume = 1.0f, float pitch = 1.0f, bool loop = false,
+            float minDistance = 2.0f, float maxDistance = 60.0f)
+        {
+            float* p = stackalloc float[3] { position.X, position.Y, position.Z };
+            fixed (byte* f = Native.Utf8(file)) return new Sound(Native.Api->PlaySound(f, 1, p, volume, pitch, loop ? 1 : 0, minDistance, maxDistance));
+        }
+
+        /// <summary>Background music: replaces (crossfades) the track playing. loop false: plays once.</summary>
+        public static Sound PlayMusic(string file, bool loop = true, float volume = 1.0f, float fadeSeconds = 1.0f)
+        {
+            fixed (byte* f = Native.Utf8(file)) return new Sound(Native.Api->PlayMusic(f, loop ? 1 : 0, volume, fadeSeconds));
+        }
+
+        public static void StopMusic(float fadeSeconds = 1.0f) => Native.Api->StopMusic(fadeSeconds);
+
+        public static float MasterVolume { get => Native.Api->GetBusVolume(0); set => Native.Api->SetBusVolume(0, value); }
+        public static float MusicVolume { get => Native.Api->GetBusVolume(1); set => Native.Api->SetBusVolume(1, value); }
+        public static float EffectsVolume { get => Native.Api->GetBusVolume(2); set => Native.Api->SetBusVolume(2, value); }
     }
 
     public static unsafe class Scene

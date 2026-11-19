@@ -45,7 +45,8 @@ namespace Fox {
 					std::cout << "Scene: no " << DEFAULT_SCENE_FILE << ", starting with an empty scene\n";
 				}
 
-				// C# scripts (Scripts/*.cs)
+				// Sound, then C# scripts (Scripts/*.cs)
+				audio = std::make_unique<Fox::Audio::AudioEngine>();
 				InitializeScripts();
 
 				if (!RebuildScene(error)) {
@@ -535,6 +536,7 @@ namespace Fox {
 				}
 				SyncMeshes();
 				SyncLights();
+				UpdateAudio();
 				UpdateWater(step);
 
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to. Instances of a tree

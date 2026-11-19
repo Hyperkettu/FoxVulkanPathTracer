@@ -77,6 +77,23 @@ namespace Fox {
 			changed |= ImGui::ColorEdit3("Ground colour", &environment.groundMaterial.color.x);
 			changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");
 
+			// The image's grade: live, saved with the scene
+			ImGui::SeparatorText("Image");
+			auto& image = environment.image;
+			ImGui::SliderFloat("Exposure", &image.exposure, -5.0f, 5.0f, "%+.2f EV");
+			ImGui::SetItemTooltip("Light before the tone curve: +1 doubles it (keys 1 and 2: a third of a stop)");
+			ImGui::SliderFloat("Brightness", &image.brightness, -0.5f, 0.5f, "%+.2f");
+			ImGui::SetItemTooltip("Lifts or lowers the whole image, shadows included");
+			ImGui::SliderFloat("Contrast", &image.contrast, 0.0f, 2.0f, "%.2f");
+			ImGui::SetItemTooltip("About mid grey: below 1 flatter, above 1 punchier");
+			ImGui::SliderFloat("Saturation", &image.saturation, 0.0f, 2.0f, "%.2f");
+			ImGui::SetItemTooltip("0: black and white; 1: as rendered; above 1: more colourful");
+			if (ImGui::Button("Reset image")) {
+				image = Scene::ImageGrade{};
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("Saved with the scene");
+
 			// Fog and clouds: live, no rebuild
 			ImGui::SeparatorText("Fog");
 			auto& fog = environment.fog;
@@ -110,6 +127,18 @@ namespace Fox {
 				ImGui::SetItemTooltip("Scattering albedo: real clouds are almost 1");
 			}
 			ImGui::TextDisabled("Smoke: Create > Effects > Smoke (a Volume component)");
+
+			// Volumes (not saved with the scene: they are the listener's, not the scene's)
+			if (auto* audio = scene.GetAudio(); audio && ImGui::CollapsingHeader("Audio")) {
+				using Bus = Fox::Audio::AudioEngine::Bus;
+				const char* names[] = { "Master volume", "Music volume", "Effects volume" };
+				for (int bus = 0; bus < 3; bus++) {
+					float volume = audio->GetBusVolume(static_cast<Bus>(bus));
+					if (ImGui::SliderFloat(names[bus], &volume, 0.0f, 1.5f, "%.2f")) {
+						audio->SetBusVolume(static_cast<Bus>(bus), volume);
+					}
+				}
+			}
 
 			// Physics layers: names, and which collide with which (live, also while playing)
 			if (ImGui::CollapsingHeader("Collision layers")) {

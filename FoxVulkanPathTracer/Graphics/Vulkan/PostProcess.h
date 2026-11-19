@@ -23,17 +23,27 @@ namespace Fox {
 				void Record(Fox::Graphics::Vulkan::CommandList& commandList, VkFramebuffer framebuffer, VkExtent2D extent,
 					const std::function<void(Fox::Graphics::Vulkan::CommandList&)>& overlay = {});
 
+				// The grade applied with the tone mapping (saved with the scene: MainRayTracingScene::Environment)
+				struct Grade {
+					float exposure = 0.0f;   // Stops (EV): each +1 doubles the light, before the tone curve
+					float brightness = 0.0f; // -1..1, added to the displayed image
+					float contrast = 1.0f;   // About mid grey: 1 unchanged
+					float saturation = 1.0f; // 0 grey, 1 unchanged
+				};
+				void SetGrade(const Grade& newGrade) { grade = newGrade; }
+				const Grade& GetGrade() const { return grade; }
+
 				// Exposure in stops (EV): each +1 doubles the brightness of the image.
-				void SetExposure(float stops) { exposureStops = stops; }
-				float GetExposure() const { return exposureStops; }
+				void SetExposure(float stops) { grade.exposure = stops; }
+				float GetExposure() const { return grade.exposure; }
 
 				// Size of the fragment shader's push constant block (see tonemapping_frag.slang)
-				static constexpr uint32_t PUSH_CONSTANT_SIZE = sizeof(float);
+				static constexpr uint32_t PUSH_CONSTANT_SIZE = 4 * sizeof(float);
 
 			private:
 				VkDevice device = VK_NULL_HANDLE;
 				VkSampler sampler = VK_NULL_HANDLE;
-				float exposureStops = 0.0f;
+				Grade grade;
 
 				std::unique_ptr<Fox::Graphics::Vulkan::DescriptorSet> descriptorSet;
 			};

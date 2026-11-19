@@ -527,6 +527,21 @@ namespace Fox {
 				if (prefabFiles.empty()) {
 					shell.Add("Create/Prefab/(none yet: right-click an entity > Create Prefab)", [] {}, "", false, -1, "prefab");
 				}
+				auto addSound = [&scene, this](const glm::vec3& at, bool music) {
+					const auto entity = scene.CreateEmpty(music ? "Music" : "Sound");
+					Fox::Scene::Transform transform;
+					transform.position = at;
+					scene.GetSceneGraph().SetWorldTransform(entity, transform);
+					auto& sound = scene.GetSceneGraph().GetRegistry().Add<Fox::Scene::SoundComponent>(entity);
+					const auto files = scene.ListSounds();
+					if (!files.empty()) sound.file = files.front();
+					sound.music = music;
+					sound.loop = music;
+					gizmo.Select(entity);
+				};
+				shell.Add("Create/Audio/Sound", [addSound, spawn] { addSound(spawn + glm::vec3(0.0f, 1.0f, 0.0f), false); }, "", true, -1,
+					"audio sfx effect 3d emitter speaker");
+				shell.Add("Create/Audio/Background Music", [addSound, spawn] { addSound(spawn, true); }, "", true, -1, "audio song soundtrack loop");
 				shell.Add("Create/Effects/Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f))); }, "", true, -1,
 					"volume volumetric smoke steam haze");
 				shell.Add("Create/Effects/Glowing Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f), true)); }, "", true, -1,

@@ -12,7 +12,10 @@ struct VertexOutput
 // Mirrors ToneMappingConstants in PostProcess.cpp
 struct ToneMappingConstants
 {
-    float exposure; // Linear scale applied before the tone curve
+    float exposure;   // Linear scale applied before the tone curve
+    float brightness; // Added to the display encoded image: -1..1, 0 leaves it
+    float contrast;   // Around mid grey: 1 leaves it, 0 flat grey, 2 twice as steep
+    float saturation; // 1 leaves it, 0 grey, 2 twice as colourful
 };
 
 [[vk::push_constant]] ToneMappingConstants constants;
@@ -77,6 +80,17 @@ float3 AgXOutput(float3 color)
     return saturate(mul(outset, color));
 }
 
+// The user's grade (the Environment window's Image section), on the display encoded image where its sliders behave
+// as in a photo editor: saturation against the luma, contrast about mid grey, then brightness
+float3 Grade(float3 color)
+{
+    float luma = dot(color, float3(0.2126f, 0.7152f, 0.0722f));
+    color = luma + constants.saturation * (color - luma);
+    color = (color - 0.5f) * constants.contrast + 0.5f;
+    color += constants.brightness;
+    return saturate(color);
+}
+
 // Hides banding in smooth gradients (sky) after quantizing to 8 bits
 float3 Dither(float3 color, float2 pixel)
 {
@@ -89,7 +103,7 @@ float4 main(VertexOutput input) : SV_Target
 {
     float3 color = hdrBuffer.Sample(input.uv).rgb * constants.exposure;
 
-    color = AgXOutput(AgXLook(AgX(color)));
+    color = Grade(AgXOutput(AgXLook(AgX(color))));
 
     // The swapchain uses a UNORM format, so the display encoded value is written as is
     return float4(Dither(color, input.position.xy), 1.0f);

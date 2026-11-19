@@ -22,6 +22,7 @@
 //   CameraComponent     the game looks through it while it plays (it looks along its -Z axis)
 //   ScriptComponent     C# scripts run on it while the game plays (Scripts/*.cs, see Scripting/ScriptHost.h)
 //   PrefabComponent     it is an instance of a prefab (Prefabs/*.prefab.json): what is under it comes from there
+//   SoundComponent      it plays a sound (in the world, from where it is) or background music (Audio/AudioEngine.h)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -287,6 +288,25 @@ namespace Fox {
 			bool enabled = true;
 			float fov = 60.0f; // Vertical, degrees
 			int priority = 0;
+		};
+
+		// The entity plays a sound file (Sounds/: mp3, wav, flac) while the game plays: when play starts (Play on
+		// start), or when a script asks (Entity.Sound.Play()). In the world it is heard from where the entity is,
+		// following it, quieter with distance; music is background music instead (one track at a time, the same
+		// everywhere). The Inspector's Preview plays it in edit mode too.
+		struct SoundComponent {
+			bool enabled = true;
+			std::string file;
+			float volume = 1.0f;
+			float pitch = 1.0f;
+			bool loop = false;
+			bool playOnStart = true;
+			bool music = false;        // Background music (not placed in the world)
+			bool spatial = true;       // Placed at the entity (else heard the same everywhere)
+			float minDistance = 2.0f;  // Metres: full volume within this
+			float maxDistance = 60.0f; // Metres: quieter until this far
+
+			int64_t voice = 0;         // Playing (Audio::AudioEngine handle; 0: not)
 		};
 
 		// The entity is an instance of a prefab: an entity tree saved in a file (Prefabs/*.prefab.json), placed any
