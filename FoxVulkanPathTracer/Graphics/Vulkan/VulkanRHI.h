@@ -105,7 +105,9 @@ namespace Fox {
 					RayTracing::UpscalingMode upscaling;
 					uint32_t bounces;
 					float frameCap; // Frames per second at most (0: as vsync allows)
+					bool windLevelOfDetail; // Distant trees get their wind less often (see MainRayTracingScene)
 				};
+				void ApplyPresetSettings(const PresetSettings& settings);
 				static const char* PresetName(RenderPreset preset);
 				RenderPreset preset = RenderPreset::Auto;
 				bool presetLoaded = false;

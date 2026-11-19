@@ -65,6 +65,10 @@ namespace Fox {
 			Fox::Scene::RayTracing::RayTracingScene::DynamicMeshHandle handle;
 			bool placed = false;
 			float generationSeconds = 0.0f;
+			// Wind level of detail (MainRayTracingScene::Update)
+			float size = 0.0f;        // Metres from its origin to its farthest vertex (0: not measured yet)
+			float windPending = 0.0f; // Seconds of wind not applied yet (updated less often than every frame)
+			std::vector<Fox::Animation::WindSkeleton::Lean> leans; // Per instance: its sway downwind
 
 			// A new tree with the same settings (generated anew)
 			std::shared_ptr<Tree> CloneSettings() const {

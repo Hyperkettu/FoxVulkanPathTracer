@@ -68,6 +68,7 @@ namespace Fox {
 
                 // Where the clusters are seen from, before each frame's RecordFrameUpdate. pixelScale: image height
                 // / (2 tan(vertical fov / 2)); threshold: pixels of geometric error allowed (larger: coarser, faster)
+                const Fox::Graphics::Vulkan::RayTracing::ClusterLodPass::View& GetClusterLodView() const { return clusterView; }
                 void SetClusterLodView(const glm::vec3& cameraPosition, float pixelScale) {
                     clusterView.cameraPosition = cameraPosition;
                     clusterView.pixelScale = pixelScale;
@@ -101,6 +102,12 @@ namespace Fox {
                 // Growing leaves (SkinnedMesh::growth): those whose stem is less than leafFront metres along the tree
                 // have unfolded, over leafSpan metres (see Animation::TreeGrowth). 1e30: all grown.
                 void SetSkinGrowth(size_t skinnedMesh, float leafFront, float leafSpan);
+                // Whether the GPU deforms a skinned mesh this frame (wind level of detail):
+                //   Deform  as its joints are now
+                //   Hold    not this frame: it keeps last frame's shape (its motion vectors keep the last motion)
+                //   Freeze  once more with the same joints (its motion catches up: none), then not until Deform
+                enum class SkinUpdate { Deform, Hold, Freeze };
+                void SetSkinUpdate(size_t skinnedMesh, SkinUpdate update);
 
                 // The object a skinned mesh is placed as (for GetObjectTransform)
                 size_t GetObjectOfSkinnedMesh(size_t skinnedMesh) const { return skinnedMeshes[skinnedMesh].object; }
@@ -222,6 +229,11 @@ namespace Fox {
                 const std::string& GetObjectName(size_t object) const { return placements[object].name; }
                 bool IsObjectMovable(size_t object) const { return placements[object].movable; }
                 const ObjectTransform& GetObjectTransform(size_t object) const { return placements[object].transform; }
+                // Moves what is traced, not the object: applied after its transform (a tree swaying in the wind)
+                void SetObjectSway(size_t object, const glm::mat4& sway) {
+                    placements[object].sway = sway;
+                    tlasDirty = true;
+                }
 
                 // Takes effect with the next RecordFrameUpdate
                 void SetObjectTransform(size_t object, const ObjectTransform& transform);
@@ -248,7 +260,8 @@ namespace Fox {
                 // Per acceleration structure instance: world space now -> world space in the previous frame
                 struct InstanceMotion {
                     glm::vec4 rows[3]; // 3x4 matrix, row major
-                    glm::ivec4 lights{ 0 }; // x: its object's first light - its mesh's first object's (light indices of hits)
+                    glm::ivec4 lights{ 0 }; // x: its object's first light - its mesh's first object's (light indices of hits);
+                                            // y: 1 = its skinned mesh held its shape this frame (no deformation motion)
                 };
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<InstanceMotion>> instanceMotionSSBO;
 
@@ -418,6 +431,8 @@ namespace Fox {
                     uint32_t firstJoint = 0;
                     float leafFront = 1e30f, leafSpan = 1.0f;
                     std::vector<JointMatrix> joints;
+                    SkinUpdate update = SkinUpdate::Deform;
+                    bool settled = false; // Frozen and caught up: nothing to do
                 };
                 std::vector<SkinnedRecord> skinnedMeshes;
                 std::vector<SkinVertex> bindPose;
@@ -562,6 +577,9 @@ namespace Fox {
                     std::vector<uint32_t> masks;      // Their visibility masks while visible
                     glm::mat4 previousMatrix{ 1.0f }; // As traced in the previous frame
                     bool visible = true;
+                    glm::mat4 sway{ 1.0f }; // World space, after its transform: a tree's lean in the wind (SetObjectSway)
+
+                    glm::mat4 TracedMatrix() const { return sway * transform.Matrix(); }
                 };
                 std::vector<Placement> placements;
                 std::vector<uint32_t> instancePlacements; // Per TLAS instance

@@ -19,7 +19,12 @@ namespace Fox {
 			bool loop = false;         // Starts again once grown
 		};
 
-		// Moves a rig of branches (see TreeGenerator) in the wind. Every joint is an angular spring: the bone
+		// Moves a rig of branches (see TreeGenerator) in the wind. The wind's steady push, which bends a tree downwind,
+		// is left to Lean: instances of one tree share its rig but not its rotation, so a downwind bend computed in
+		// the mesh would point every rotated instance a different way. The rig only flutters: gusty turbulence across
+		// and along the branches, with no direction of its own.
+		//
+		// Every joint is an angular spring: the bone
 		// is turned away from its rest angle by the wind's torque and pulled back in proportion to how far it
 		// turned, with damping:
 		//
@@ -31,7 +36,7 @@ namespace Fox {
 		class WindSkeleton {
 		public:
 			struct Settings {
-				glm::vec3 windDirection{ 1.0f, 0.0f, 0.35f }; // World space, horizontal part is used
+				glm::vec3 windDirection{ 1.0f, 0.0f, 0.35f }; // World space, horizontal part is used (the scene sets it: one wind)
 				float windSpeed = 8.0f;           // m/s, mean
 				float gustStrength = 0.7f;        // Gusts reach (1 + this) times the mean speed
 				float gustSpeed = 6.0f;           // m/s: how fast gusts travel across the tree
@@ -52,6 +57,15 @@ namespace Fox {
 			// Advances the springs. time: seconds since start (drives the gusts). objectToWorld: where the tree
 			// stands; the wind blows in world space.
 			void Update(float deltaTime, float time, const glm::mat4& objectToWorld);
+
+			// A whole tree swaying downwind about its base: a damped spring at the trunk's frequency, pushed by the
+			// gusty wind where the tree stands (gusts roll across a forest). One per instance; the scene tilts the
+			// instance by angle radians towards the wind.
+			struct Lean {
+				float angle = 0.0f;
+				float velocity = 0.0f;
+			};
+			static void UpdateLean(Lean& lean, const Settings& settings, const glm::vec3& worldBase, float time, float deltaTime);
 
 			// Per bone: pose * inverse(bind), in mesh space (for RayTracingScene::SetJointMatrices)
 			const std::vector<glm::mat4>& GetSkinMatrices() const { return skinMatrices; }

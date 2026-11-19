@@ -126,7 +126,7 @@ namespace Fox {
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Clouds, enabled, bottom, top, coverage, density, size, wind, anisotropy, albedo, shadows)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::PhysicsLayers, names, collides)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers, image)
+				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers, image, windDirection)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {

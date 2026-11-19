@@ -55,7 +55,7 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   * this process's video memory use against the driver's budget (`VK_EXT_memory_budget`, when the driver has it).
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
-  joint is an angular spring pushed by gusty wind.
+  joint is an angular spring pushed by gusty wind. One wind direction for the whole scene: every tree sways the same way.
 * **Leaves & Opacity Micromaps** The tree carries alpha tested leaf cards. Opacity micromaps (`VK_EXT_opacity_micromap`)
   resolve most of each leaf's cutout in hardware; an any-hit shader alpha tests the rest.
 * **Tree Editor** Add, duplicate and remove trees while the scene renders, and change everything about each one: shape,
@@ -132,16 +132,27 @@ tessellation shows smooth large-scale relief instead of noise.
 
 **Render presets** (**Render > Preset**, saved to `Settings/Render.json`) set how hard the path tracer works:
 
-| Preset | Resolution | Bounces | Frame rate |
-| --- | --- | --- | --- |
-| Quality | Native (Quality upscaling at 4K and above) | 4 | As vsync allows |
-| Balanced | DLSS Balanced (58 % of the display's width and height) | 3 | 60 fps at most |
-| Performance | DLSS Performance (50 %) | 2 | 60 fps at most |
+| Preset | Resolution | Bounces | Frame rate | Wind level of detail |
+| --- | --- | --- | --- | --- |
+| Quality | Native (Quality upscaling at 4K and above) | 4 | As vsync allows | Off |
+| Balanced | DLSS Balanced (58 % of the display's width and height) | 3 | 60 fps at most | On |
+| Performance | DLSS Performance (50 %) | 2 | 40 fps at most | On |
 
 * **Auto** (the default) picks **Balanced** on laptop GPUs (a name with "Laptop"), integrated GPUs and GPUs with less
   than 10 GB of their own memory, and **Quality** on the others.
 * **The frame cap** keeps a laptop's GPU cooler, so it keeps its clocks: uncapped, an RTX 3070 Laptop reached 86 °C
-  and fell to 210 MHz, and every pass took two to three times longer.
+  and fell to 210 MHz, and every pass took two to three times longer. Performance caps at 40 fps so the GPU rests
+  between frames even in heavy scenes (my_yard needs about 15 ms per frame there).
+* **Wind level of detail**:
+  * **How often a tree mesh gets new wind** depends on its size on screen, measured at its nearest instance:
+    * every frame from 600 pixels;
+    * every 2nd frame from 150;
+    * every 4th frame from 40;
+    * never below that: it stands still. A growing tree never stands still.
+  * **Skipped frames:** the time a tree missed is added at its next update, since the springs split it into small steps. In between, the tree keeps its shape and reports no motion, so the denoiser doesn't smear it.
+  * **Cost:** the skinning shader now writes only what changes, not whole vertices, and doesn't write the refit input for cluster-traced trees.
+  * **Measured** in my_yard, with the laptop on battery at the same 40 W cap before and after: skinning went from 22.5 ms to 12.8 ms.
+  * **GPU Profiler:** the "Trees in the wind" row shows how many tree meshes are at each rate.
 * **Picking a resolution by hand** (`U`) overrides the preset's until a preset is chosen again.
 
 On an RTX 3070 Laptop at 1280 x 840 (default scene, DLSS Ray Reconstruction, GPU time per frame):
@@ -222,10 +233,19 @@ weighted half and half to both bones, so the wood bends smoothly at the joints.
 Wind (`Animation/WindSkeleton`) treats every joint as an angular spring:
 `I * angular acceleration = wind torque - k * angle - c * angular velocity`.
 
-* Wind torque: quadratic drag on every branch segment, summed over everything the joint carries, about the joint.
+* Wind torque: drag on every branch segment from the wind's flutter (across the wind, up and down, a little along
+  it), linearised about the gusty wind speed, summed over everything the joint carries, about the joint.
 * Inertia: of that subtree about the joint. The stiffness `k` follows from a natural frequency that rises from
   0.45 Hz for the trunk to a few Hz for twigs. Damping is a fraction of critical.
-* Gusts: roll across the tree with the wind, and branches flutter sideways.
+* Gusts: roll across the scene with the wind.
+
+**One wind.** The direction is the scene's (Environment window > **Wind towards**, saved with the scene), the same for
+every tree. Instances of a tree share one rig but each has its own rotation, so a downwind bend computed in the mesh
+would point every rotated instance a different way. So the rig only flutters, with no direction of its own. The steady
+push downwind is each instance's **lean** (`WindSkeleton::UpdateLean`): a damped spring at the trunk's frequency that
+tilts the whole instance about its base towards the wind, about 4 degrees at 8 m/s and more in gusts. It costs nothing
+on the GPU: only the instance's transform in the top level structure changes. Speed, gusts, response and damping stay
+per tree (Trees window > Wind).
 
 Settings such as wind speed, gust strength, damping and response are in `WindSkeleton::Settings`; tree shape in
 `TreeSettings`.

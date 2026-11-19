@@ -28,7 +28,8 @@
 struct InstanceMotion
 {
     float4 rows[3];
-    int4 lights; // x: what to add to a hit's light index (the lights of the instance's object, see closest_hit.slang)
+    int4 lights; // x: what to add to a hit's light index (the lights of the instance's object, see closest_hit.slang);
+                 // y: 1 = its skinned mesh kept its shape this frame (wind level of detail): no deformation motion
 };
 [[vk::binding(13, 0)]] StructuredBuffer<InstanceMotion> gInstanceMotion;
 
@@ -728,7 +729,8 @@ void main()
     {
         // Deforming surfaces first (where the point was on the mesh), then the object's own movement
         InstanceMotion motion = gInstanceMotion[primaryHit.instanceIndex];
-        float4 p = float4(primaryPoint + primaryHit.skinnedMotion, 1.0f);
+        float3 deformation = motion.lights.y != 0 ? float3(0.0f) : primaryHit.skinnedMotion;
+        float4 p = float4(primaryPoint + deformation, 1.0f);
         primaryPoint = float3(dot(motion.rows[0], p), dot(motion.rows[1], p), dot(motion.rows[2], p));
     }
 

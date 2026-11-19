@@ -159,10 +159,7 @@ namespace Fox {
 				if (ImGui::CollapsingHeader("Wind")) {
 					auto& wind = tree.wind;
 					// Live: the springs pick these up every frame
-					float direction = glm::degrees(std::atan2(wind.windDirection.z, wind.windDirection.x));
-					if (ImGui::SliderFloat("Direction", &direction, -180.0f, 180.0f, "%.0f deg")) {
-						wind.windDirection = glm::vec3(std::cos(glm::radians(direction)), 0.0f, std::sin(glm::radians(direction)));
-					}
+					ImGui::TextDisabled("Direction: Environment window > Wind (one wind for all trees)");
 					ImGui::SliderFloat("Speed (m/s)", &wind.windSpeed, 0.0f, 30.0f, "%.1f");
 					ImGui::SliderFloat("Gusts", &wind.gustStrength, 0.0f, 1.0f, "%.2f");
 					ImGui::SliderFloat("Gust speed (m/s)", &wind.gustSpeed, 0.5f, 20.0f, "%.1f");

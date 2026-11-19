@@ -773,6 +773,13 @@ namespace Fox {
 					row("Objects", count(stats.objects));
 					row("Vertices", count(stats.vertices) + ", buffers " + bytes(stats.geometryBytes));
 					row("Materials / lights", count(stats.materials) + " / " + count(stats.lights));
+					const auto& wind = scene.GetWindStats();
+					if (wind.every + wind.half + wind.quarter + wind.still > 0) {
+						row("Trees in the wind", std::to_string(wind.every) + " every frame, " + std::to_string(wind.half) + " 2nd, "
+							+ std::to_string(wind.quarter) + " 4th, " + std::to_string(wind.still) + " still",
+							scene.GetWindLevelOfDetail() ? "Wind level of detail (Balanced and Performance presets): by each tree's height on screen"
+							: "Wind level of detail off (Quality preset): every tree every frame");
+					}
 					const uint64_t pixels = static_cast<uint64_t>(gbuffer->extent.width) * gbuffer->extent.height * samplesPerPixel;
 					row("Paths per second", count(cpuAverage > 0.0f ? static_cast<uint64_t>(pixels * 1000.0 / cpuAverage) : 0),
 						"Render pixels x paths per pixel x frames per second (each path: a camera ray and its bounces and shadow rays)");

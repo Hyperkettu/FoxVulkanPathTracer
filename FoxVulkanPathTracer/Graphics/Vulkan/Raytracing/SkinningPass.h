@@ -22,7 +22,8 @@ namespace Fox {
 						uint32_t firstJoint;
 						float leafFront;  // Growing leaves (RayTracingScene::SetSkinGrowth)
 						float leafSpan;
-						float pad0, pad1;
+						float buildInput; // 1: also write the acceleration structure input (refitted, not cluster traced)
+						float pad1;
 					};
 
 					SkinningPass(VkDevice device,

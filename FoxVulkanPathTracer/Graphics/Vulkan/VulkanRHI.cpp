@@ -683,15 +683,16 @@ namespace Fox {
 				using Mode = RayTracing::UpscalingMode;
 				switch (which) {
 				case RenderPreset::Performance:
-					// A quarter of the pixels, two bounces, 60 fps at most (a laptop stays cooler, so faster)
-					return { Mode::Performance, 2, 60.0f };
+					// A quarter of the pixels, two bounces, 40 fps at most: the GPU rests between frames, so a laptop
+					// stays cool enough to keep its clock (at full load it heats up and slows down several times over)
+					return { Mode::Performance, 2, 40.0f, true };
 				case RenderPreset::Balanced:
-					return { Mode::Balanced, 3, 60.0f };
+					return { Mode::Balanced, 3, 60.0f, true };
 				default: {
 					// Full paths; resolution from the display size. At 4K, Quality (1440p) keeps a 60 fps frame well
 					// within budget (~4.5 ms on an RTX 5090; Native takes ~8.6 ms).
 					const bool large = capabilities.currentExtent.height >= 2000;
-					return { large ? Mode::Quality : Mode::Native, 4, 0.0f };
+					return { large ? Mode::Quality : Mode::Native, 4, 0.0f, false };
 				}
 				}
 			}
@@ -712,14 +713,23 @@ namespace Fox {
 					std::cout << "Settings/Render.json: " << e.what() << "\n";
 				}
 				const PresetSettings settings = SettingsOf(EffectivePreset());
-				maxBounces = settings.bounces;
-				frameCap = settings.frameCap;
+				ApplyPresetSettings(settings);
 				std::cout << "Render preset: " << PresetName(preset);
 				if (preset == RenderPreset::Auto) {
 					std::cout << " (" << PresetName(EffectivePreset()) << ": " << gpuName << ", " << (gpuMemory >> 20) << " MiB"
 						<< (modestGpu ? ", a laptop or mid-range GPU" : "") << ")";
 				}
-				std::cout << " - " << settings.bounces << " bounces" << (settings.frameCap > 0.0f ? ", 60 fps at most" : "") << "\n";
+				std::cout << " - " << settings.bounces << " bounces";
+				if (settings.frameCap > 0.0f) std::cout << ", " << settings.frameCap << " fps at most";
+				std::cout << (settings.windLevelOfDetail ? ", wind level of detail" : "") << "\n";
+			}
+
+			void VulkanRHI::ApplyPresetSettings(const PresetSettings& settings) {
+				maxBounces = settings.bounces;
+				frameCap = settings.frameCap;
+				if (raytracingScene) {
+					raytracingScene->SetWindLevelOfDetail(settings.windLevelOfDetail);
+				}
 			}
 
 			void VulkanRHI::SaveRenderSettings() const {
@@ -737,10 +747,11 @@ namespace Fox {
 				preset = newPreset;
 				SaveRenderSettings();
 				const PresetSettings settings = SettingsOf(EffectivePreset());
-				maxBounces = settings.bounces;
-				frameCap = settings.frameCap;
+				ApplyPresetSettings(settings);
 				std::cout << "Render preset: " << PresetName(preset) << (preset == RenderPreset::Auto ? std::string(" (") + PresetName(EffectivePreset()) + ")" : "")
-					<< " - " << settings.bounces << " bounces" << (settings.frameCap > 0.0f ? ", 60 fps at most" : "") << "\n";
+					<< " - " << settings.bounces << " bounces";
+				if (settings.frameCap > 0.0f) std::cout << ", " << settings.frameCap << " fps at most";
+				std::cout << (settings.windLevelOfDetail ? ", wind level of detail" : "") << "\n";
 				// Its resolution, instead of one picked by hand
 				SetUpscalingMode(settings.upscaling);
 				upscalingModeChosenByUser = false;
@@ -1165,6 +1176,8 @@ namespace Fox {
 					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
 					const float pixelScale = static_cast<float>(capabilities.currentExtent.height) / (2.0f * std::tan(camera->GetFov() * 0.5f));
 					raytracingScene->SetClusterLodView(camera->GetPosition(), pixelScale);
+					// The preset's (the scene may be newer than the settings)
+					raytracingScene->SetWindLevelOfDetail(SettingsOf(EffectivePreset()).windLevelOfDetail);
 				}
 
 				// Objects moved since the last frame: acceleration structure, lights, motion (timed as "scene": skinning,

@@ -17,6 +17,31 @@ namespace Fox {
 			}
 		}
 
+		void WindSkeleton::UpdateLean(Lean& lean, const Settings& settings, const glm::vec3& worldBase, float time, float deltaTime) {
+			if (deltaTime <= 0.0f) {
+				return;
+			}
+			glm::vec3 direction(settings.windDirection.x, 0.0f, settings.windDirection.z);
+			direction = glm::dot(direction, direction) > 1e-8f ? glm::normalize(direction) : glm::vec3(1.0f, 0.0f, 0.0f);
+
+			// The gust where the tree stands, and the lean it holds against it: drag grows with the square of the speed
+			// (8 m/s: about 4 degrees; with response, as the rig's)
+			const float gustTime = time - glm::dot(worldBase, direction) / std::max(settings.gustSpeed, 0.1f);
+			const float speed = settings.windSpeed * std::max(1.0f + settings.gustStrength * Gust(gustTime), 0.0f);
+			const float LEAN_PER_SPEED_SQUARED = 0.0012f;
+			const float target = std::min(LEAN_PER_SPEED_SQUARED * (settings.response / 5.0f) * speed * speed, settings.maxAngle);
+
+			const float w = glm::two_pi<float>() * std::max(settings.trunkFrequency, 0.05f);
+			const int substeps = std::clamp(static_cast<int>(std::ceil(deltaTime / (2.0f * SUBSTEP))), 1, 32);
+			const float h = deltaTime / static_cast<float>(substeps);
+			for (int step = 0; step < substeps; step++) {
+				const float acceleration = (w * w) * (target - lean.angle) - (2.0f * settings.dampingRatio * w) * lean.velocity;
+				lean.velocity += acceleration * h;
+				lean.angle += lean.velocity * h;
+			}
+			lean.angle = glm::clamp(lean.angle, -settings.maxAngle, settings.maxAngle);
+		}
+
 		WindSkeleton::WindSkeleton(const std::vector<Fox::Graphics::Geometry::Bone>& bones, const Settings& settings)
 			: settings(settings)
 		{
@@ -115,6 +140,8 @@ namespace Fox {
 			const glm::vec3 across = glm::normalize(glm::cross(up, wind));
 
 			// --- Drag on every bone, then gathered into each joint's torque ---
+			// Only the flutter (across the wind and up and down, no mean direction): drag linearised about the gusty
+			// wind speed, F = 1/2 rho Cd A |U| u. The steady push downwind is the instance's lean (UpdateLean).
 			std::vector<glm::vec3> force(joints.size());
 			std::vector<glm::vec3> moment(joints.size()); // About the mesh origin: sum c x F
 
@@ -126,15 +153,15 @@ namespace Fox {
 				const float gustTime = time - glm::dot(worldCenter, windWorld) / std::max(settings.gustSpeed, 0.1f);
 				const float speed = settings.windSpeed * std::max(1.0f + settings.gustStrength * Gust(gustTime), 0.0f);
 
-				const float flutter = settings.windSpeed * settings.turbulence;
-				const glm::vec3 velocity = wind * speed
-					+ across * (flutter * std::sin(glm::two_pi<float>() * 1.7f * time + joint.phase))
-					+ up * (0.5f * flutter * std::sin(glm::two_pi<float>() * 2.3f * time + 2.0f * joint.phase));
+				const float flutter = speed * settings.turbulence;
+				const glm::vec3 velocity = across * (flutter * std::sin(glm::two_pi<float>() * 1.7f * time + joint.phase))
+					+ up * (0.5f * flutter * std::sin(glm::two_pi<float>() * 2.3f * time + 2.0f * joint.phase))
+					+ wind * (0.5f * flutter * std::sin(glm::two_pi<float>() * 1.3f * time + 3.0f * joint.phase));
 
-				// Only the flow across the bone pushes it: quadratic drag on its projected area
+				// Only the flow across the bone pushes it, on its projected area
 				const glm::vec3 normalFlow = velocity - joint.axis * glm::dot(velocity, joint.axis);
 				const float area = 2.0f * joint.radius * joint.length;
-				force[i] = (0.5f * AIR_DENSITY * DRAG_COEFFICIENT * area * settings.response) * glm::length(normalFlow) * normalFlow;
+				force[i] = (0.5f * AIR_DENSITY * DRAG_COEFFICIENT * area * settings.response) * speed * normalFlow;
 				moment[i] = glm::cross(joint.center, force[i]);
 			}
 

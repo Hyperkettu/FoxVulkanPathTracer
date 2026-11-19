@@ -1134,7 +1134,20 @@ namespace Fox {
                 skinned.leafSpan = std::max(leafSpan, 1e-4f);
             }
 
+            void RayTracingScene::SetSkinUpdate(size_t skinnedMesh, SkinUpdate update) {
+                SkinnedRecord& skinned = skinnedMeshes[skinnedMesh];
+                if (update != SkinUpdate::Freeze) {
+                    skinned.settled = false;
+                }
+                skinned.update = update;
+            }
+
             void RayTracingScene::RecordSkinning(VkCommandBuffer cmd) {
+                // Which deform this frame (wind level of detail: distant trees less often, the farthest not at all)
+                auto deforms = [](const SkinnedRecord& skinned) {
+                    return skinned.update == SkinUpdate::Deform || (skinned.update == SkinUpdate::Freeze && !skinned.settled);
+                };
+
                 // The previous frame may still be tracing against these vertices and structures
                 VkMemoryBarrier beforeSkinning{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
                     VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -1144,8 +1157,12 @@ namespace Fox {
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &beforeSkinning, 0, nullptr, 0, nullptr);
 
                 for (const SkinnedRecord& skinned : skinnedMeshes) {
+                    if (!deforms(skinned)) {
+                        continue;
+                    }
+                    const bool refitted = meshRecords[skinned.record].clusterMesh < 0;
                     skinningPass->Dispatch(cmd, { skinned.firstVertex, skinned.vertexCount, skinned.firstSkinVertex, skinned.firstJoint,
-                        skinned.leafFront, skinned.leafSpan, 0.0f, 0.0f });
+                        skinned.leafFront, skinned.leafSpan, refitted ? 1.0f : 0.0f, 0.0f });
                 }
 
                 // The refits read the new vertices, and so do the ray tracing shaders
@@ -1156,7 +1173,13 @@ namespace Fox {
                     0, 1, &afterSkinning, 0, nullptr, 0, nullptr);
 
                 // Refit: same triangles, new positions. Much cheaper than a rebuild, and fine for bending.
-                for (const SkinnedRecord& skinned : skinnedMeshes) {
+                for (SkinnedRecord& skinned : skinnedMeshes) {
+                    if (!deforms(skinned)) {
+                        continue;
+                    }
+                    if (skinned.update == SkinUpdate::Freeze) {
+                        skinned.settled = true; // Caught up with this dispatch
+                    }
                     for (int blasIndex : meshRecords[skinned.record].blas) {
                         if (blasIndex < 0) {
                             continue;
@@ -1220,8 +1243,14 @@ namespace Fox {
                 // Instance motion since the previous frame (for motion vectors), and lights of moved objects.
                 // Small, so they are written into the command buffer (vkCmdUpdateBuffer, up to 64 KiB).
                 std::vector<InstanceMotion> motion(instancePlacements.size());
+                // Skinned meshes held this frame (wind level of detail) keep their shape: no motion of their own, whatever
+                // the previous positions (from their last deformation) say
+                std::vector<bool> held(meshRecords.size(), false);
+                for (const SkinnedRecord& skinned : skinnedMeshes) {
+                    held[skinned.record] = skinned.update == SkinUpdate::Hold || (skinned.update == SkinUpdate::Freeze && skinned.settled);
+                }
                 for (Placement& placement : placements) {
-                    const glm::mat4 current = placement.transform.Matrix();
+                    const glm::mat4 current = placement.TracedMatrix();
                     const glm::mat4 toPrevious = placement.previousMatrix * glm::inverse(current);
                     for (uint32_t instance : placement.instances) {
                         for (int row = 0; row < 3; row++) {
@@ -1231,7 +1260,7 @@ namespace Fox {
                     placement.previousMatrix = current;
                     const int lightOffset = static_cast<int>(placement.firstLight) - static_cast<int>(meshRecords[placement.record].firstLight);
                     for (uint32_t instance : placement.instances) {
-                        motion[instance].lights = glm::ivec4(lightOffset, 0, 0, 0);
+                        motion[instance].lights = glm::ivec4(lightOffset, held[placement.record] ? 1 : 0, 0, 0);
                     }
                 }
 
@@ -1287,7 +1316,9 @@ namespace Fox {
                 // Edited surfaces (terrain), materials and textures
                 // Simulations writing geometry (water), then what the edits and simulations changed
                 RecordSimulations(cmd, frameSlot);
+                if (mark) mark("simulate");
                 RecordEdits(cmd, frameSlot);
+                if (mark) mark("edits");
 
                 // Deform the skinned meshes every frame (also when their joints did not change: the previous
                 // positions must catch up, or a mesh that stopped would keep its last motion vectors)
@@ -1306,7 +1337,7 @@ namespace Fox {
                 // Rebuild the top level structure in place. It holds one instance per object and surface kind,
                 // so a full rebuild costs microseconds and keeps tracing as fast as the original build.
                 for (const Placement& placement : placements) {
-                    const glm::mat4 transform = placement.transform.Matrix();
+                    const glm::mat4 transform = placement.TracedMatrix();
                     for (uint32_t instance : placement.instances) {
                         instances[instance].transform = {
                             transform[0][0], transform[1][0], transform[2][0], transform[3][0],
@@ -1679,7 +1710,7 @@ namespace Fox {
                     for (size_t e = 0; e < entries.size(); e++) {
                         const Placement& placement = placements[entries[e].placement];
                         const ClusterMesh& mesh = clusterMeshes[meshRecords[placement.record].clusterMesh];
-                        const glm::mat4 toWorld = placement.transform.Matrix();
+                        const glm::mat4 toWorld = placement.TracedMatrix();
                         Instance& instance = list[e];
                         for (int row = 0; row < 3; row++) {
                             instance.rows[row] = glm::vec4(toWorld[0][row], toWorld[1][row], toWorld[2][row], toWorld[3][row]);

@@ -549,7 +549,22 @@ namespace Fox {
 
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to. Instances of a tree
 				// share its deformation: it is computed once, for its first placement.
+				//
+				// Level of detail: the wind is worth its cost (the skeleton here; on the GPU skinning every vertex and the
+				// tree's acceleration structures) only where it shows. By its size on screen (pixels, its nearest
+				// instance): every frame (600+), every 2nd (150+), every 4th (40+; with the time missed: the springs take
+				// substeps), or standing still. Branches sway at a hertz or two, so even every 4th frame looks smooth.
+				// Updates of the less frequent ones are spread over the frames; in between their shape is held (and
+				// has no motion of its own, so the denoiser sees it still).
 				std::unordered_set<const Tree*> blown;
+				windStats = WindStats{};
+				windFrame++;
+				uint32_t treeIndex = 0;
+				const auto& view = GetClusterLodView();
+				const float windAngle = glm::radians(environment.windDirection);
+				const glm::vec3 windDirection(std::cos(windAngle), 0.0f, std::sin(windAngle));
+				// Instances tilt towards the wind about their base, around the horizontal axis across it
+				const glm::vec3 leanAxis = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), windDirection));
 				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {
 					Tree* tree = mesh.type == MeshComponent::Type::Tree ? mesh.tree.get() : nullptr;
 					if (!tree || !tree->placed || !tree->skeleton || !mesh.placed || tree->handle.object >= GetObjectCount()
@@ -564,11 +579,62 @@ namespace Fox {
 							tree->growthTime = tree->growth.loop ? std::fmod(tree->growthTime, duration) : duration;
 						}
 					}
+					tree->wind.windDirection = windDirection;
+
+					// Every instance leans downwind on its own spring, every frame: only its traced transform changes
+					std::vector<size_t> objects{ tree->handle.object };
+					objects.insert(objects.end(), tree->handle.moreObjects.begin(), tree->handle.moreObjects.end());
+					tree->leans.resize(objects.size());
+					for (size_t i = 0; i < objects.size(); i++) {
+						if (objects[i] >= GetObjectCount()) continue;
+						const glm::vec3 base = GetObjectTransform(objects[i]).position;
+						Fox::Animation::WindSkeleton::UpdateLean(tree->leans[i], tree->wind, base, time, step);
+						const glm::mat4 sway = glm::translate(glm::mat4(1.0f), base) * glm::rotate(glm::mat4(1.0f), tree->leans[i].angle, leanAxis)
+							* glm::translate(glm::mat4(1.0f), -base);
+						SetObjectSway(objects[i], sway);
+					}
+
+					uint32_t interval = 1;
+					if (windLevelOfDetail) {
+						if (tree->size <= 0.0f && tree->mesh) {
+							for (const auto& vertex : tree->mesh->vertices) {
+								tree->size = std::max(tree->size, glm::length(glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2])));
+							}
+						}
+						float pixels = 0.0f;
+						auto measure = [&](size_t object) {
+							if (object >= GetObjectCount()) return;
+							const ObjectTransform& placed = GetObjectTransform(object);
+							const float scale = std::max({ placed.scale.x, placed.scale.y, placed.scale.z });
+							const float distance = std::max(glm::distance(placed.position, view.cameraPosition), 0.1f);
+							pixels = std::max(pixels, tree->size * scale * view.pixelScale / distance);
+						};
+						measure(tree->handle.object);
+						for (size_t object : tree->handle.moreObjects) measure(object);
+						interval = pixels >= 600.0f ? 1 : pixels >= 150.0f ? 2 : pixels >= 40.0f ? 4 : 0;
+						const bool growing = tree->growth.enabled && !tree->growthPaused && tree->GrowthProgress() < 1.0f;
+						if (interval == 0 && growing) {
+							interval = 4; // Its shape changes: not still
+						}
+					}
+					(interval == 1 ? windStats.every : interval == 2 ? windStats.half : interval == 4 ? windStats.quarter : windStats.still)++;
+
+					tree->windPending += step;
+					const bool due = interval > 0 && (windFrame + treeIndex++) % interval == 0;
+					if (!due) {
+						SetSkinUpdate(tree->handle.skinnedMesh, interval == 0 ? SkinUpdate::Freeze : SkinUpdate::Hold);
+						return;
+					}
+					// At most a tenth of a second at once: a tree that stood still starts again calmly
+					const float windStep = std::min(tree->windPending, 0.1f);
+					tree->windPending = 0.0f;
+
 					tree->skeleton->GetSettings() = tree->wind;
 					tree->skeleton->SetGrowth(tree->GrowthProgress(), tree->growth);
-					tree->skeleton->Update(step, time, GetObjectTransform(tree->handle.object).Matrix());
+					tree->skeleton->Update(windStep, time, GetObjectTransform(tree->handle.object).Matrix());
 					SetJointMatrices(tree->handle.skinnedMesh, tree->skeleton->GetSkinMatrices());
 					SetSkinGrowth(tree->handle.skinnedMesh, tree->skeleton->GetLeafFront(), tree->skeleton->GetLeafSpan());
+					SetSkinUpdate(tree->handle.skinnedMesh, SkinUpdate::Deform);
 				});
 			}
 
@@ -805,6 +871,7 @@ namespace Fox {
 					}
 				}
 				tree.skeleton = std::make_unique<Fox::Animation::WindSkeleton>(tree.mesh->bones, tree.wind);
+				tree.size = 0.0f; // Measured again
 				tree.regenerate = false;
 				tree.generationSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
 			}

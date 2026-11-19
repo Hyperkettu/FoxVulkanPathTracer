@@ -38,7 +38,8 @@ struct SkinningConstants
     uint firstJoint;
     float leafFront;  // Leaves whose stem is less than this far along the tree have unfolded...
     float leafSpan;   // ...over this distance (metres)
-    float pad0, pad1;
+    float buildInput; // 1: also write the acceleration structure's input (refitted meshes; not cluster traced ones)
+    float pad1;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<SkinVertex> gBindPose;
@@ -87,15 +88,14 @@ void main(uint3 id : SV_DispatchThreadID)
     tangent = dot(tangent, tangent) > 1e-12f ? normalize(tangent) : tangent;
 
     uint index = constants.firstVertex + id.x;
-    Vertex vertex = gVertices[index];
 
     // Before overwriting: this is where the vertex was in the previous frame
-    gPreviousPositions[constants.firstSkinVertex + id.x] = float4(vertex.position.xyz, 1.0f);
+    gPreviousPositions[constants.firstSkinVertex + id.x] = float4(gVertices[index].position.xyz, 1.0f);
 
-    vertex.position = float4(position, 1.0f);
-    vertex.normal = float4(normal, 0.0f);
-    vertex.tangent = float4(tangent, bind.tangent.w);
-
-    gVertices[index] = vertex;
-    gBuildVertices[index] = vertex;
+    // Only the fields that change (the texture coordinates and the rest stay): much less memory traffic
+    gVertices[index].position = float4(position, 1.0f);
+    gVertices[index].normal = float4(normal, 0.0f);
+    gVertices[index].tangent = float4(tangent, bind.tangent.w);
+    if (constants.buildInput > 0.5f)
+        gBuildVertices[index].position = float4(position, 1.0f); // A refit reads positions only
 }

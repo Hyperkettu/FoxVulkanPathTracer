@@ -34,6 +34,14 @@ namespace Fox {
                 virtual void Initialize() override;
                 virtual void Update(float deltaTime) override;
 
+                // Wind level of detail: trees small on screen get their wind every 2nd or 4th frame, the smallest stand
+                // still. Off: every tree every frame.
+                void SetWindLevelOfDetail(bool enabled) { windLevelOfDetail = enabled; }
+                bool GetWindLevelOfDetail() const { return windLevelOfDetail; }
+                // Trees (meshes; instances share one) last frame: blown every frame, every 2nd, every 4th, standing still
+                struct WindStats { uint32_t every = 0, half = 0, quarter = 0, still = 0; };
+                const WindStats& GetWindStats() const { return windStats; }
+
                 // --- Scene content: what a scene file holds (Scenes/*.json, see SceneFile.cpp) ---
 
                 // Types of scene content (Scene/SceneContent.h)
@@ -91,6 +99,9 @@ namespace Fox {
                     Clouds clouds;
                     PhysicsLayers layers;
                     ImageGrade image;
+                    // One wind for every tree: degrees, where it blows to, from +x towards +z. The trees' own wind settings
+                    // (Trees window) give its speed, gusts and how they respond.
+                    float windDirection = 19.3f;
                 };
 
                 // The sun a new scene starts with (an entity with a directional LightComponent)
@@ -357,6 +368,9 @@ namespace Fox {
                 void SyncMeshes();
                 // Water: drops (rain and wind gusts) and a rebuild once moved water has come to rest
                 void UpdateWater(float dt);
+                bool windLevelOfDetail = true;
+                WindStats windStats;
+                uint32_t windFrame = 0;
                 void PlaceWater(Entity entity, Fox::Scene::WaterComponent& water);
                 struct PendingWater {
                     Entity entity;

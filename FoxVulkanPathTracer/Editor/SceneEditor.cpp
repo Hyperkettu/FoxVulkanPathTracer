@@ -100,6 +100,11 @@ namespace Fox {
 			ImGui::SameLine();
 			ImGui::TextDisabled("Saved with the scene");
 
+			// One wind for every tree: live
+			ImGui::SeparatorText("Wind");
+			ImGui::SliderFloat("Wind towards", &environment.windDirection, -180.0f, 180.0f, "%.0f deg");
+			ImGui::SetItemTooltip("Where the wind blows to (from +x towards +z): every tree leans and sways that way. Speed and gusts: Trees window > Wind");
+
 			// Fog and clouds: live, no rebuild
 			ImGui::SeparatorText("Fog");
 			auto& fog = environment.fog;
