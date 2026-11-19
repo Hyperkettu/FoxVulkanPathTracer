@@ -490,6 +490,82 @@ component's values. When it stops:
 
 Saving while it plays saves the scene as it was when play started; loading a scene stops play without restoring.
 
+### Scripting (C#)
+
+Gameplay is written in C#: classes deriving from `Fox.Script` in `Scripts/*.cs`, run while the game plays. Give an
+entity a **Script** component (Inspector > Add Component > Script, then **Add script...**, or **New script file** to
+start one from a template). `Scenes/scripting-demo.json` has examples at work:
+
+* `PlayerBall` rolls a ball with W A S D, jumps with Space and drops boxes with B.
+* `FollowCamera` follows it with the game's camera.
+* `Chaser` sends an agent after it.
+* `Spinner` turns and bobs a box.
+
+```csharp
+using System.Numerics;
+using Fox;
+
+public class Spinner : Script
+{
+    public float degreesPerSecond = 90.0f;   // Public fields show in the Inspector, saved with the scene
+
+    public override void OnUpdate(float deltaTime)
+    {
+        Entity.Rotate(Vector3.UnitY, degreesPerSecond * deltaTime);
+        if (Input.GetKeyDown(Key.Space) && Scene.Raycast(Position, -Vector3.UnitY, 2.0f, out RaycastHit hit, Entity))
+            Entity.Physics.AddImpulse(Vector3.UnitY * 5.0f * Entity.Physics.Mass);
+    }
+}
+```
+
+**Life:** `OnStart` once before the first update (when play starts, or when the script is added while playing), then
+`OnUpdate(deltaTime)` every frame of game time (not while paused; scaled by the game speed). `OnStop` runs when play
+stops or the script's entity goes. Scripts run first in the frame, before agents and physics.
+
+**The API** (`Scripting/FoxScripting/Engine.cs`; vectors are `System.Numerics`):
+
+| | |
+| --- | --- |
+| `Entity` | `Name`, `Active`, `Parent`, `Children`; `Position` / `Rotation` (world), `LocalPosition` / `LocalRotation` / `Scale`; `Forward` / `Right` / `Up`, `Translate`, `Rotate`, `LookAt`, `AimAt` (cameras); `Destroy`, `Duplicate`; `Has` / `Add` / `Remove` components; `GetScript<T>`, `AddScript`; `Entity.Find(name)`, `Entity.Create(name)` |
+| Components | `Entity.Physics` (`Velocity`, `AngularVelocity`, `Mass`, `AddImpulse`, `AddForce`), `Entity.Agent` (`Target`, `Speed`, `Arrived`, `Stop`), `Entity.Light` (`Color`, `Intensity`, `Enabled`), `Entity.Mesh` (`Visible`), `Entity.Camera` (`FieldOfView`), `Entity.Volume` (`Density`, `Color`, `Glow`) |
+| `Scene` | `Spawn("ball" / "box" / "sphere" / "smoke" / "glowing smoke" / "agent" / "empty" / a model file, position)`, `Find`, `Raycast(origin, direction, maxDistance, out hit, ignore)` (physics bodies and the ground), `GameCamera` |
+| `Input` | `GetKey` / `GetKeyDown` / `GetKeyUp` (`Key.W`, `Key.Space`, ...), `GetMouseButton...`, `MouseDelta`, `MousePosition` |
+| `Time` | `Delta`, `Elapsed`, `Scale`, `Frame` |
+| `Debug` | `Log`, `Warn`, `Error` (to the console) |
+
+While the game plays, the keyboard belongs to it: the editor keeps only `E`, `Escape` and the F keys. Outside edit
+mode the mouse is captured and `Input.MouseDelta` is how it moves.
+
+**Hot reload.** Saving any file in `Scripts/` recompiles them all (a few hundred milliseconds), also while the game
+plays: running scripts move to the new code with their fields (public and private) as they were, and get
+`OnReload`. With compile errors (shown in the console and in the Inspector's Script section, with file and line),
+the scripts keep running as they were. A script that throws is stopped (the exception and its stack, with line
+numbers, go to the console) until its file is saved again. **Play > Reload Scripts** reloads by hand.
+
+**How it works:**
+
+* **Hosting:** the engine starts .NET 10 in its own process through the hosting API (`Scripting/ScriptHost`, which
+  finds `hostfxr` as `nethost` would). It loads the scripting host `Scripting/FoxScripting`, built with the engine
+  into `x64/<Configuration>/Scripting`.
+* **Compiling:** the host compiles `Scripts/*.cs` with Roslyn, the C# compiler that comes with the .NET SDK. Each
+  compile goes into an assembly of its own in a collectible load context, which the next reload replaces and unloads.
+* **Calls:** both directions are tables of plain function pointers (`Scripting/ScriptApi.h`, mirrored by
+  `Native.cs`), with no marshalling layer. Entities cross as 64 bit ids that stop being valid when the entity is
+  destroyed.
+* **Fields:** the Inspector reads each class's public fields (`float`, `int`, `bool`, `string`, `Vector3`) and their
+  defaults from the host. A scene stores only the values that differ, as text.
+* **Editing in an IDE:** `Scripts/Scripts.csproj` gives IntelliSense and errors as you type. The engine does not use
+  it.
+* **Requirements:** the .NET 10 SDK to build. Without a .NET runtime the engine runs with scripts off, and says so in
+  the console and the Inspector.
+
+**Limits:**
+
+* A new mesh (`Spawn`, `Duplicate`, adding a Mesh) makes the scene rebuild once, a short pause. For things that
+  appear often (shots, pickups), keep hidden ones ready and show them (`Active`, `Mesh.Visible`).
+* There are no collision events yet; poll with `Raycast` and velocities.
+* Script fields cannot refer to entities directly; use names and `Entity.Find`.
+
 ### Physics
 
 Rigid bodies with [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (v5.3.0, MIT, vendored in
@@ -665,6 +741,7 @@ entity-component system whose registry keeps each component type in a packed arr
 | Nav Agent | It walks over the ground to a target on a path found with A* (see *Navigation*) |
 | Volume | A puff or box of smoke that light scatters in, optionally glowing (see *Volumetrics*) |
 | Camera | The game looks through it while it plays (see *Play mode*) |
+| Script | C# scripts that run on it while the game plays (see *Scripting*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot

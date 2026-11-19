@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The C# side of scripting (see Scripting/ScriptHost.h). The engine loads this assembly into the .NET runtime
+       through the hosting API; it compiles the game's scripts (Scripts/*.cs) with Roslyn, the C# compiler that comes
+       with the .NET SDK, and runs them. Built by the C++ project before it compiles (FoxVulkanPathTracer.vcxproj,
+       BuildScripting), into x64/<Configuration>/Scripting. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <RootNamespace>Fox</RootNamespace>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Where the C++ build finds the hosting API's headers (hostfxr.h, coreclr_delegates.h), copied from the SDK -->
+    <NativeHostOut Condition="'$(NativeHostOut)' == ''">$(MSBuildProjectDirectory)\..\..\..\x64\nethost\</NativeHostOut>
+  </PropertyGroup>
+
+  <!-- Roslyn from the SDK that builds this: no package to download, and always as new as the SDK -->
+  <ItemGroup>
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(MSBuildExtensionsPath)\Roslyn\bincore\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(MSBuildExtensionsPath)\Roslyn\bincore\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- The hosting API of the runtime this targets, for the C++ side -->
+  <Target Name="CopyNativeHost" AfterTargets="Build">
+    <PropertyGroup>
+      <HostPackDir>$(NetCoreTargetingPackRoot)\Microsoft.NETCore.App.Host.win-x64\$(BundledNETCoreAppPackageVersion)\runtimes\win-x64\native\</HostPackDir>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(HostPackDir)hostfxr.h')" Text="The .NET hosting files were not found in $(HostPackDir) (install the .NET $(BundledNETCoreAppPackageVersion) SDK for x64)" />
+    <Copy SourceFiles="$(HostPackDir)hostfxr.h;$(HostPackDir)coreclr_delegates.h"
+          DestinationFolder="$(NativeHostOut)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

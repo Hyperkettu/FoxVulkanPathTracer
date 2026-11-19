@@ -21,6 +21,10 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
 
 namespace Fox {
 
@@ -343,6 +347,47 @@ namespace Fox {
 
 		glm::vec3 PhysicsWorld::GetLinearVelocity(uint32_t body) const {
 			return ToGlm(impl->Bodies().GetLinearVelocity(JPH::BodyID(body)));
+		}
+
+		glm::vec3 PhysicsWorld::GetAngularVelocity(uint32_t body) const {
+			return ToGlm(impl->Bodies().GetAngularVelocity(JPH::BodyID(body)));
+		}
+
+		void PhysicsWorld::AddImpulse(uint32_t body, const glm::vec3& linear, const glm::vec3& angular) {
+			JPH::BodyInterface& bodies = impl->Bodies();
+			const JPH::BodyID id(body);
+			if (bodies.GetMotionType(id) != JPH::EMotionType::Dynamic) {
+				return;
+			}
+			if (glm::dot(linear, linear) > 0.0f) {
+				bodies.AddImpulse(id, ToJolt(linear));
+			}
+			if (glm::dot(angular, angular) > 0.0f) {
+				bodies.AddAngularImpulse(id, ToJolt(angular));
+			}
+			bodies.ActivateBody(id);
+		}
+
+		bool PhysicsWorld::CastRay(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t ignore, RayHit& hit) const {
+			const JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), ToJolt(direction * maxDistance));
+			JPH::RayCastResult result;
+			JPH::IgnoreSingleBodyFilter skipOne{ JPH::BodyID(ignore) };
+			JPH::BodyFilter everything;
+			const JPH::BodyFilter& filter = ignore != INVALID_BODY ? static_cast<const JPH::BodyFilter&>(skipOne) : everything;
+			if (!impl->system->GetNarrowPhaseQuery().CastRay(ray, result, {}, {}, filter)) {
+				return false;
+			}
+			hit.body = result.mBodyID.GetIndexAndSequenceNumber();
+			hit.distance = result.mFraction * maxDistance;
+			const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+			hit.point = glm::vec3(static_cast<float>(point.GetX()), static_cast<float>(point.GetY()), static_cast<float>(point.GetZ()));
+			JPH::BodyLockRead lock(impl->system->GetBodyLockInterface(), result.mBodyID);
+			if (lock.Succeeded()) {
+				const JPH::Body& body = lock.GetBody();
+				hit.normal = ToGlm(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point));
+				hit.user = body.GetUserData();
+			}
+			return true;
 		}
 
 		void PhysicsWorld::SetVelocity(uint32_t body, const glm::vec3& linear, const glm::vec3& angular) {

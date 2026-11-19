@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <map>
 
 #include "FoxVulkanPathTracer/Scene/ECS/Entity.h"
 
@@ -19,6 +20,7 @@
 //   NavAgentComponent   it walks over the ground to a target, on a path found with A* (Scene/Navigation.h)
 //   VolumeComponent     it is a volume of smoke (or glowing haze) that light scatters in (Shaders/volumes.slang)
 //   CameraComponent     the game looks through it while it plays (it looks along its -Z axis)
+//   ScriptComponent     C# scripts run on it while the game plays (Scripts/*.cs, see Scripting/ScriptHost.h)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -282,6 +284,19 @@ namespace Fox {
 			bool enabled = true;
 			float fov = 60.0f; // Vertical, degrees
 			int priority = 0;
+		};
+
+		// C# scripts on the entity (classes deriving from Fox.Script in Scripts/*.cs): while the game plays each gets
+		// OnStart, then OnUpdate every frame. Their public fields' values are set here (as text) and saved with the
+		// scene; a field not listed keeps the value the class gives it.
+		struct ScriptComponent {
+			struct Entry {
+				std::string className;
+				std::map<std::string, std::string> fields;
+				int64_t instance = 0; // Its running script while playing (0: none)
+			};
+			bool enabled = true;
+			std::vector<Entry> scripts;
 		};
 
 		// The entity gives light. It shines along its -Z axis (as glTF lights do): a directional light's entity

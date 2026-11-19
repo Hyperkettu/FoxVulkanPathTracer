@@ -4,6 +4,7 @@
 #include <memory>
 #include <random>
 #include <unordered_set>
+#include <unordered_map>
 #include <functional>
 
 namespace Fox {
@@ -186,6 +187,21 @@ namespace Fox {
                 // A new entity with a CameraComponent, looking from position along forward
                 Entity AddGameCamera(const glm::vec3& position, const glm::vec3& forward, float fovDegrees);
 
+                // --- Scripts (ScriptComponent): C# in Scripts/*.cs, run while the game plays (Scripting/ScriptHost.h) ---
+                // Off (null) when .NET or the scripting host is not there
+                Fox::Scripting::ScriptHost* GetScripts() { return scripts && scripts->IsReady() ? scripts.get() : nullptr; }
+                const std::string& GetScriptsError() const { return scriptsError; }
+                // What the keyboard and mouse do this frame, for the scripts (the renderer fills it every frame)
+                struct ScriptInput {
+                    uint8_t keys[512] = {};
+                    uint8_t previousKeys[512] = {};
+                    uint8_t buttons[3] = {};
+                    uint8_t previousButtons[3] = {};
+                    glm::vec2 mouseDelta{ 0.0f };
+                    glm::vec2 mousePosition{ 0.0f };
+                };
+                ScriptInput& GetScriptInput() { return scriptInput; }
+
                 // --- Physics (PhysicsComponent, Scene/Physics.h): Play (F5) ---
                 // Entities with a PhysicsComponent become rigid bodies on the ground or terrain; dynamic ones fall,
                 // collide and float in water, and their transforms follow. Stopping puts every entity back where it was.
@@ -296,6 +312,16 @@ namespace Fox {
                     uint32_t droplets = 0;
                 };
                 std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
+
+                // Scripts: the host, and which running script belongs to which entity
+                friend struct ScriptBindings;
+                std::unique_ptr<Fox::Scripting::ScriptHost> scripts;
+                std::string scriptsError;
+                ScriptInput scriptInput;
+                std::unordered_map<int64_t, Entity> runningScripts;
+                void InitializeScripts();
+                void UpdateScripts(float step); // Starts scripts added since, stops removed ones, runs them
+                void StopScripts();
 
                 // Play mode: the clock, and the scene as it was when play started
                 GameClock clock;

@@ -842,6 +842,7 @@ namespace Fox {
 				meshPainter.Update(*raytracingScene, GizmoView(), MouseInDisplayPixels(), ctrl);
 
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
+				UpdateScriptInput();
 				raytracingScene->Update(deltaTime);
 				FollowGameCamera();
 				// Entities moved, shown or hidden from the editor windows (the gizmos say so while dragging)
@@ -1406,6 +1407,7 @@ namespace Fox {
 				mouseInputBind = input.OnMouseMoved.Connect([this](int dx, int dy) {
 					// Looking around: always outside edit mode, with the right mouse button held inside it
 					// Not while the camera flies its path
+					scriptMouseDelta += glm::vec2(static_cast<float>(dx), static_cast<float>(dy));
 					const bool look = (inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT)))
 						&& !raytracingScene->GetCameraManager().IsPlaying() && !LooksThroughGameCamera();
 					if (look) {
@@ -1475,9 +1477,36 @@ namespace Fox {
 				});
 			}
 
+			void VulkanRHI::UpdateScriptInput() {
+				// What scripts see this frame (Fox.Input): the keyboard unless a text field has it, the mouse buttons
+				// unless the editor's windows have the pointer
+				auto& input = raytracingScene->GetScriptInput();
+				std::memcpy(input.previousKeys, input.keys, sizeof(input.keys));
+				std::memcpy(input.previousButtons, input.buttons, sizeof(input.buttons));
+				const bool typing = userInterface && editMode && ImGui::GetIO().WantTextInput;
+				const bool overUi = userInterface && editMode && ImGui::GetIO().WantCaptureMouse;
+				for (int code = 0; code < 512; code++) {
+					input.keys[code] = !typing && inputManager && inputManager->IsKeyDown(static_cast<SDL_Scancode>(code)) ? 1 : 0;
+				}
+				const Uint8 buttons[3] = { SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT };
+				for (int i = 0; i < 3; i++) {
+					input.buttons[i] = !overUi && inputManager && inputManager->IsMouseDown(buttons[i]) ? 1 : 0;
+				}
+				input.mouseDelta = scriptMouseDelta;
+				input.mousePosition = MouseInDisplayPixels();
+				scriptMouseDelta = glm::vec2(0.0f);
+			}
+
 			void VulkanRHI::RunKeyCommand(SDL_Scancode key) {
 				using Managers::TextureManager;
 				using Mode = Fox::Editor::TransformGizmo::Mode;
+
+				// While the game plays the keyboard is the game's: only E (edit mode), Escape and the F keys stay the
+				// editor's
+				if (raytracingScene->IsPlaying() && key != SDL_SCANCODE_E && key != SDL_SCANCODE_ESCAPE
+					&& !(key >= SDL_SCANCODE_F1 && key <= SDL_SCANCODE_F12)) {
+					return;
+				}
 
 				switch (key) {
 				case SDL_SCANCODE_E:

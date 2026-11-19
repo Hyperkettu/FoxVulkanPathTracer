@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "camera": { "position": [ 27.0, 1.0, 1.0 ], "target": [ 19.6, -3.0, 9.5 ] },
+  "environment": {
+    "ground": true,
+    "groundHeight": -3.73,
+    "groundMaterial": { "color": [ 0.18, 0.2, 0.16 ], "roughness": 0.6, "metallic": 0.0 },
+    "sun": true,
+    "sunDirection": [ 0.6, 0.55, 0.4 ],
+    "sunColor": [ 1.0, 0.85, 0.7 ],
+    "sunIntensity": 12.0,
+    "sunAngularRadius": 0.8
+  },
+  "entities": [
+    {
+      "name": "Player",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": { "position": [ 19.6, -3.0, 9.5 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
+        "mesh": { "type": "sphere", "enabled": true, "radius": 0.4, "material": { "color": [ 0.8, 0.15, 0.1 ], "roughness": 0.35, "metallic": 0.0 } },
+        "physics": { "enabled": true, "motion": 1, "shape": 0, "density": 300.0, "restitution": 0.3, "friction": 0.6 },
+        "script": { "enabled": true, "scripts": [ { "class": "PlayerBall", "fields": {} } ] }
+      }
+    },
+    {
+      "name": "Game camera",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": { "position": [ 19.6, -0.5, 3.5 ], "rotation": [ 0.0, 180.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
+        "camera": { "enabled": true, "fov": 60.0, "priority": 0 },
+        "script": { "enabled": true, "scripts": [ { "class": "FollowCamera", "fields": { "target": "Player", "distance": "7", "height": "3" } } ] }
+      }
+    },
+    {
+      "name": "Chaser",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": { "position": [ 10.0, -3.33, 2.0 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
+        "mesh": { "type": "sphere", "enabled": true, "radius": 0.4, "material": { "color": [ 0.12, 0.35, 0.8 ], "roughness": 0.4, "metallic": 0.0 } },
+        "navAgent": { "enabled": true, "speed": 2.5, "radius": 0.4 },
+        "script": { "enabled": true, "scripts": [ { "class": "Chaser", "fields": { "target": "Player" } } ] }
+      }
+    },
+    {
+      "name": "Spinning box",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": { "position": [ 24.0, -2.2, 12.0 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 0.2, 0.2, 0.2 ] },
+        "mesh": { "type": "model", "enabled": true, "file": "Models/box.glb", "displacement": false },
+        "script": { "enabled": true, "scripts": [ { "class": "Spinner", "fields": { "degreesPerSecond": "45", "bobHeight": "0.5" } } ] }
+      }
+    }
+  ]
+}

@@ -510,6 +510,11 @@ namespace Fox {
 				shell.Add("Play/Step Frame", [this] { RunKeyCommand(SDL_SCANCODE_F7); }, "F7", playing, -1, "advance one frame paused");
 				shell.Add("Play/Free Camera", [this] { RunKeyCommand(SDL_SCANCODE_F8); }, "F8", playing, playing && cameraEjected ? 1 : 0,
 					"eject possess game camera fly");
+				shell.Add("Play/Reload Scripts", [&scene] {
+					if (auto* host = scene.GetScripts()) {
+						host->Reload();
+					}
+				}, "", scene.GetScripts() != nullptr, -1, "csharp c# compile hot reload");
 				for (float speed : { 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f }) {
 					char label[32];
 					std::snprintf(label, sizeof(label), "Play/Speed/%gx", speed);

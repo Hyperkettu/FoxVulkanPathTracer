@@ -106,7 +106,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(SolutionDir)ThirdParty\JoltPhysics;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(SolutionDir)ThirdParty\JoltPhysics;$(SolutionDir)x64\nethost;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>FoxRenderer.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(SolutionDir)ThirdParty\JoltPhysics;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir);$(SolutionDir)ThirdParty\imgui;$(SolutionDir)ThirdParty\JoltPhysics;$(SolutionDir)x64\nethost;$(ProjectDir);$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -198,6 +198,7 @@
     </ClCompile>
     <ClCompile Include="Scene\Physics.cpp" />
     <ClCompile Include="Scene\Navigation.cpp" />
+    <ClCompile Include="Scripting\ScriptHost.cpp" />
     <ClCompile Include="..\ThirdParty\meshoptimizer\allocator.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -334,6 +335,7 @@
     <ClCompile Include="Scene\MainScene.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingSceneNavigation.cpp" />
+    <ClCompile Include="Scene\Raytracing\MainRayTracingSceneScripting.cpp" />
     <ClCompile Include="Scene\Raytracing\RaytracingScene.cpp" />
     <ClCompile Include="Scene\Scene.cpp" />
   </ItemGroup>
@@ -402,6 +404,8 @@
     <ClInclude Include="Scene\WaterSimulation.h" />
     <ClInclude Include="Scene\Physics.h" />
     <ClInclude Include="Scene\Navigation.h" />
+    <ClInclude Include="Scripting\ScriptApi.h" />
+    <ClInclude Include="Scripting\ScriptHost.h" />
     <ClInclude Include="Scene\SceneContent.h" />
     <ClInclude Include="Scene\ECS\Entity.h" />
     <ClInclude Include="Scene\ECS\Registry.h" />
@@ -604,6 +608,15 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <!-- Builds the C# scripting host (Scripting/FoxScripting) into $(OutDir)Scripting, and copies the .NET hosting API
+       (hostfxr.h, coreclr_delegates.h) from the installed SDK to x64/nethost for this project's includes.
+       Needs the .NET 10 SDK. -->
+  <Target Name="BuildScripting" BeforeTargets="ClCompile" Inputs="@(ScriptingSource)" Outputs="$(OutDir)Scripting\FoxScripting.dll">
+    <Exec Command="dotnet build &quot;$(ProjectDir)Scripting\FoxScripting\FoxScripting.csproj&quot; -c $(Configuration) -nologo -v:minimal -o &quot;$(OutDir)Scripting&quot; -p:NativeHostOut=&quot;$(SolutionDir)x64\nethost&quot;" />
+  </Target>
+  <ItemGroup>
+    <ScriptingSource Include="Scripting\FoxScripting\*.cs;Scripting\FoxScripting\*.csproj" />
+  </ItemGroup>
   <!-- Compiles the Slang shaders with the Vulkan SDK's slangc. Incremental: a shader is only
        rebuilt when it, or one of the shared SlangInclude files, is newer than its .spv output. -->
   <Target Name="CompileSlangShaders" BeforeTargets="ClCompile" Inputs="@(SlangShader);@(SlangInclude)" Outputs="@(SlangShader->'$(ProjectDir)Shaders\%(Filename)%(Suffix).spv')">

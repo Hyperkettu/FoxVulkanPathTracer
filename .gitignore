@@ -24,3 +24,9 @@ ThirdParty/DLSS/
 
 # Terrain heights saved with scene files
 !*.terrain-heights.bin
+
+# C# build output of the scripting host and of IDE projects in Scripts/
+FoxVulkanPathTracer/Scripting/**/bin/
+FoxVulkanPathTracer/Scripting/**/obj/
+FoxVulkanPathTracer/Scripts/bin/
+FoxVulkanPathTracer/Scripts/obj/

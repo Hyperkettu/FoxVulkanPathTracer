@@ -181,6 +181,8 @@ namespace Fox {
 				struct EditorView { glm::vec3 position{ 0.0f }, forward{ 0.0f, 0.0f, -1.0f }; float fov = 1.0f; };
 				EditorView editorView;
 				bool cameraEjected = false;
+				glm::vec2 scriptMouseDelta{ 0.0f }; // Mouse movement since the last frame, for scripts
+				void UpdateScriptInput();
 				Fox::Editor::CameraEditor cameraEditor;
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written

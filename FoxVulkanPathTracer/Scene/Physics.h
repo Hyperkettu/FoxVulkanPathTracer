@@ -86,6 +86,19 @@ namespace Fox {
 			void GetTransform(uint32_t body, glm::vec3& position, glm::quat& rotation) const;
 			void SetTransform(uint32_t body, const glm::vec3& position, const glm::quat& rotation);
 			glm::vec3 GetLinearVelocity(uint32_t body) const;
+			glm::vec3 GetAngularVelocity(uint32_t body) const;
+			// A push at its centre (kg m/s) and a twist (kg m^2/s); wakes it
+			void AddImpulse(uint32_t body, const glm::vec3& linear, const glm::vec3& angular);
+
+			// The first body along a ray from origin (direction normalised) within maxDistance, past ignore
+			struct RayHit {
+				uint32_t body = INVALID_BODY;
+				uint64_t user = 0;      // BodyDesc::user (0 for the ground)
+				glm::vec3 point{ 0.0f };
+				glm::vec3 normal{ 0.0f, 1.0f, 0.0f };
+				float distance = 0.0f;
+			};
+			bool CastRay(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t ignore, RayHit& hit) const;
 			void SetVelocity(uint32_t body, const glm::vec3& linear, const glm::vec3& angular);
 			// Kinematic: moves it to this transform over the next step (pushing what is in the way)
 			void MoveKinematic(uint32_t body, const glm::vec3& position, const glm::quat& rotation, float stepTime);

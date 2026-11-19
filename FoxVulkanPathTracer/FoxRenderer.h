@@ -133,6 +133,7 @@
 #include "FoxVulkanPathTracer/Scene/WaterSimulation.h"
 #include "FoxVulkanPathTracer/Scene/Physics.h"
 #include "FoxVulkanPathTracer/Scene/Navigation.h"
+#include "FoxVulkanPathTracer/Scripting/ScriptHost.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/MainRayTracingScene.h"
 #include "FoxVulkanPathTracer/Editor/TransformGizmo.h"
 #include "FoxVulkanPathTracer/Editor/SceneGraphEditor.h"

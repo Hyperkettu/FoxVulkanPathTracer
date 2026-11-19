@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- For editing the scripts in an IDE (IntelliSense, errors as you type, go to definition in the Fox API). The
+       engine does not use this file: it compiles Scripts/*.cs itself and reloads them whenever one is saved.
+       Build the engine once first (the reference below is its scripting host). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="FoxScripting">
+      <HintPath>..\..\x64\Release\Scripting\FoxScripting.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

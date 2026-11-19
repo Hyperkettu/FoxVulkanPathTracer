@@ -451,6 +451,32 @@ namespace Fox {
 						},
 					},
 					{
+						"script",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::ScriptComponent* component = graph.GetRegistry().TryGet<Fox::Scene::ScriptComponent>(entity);
+							if (!component) {
+								return false;
+							}
+							json list = json::array();
+							for (const auto& entry : component->scripts) {
+								list.push_back({ { "class", entry.className }, { "fields", entry.fields } });
+							}
+							j = { { "enabled", component->enabled }, { "scripts", list } };
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							Fox::Scene::ScriptComponent component;
+							component.enabled = j.value("enabled", true);
+							for (const json& entry : j.value("scripts", json::array())) {
+								Fox::Scene::ScriptComponent::Entry script;
+								script.className = entry.value("class", std::string());
+								script.fields = entry.value("fields", std::map<std::string, std::string>());
+								component.scripts.push_back(std::move(script));
+							}
+							graph.GetRegistry().Add<Fox::Scene::ScriptComponent>(entity, std::move(component));
+						},
+					},
+					{
 						"camera",
 						[](const SceneGraph& graph, Entity entity, json& j) {
 							const Fox::Scene::CameraComponent* camera = graph.GetRegistry().TryGet<Fox::Scene::CameraComponent>(entity);
@@ -722,6 +748,13 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<ScriptComponent>(graph,
+					[](const ScriptComponent&, const ScriptComponent&) { return true; },
+					[](const ScriptComponent&, ScriptComponent& value) {
+						for (auto& entry : value.scripts) {
+							entry.instance = 0;
+						}
+					}));
 				snapshot->restores.push_back(SnapshotOf<NavAgentComponent>(graph,
 					[](const NavAgentComponent&, const NavAgentComponent&) { return true; },
 					[](const NavAgentComponent&, NavAgentComponent& value) { value.Invalidate(); }));
@@ -829,6 +862,7 @@ namespace Fox {
 					playScene.reset();
 					return;
 				}
+				StopScripts();  // OnStop, while everything is as the game left it
 				StopPhysics(); // Bodies out, entities back where they were
 				if (restore) {
 					RestorePlaySnapshot();

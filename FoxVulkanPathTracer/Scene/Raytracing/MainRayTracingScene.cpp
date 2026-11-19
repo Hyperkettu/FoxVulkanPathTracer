@@ -45,6 +45,9 @@ namespace Fox {
 					std::cout << "Scene: no " << DEFAULT_SCENE_FILE << ", starting with an empty scene\n";
 				}
 
+				// C# scripts (Scripts/*.cs)
+				InitializeScripts();
+
 				if (!RebuildScene(error)) {
 					std::cout << "Scene: " << error << "\n";
 				}
@@ -504,11 +507,26 @@ namespace Fox {
 
 				// The systems, in order:
 				//   1. transforms        world matrices from the hierarchy (and the gizmos' edits)
+				//   1b. scripts          C# OnStart / OnUpdate (playing)
 				//   2. agents            walk their paths (edit mode: plan them)
 				//   3. physics           fixed steps; dynamic bodies move their entities, kinematic ones follow
 				//   4. render sync       meshes, lights and water placed as their entities are now
 				//   5. animation         water simulation, wind in the trees, growing trees
 				graph.UpdateTransforms();
+				if (scripts && scripts->Poll(dt)) {
+					// Hot reload: on real time, also while paused. Scripts whose class was missing try again.
+					graph.GetRegistry().Each<Fox::Scene::ScriptComponent>([](Entity, Fox::Scene::ScriptComponent& component) {
+						for (auto& entry : component.scripts) {
+							if (entry.instance < 0) {
+								entry.instance = 0;
+							}
+						}
+					});
+				}
+				if (physicsPlaying) {
+					UpdateScripts(step);
+					graph.UpdateTransforms();
+				}
 				UpdateNavigation(step);
 				if (physicsPlaying) {
 					graph.UpdateTransforms();

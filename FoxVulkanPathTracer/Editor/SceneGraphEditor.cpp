@@ -1,6 +1,8 @@
 #include "FoxRenderer.h"
+#include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
 
 #include <cstring>
+#include <fstream>
 
 namespace Fox {
 
@@ -17,6 +19,7 @@ namespace Fox {
 			using Fox::Scene::NavAgentComponent;
 			using Fox::Scene::VolumeComponent;
 			using Fox::Scene::CameraComponent;
+			using Fox::Scene::ScriptComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -357,6 +360,225 @@ namespace Fox {
 				}
 			}
 
+			// What the scripts offer: classes and their fields, and compile errors (the host's JSON, read again after
+			// every reload)
+			struct ScriptCatalog {
+				struct Field { std::string name, type, value; };
+				struct Class { std::string name; std::vector<Field> fields; };
+				std::vector<Class> classes;
+				std::vector<std::string> errors;
+				uint64_t generation = UINT64_MAX;
+
+				const Class* Find(const std::string& name) const {
+					for (const Class& c : classes) {
+						if (c.name == name) return &c;
+					}
+					return nullptr;
+				}
+			};
+
+			const ScriptCatalog& Catalog(Scene& scene) {
+				static ScriptCatalog catalog;
+				auto* host = scene.GetScripts();
+				if (!host || host->GetInfoGeneration() == catalog.generation) {
+					return catalog;
+				}
+				catalog = ScriptCatalog{};
+				catalog.generation = host->GetInfoGeneration();
+				try {
+					const nlohmann::json info = nlohmann::json::parse(host->GetInfo());
+					for (const auto& error : info.value("errors", nlohmann::json::array())) {
+						catalog.errors.push_back(error.get<std::string>());
+					}
+					for (const auto& entry : info.value("classes", nlohmann::json::array())) {
+						ScriptCatalog::Class c;
+						c.name = entry.value("name", std::string());
+						for (const auto& field : entry.value("fields", nlohmann::json::array())) {
+							c.fields.push_back({ field.value("name", std::string()), field.value("type", std::string()), field.value("value", std::string()) });
+						}
+						catalog.classes.push_back(std::move(c));
+					}
+				}
+				catch (const std::exception&) {
+				}
+				return catalog;
+			}
+
+			// A new script file from a template; false if it exists or cannot be written
+			bool CreateScriptFile(Scene& scene, const std::string& name, std::string& message) {
+				auto* host = scene.GetScripts();
+				if (!host) {
+					message = "Scripts are off";
+					return false;
+				}
+				const bool valid = !name.empty() && (std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_')
+					&& std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
+				if (!valid) {
+					message = "A class name: letters, digits and _";
+					return false;
+				}
+				const std::filesystem::path file = host->GetScriptsDirectory() / (name + ".cs");
+				if (std::filesystem::exists(file)) {
+					message = file.filename().string() + " exists already";
+					return false;
+				}
+				std::ofstream out(file);
+				out << "using System.Numerics;\nusing Fox;\n\n"
+					<< "public class " << name << " : Script\n{\n"
+					<< "    public float speed = 1.0f; // Public fields show in the Inspector\n\n"
+					<< "    public override void OnStart()\n    {\n        Debug.Log($\"{Entity.Name} starts\");\n    }\n\n"
+					<< "    public override void OnUpdate(float deltaTime)\n    {\n    }\n}\n";
+				if (!out) {
+					message = "Cannot write " + file.string();
+					return false;
+				}
+				out.close();
+				host->Reload();
+				message = "Created " + file.string();
+				return true;
+			}
+
+			void DrawScript(Scene& scene, Entity entity, State&) {
+				ScriptComponent& component = scene.GetSceneGraph().GetRegistry().Get<ScriptComponent>(entity);
+				auto* host = scene.GetScripts();
+				if (!host) {
+					ImGui::TextWrapped("Scripts are off: %s", scene.GetScriptsError().c_str());
+					return;
+				}
+				const ScriptCatalog& catalog = Catalog(scene);
+
+				ImGui::Checkbox("On", &component.enabled);
+				int remove = -1;
+				for (size_t i = 0; i < component.scripts.size(); i++) {
+					auto& entry = component.scripts[i];
+					ImGui::PushID(static_cast<int>(i));
+					ImGui::SeparatorText(entry.className.empty() ? "(no class)" : entry.className.c_str());
+					if (ImGui::BeginCombo("Class", entry.className.c_str())) {
+						for (const auto& c : catalog.classes) {
+							if (ImGui::Selectable(c.name.c_str(), c.name == entry.className)) {
+								entry.className = c.name;
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Remove")) {
+						remove = static_cast<int>(i);
+					}
+					const ScriptCatalog::Class* c = catalog.Find(entry.className);
+					if (!c) {
+						ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f), "No such script class%s", catalog.errors.empty() ? "" : " (the scripts do not compile)");
+					}
+					else {
+						for (const auto& field : c->fields) {
+							auto found = entry.fields.find(field.name);
+							const bool overridden = found != entry.fields.end();
+							std::string value = overridden ? found->second : field.value;
+							bool changed = false;
+							char text[32];
+							if (field.type == "float") {
+								float f = std::strtof(value.c_str(), nullptr);
+								if (ImGui::DragFloat(field.name.c_str(), &f, 0.01f)) {
+									std::snprintf(text, sizeof(text), "%g", f);
+									value = text;
+									changed = true;
+								}
+							}
+							else if (field.type == "int") {
+								int n = std::atoi(value.c_str());
+								if (ImGui::DragInt(field.name.c_str(), &n)) {
+									value = std::to_string(n);
+									changed = true;
+								}
+							}
+							else if (field.type == "bool") {
+								bool b = value == "true";
+								if (ImGui::Checkbox(field.name.c_str(), &b)) {
+									value = b ? "true" : "false";
+									changed = true;
+								}
+							}
+							else if (field.type == "vector3") {
+								float v[3] = { 0.0f, 0.0f, 0.0f };
+								sscanf_s(value.c_str(), "%f,%f,%f", &v[0], &v[1], &v[2]);
+								if (ImGui::DragFloat3(field.name.c_str(), v, 0.01f)) {
+									char vector[96];
+									std::snprintf(vector, sizeof(vector), "%g,%g,%g", v[0], v[1], v[2]);
+									value = vector;
+									changed = true;
+								}
+							}
+							else {
+								char buffer[256];
+								std::snprintf(buffer, sizeof(buffer), "%s", value.c_str());
+								if (ImGui::InputText(field.name.c_str(), buffer, sizeof(buffer))) {
+									value = buffer;
+									changed = true;
+								}
+							}
+							if (changed) {
+								entry.fields[field.name] = value;
+							}
+							if (overridden) {
+								ImGui::SameLine();
+								ImGui::PushID(field.name.c_str());
+								if (ImGui::SmallButton("x")) {
+									entry.fields.erase(field.name);
+								}
+								ImGui::SetItemTooltip("Back to the class's value (%s)", field.value.c_str());
+								ImGui::PopID();
+							}
+						}
+						if (scene.IsPlaying()) {
+							ImGui::TextDisabled(entry.instance > 0 ? "Running (field edits apply when play starts again)" : "Not running");
+						}
+					}
+					ImGui::PopID();
+				}
+				if (remove >= 0) {
+					component.scripts.erase(component.scripts.begin() + remove);
+				}
+
+				ImGui::Spacing();
+				if (ImGui::BeginCombo("##add", "Add script...")) {
+					for (const auto& c : catalog.classes) {
+						if (ImGui::Selectable(c.name.c_str())) {
+							ScriptComponent::Entry entry;
+							entry.className = c.name;
+							component.scripts.push_back(std::move(entry));
+						}
+					}
+					if (catalog.classes.empty()) {
+						ImGui::TextDisabled("No script classes in %s", host->GetScriptsDirectory().string().c_str());
+					}
+					ImGui::EndCombo();
+				}
+
+				static char newName[64] = "NewScript";
+				static std::string message;
+				ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+				ImGui::InputText("##newscript", newName, sizeof(newName));
+				ImGui::SameLine();
+				if (ImGui::Button("New script file")) {
+					if (CreateScriptFile(scene, newName, message)) {
+						ScriptComponent::Entry entry;
+						entry.className = newName;
+						component.scripts.push_back(std::move(entry));
+					}
+				}
+				ImGui::SetItemTooltip("Writes Scripts/<name>.cs from a template and adds it here; saving the file reloads it");
+				if (!message.empty()) {
+					ImGui::TextDisabled("%s", message.c_str());
+				}
+
+				if (!catalog.errors.empty()) {
+					ImGui::SeparatorText("Compile errors");
+					for (const auto& error : catalog.errors) {
+						ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", error.c_str());
+					}
+				}
+			}
+
 			void DrawCamera(Scene& scene, Entity entity, State&) {
 				CameraComponent& camera = scene.GetSceneGraph().GetRegistry().Get<CameraComponent>(entity);
 				ImGui::Checkbox("On", &camera.enabled);
@@ -528,6 +750,17 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<PhysicsComponent>(entity); },
 					DrawPhysics,
+				},
+				{
+					"Script", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<ScriptComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Script (C#)")) {
+							scene.GetSceneGraph().GetRegistry().Add<ScriptComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<ScriptComponent>(entity); },
+					DrawScript,
 				},
 				{
 					"Camera", true,
@@ -794,6 +1027,14 @@ namespace Fox {
 			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s body%s", PhysicsComponent::MotionName(body->motion), body->enabled ? "" : " (off)");
+			}
+			if (const ScriptComponent* component = graph.GetRegistry().TryGet<ScriptComponent>(entity)) {
+				std::string names;
+				for (const auto& entry : component->scripts) {
+					names += (names.empty() ? "" : ", ") + entry.className;
+				}
+				ImGui::SameLine();
+				ImGui::TextDisabled("%s%s", names.empty() ? "Script" : names.c_str(), component->enabled ? "" : " (off)");
 			}
 			if (const CameraComponent* camera = graph.GetRegistry().TryGet<CameraComponent>(entity)) {
 				ImGui::SameLine();
