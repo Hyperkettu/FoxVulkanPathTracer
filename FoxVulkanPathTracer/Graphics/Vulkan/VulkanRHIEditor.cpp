@@ -141,6 +141,10 @@ namespace Fox {
 					shell.Place(Window::Controls, uiScale);
 					DrawControls();
 				}
+				if (shell.IsOpen(Window::Profiler)) {
+					shell.Place(Window::Profiler, uiScale);
+					DrawProfiler();
+				}
 				if (shell.IsOpen(Window::Input)) {
 					shell.Place(Window::Input, uiScale);
 					DrawInputActions();
@@ -614,6 +618,7 @@ namespace Fox {
 				windowItem(Window::Terrain, "Terrain", "", "sculpt paint");
 				windowItem(Window::MeshPaint, "Mesh Paint", "", "scatter paint trees models density foliage");
 				windowItem(Window::Camera, "Camera Paths", "", "flight keys");
+				windowItem(Window::Profiler, "GPU Profiler", "", "performance timing frame triangles memory statistics stats");
 				windowItem(Window::Input, "Input Actions", "", "keys bindings controls jump axis rebind");
 				shell.Separator("Window");
 				shell.Add("Window/Close All", [&shell] {
@@ -671,6 +676,131 @@ namespace Fox {
 				shell.Add("Help/Find a Command", [&shell] { shell.FocusFind(); }, "F1", true, -1, "search menu");
 				shell.Add("Help/Controls", [&shell] { shell.Toggle(Window::Controls); }, "", true, shell.IsOpen(Window::Controls) ? 1 : 0,
 					"keys keyboard mouse shortcuts help");
+			}
+
+			void VulkanRHI::DrawProfiler() {
+				if (!ImGui::Begin("GPU Profiler", shell.OpenFlag(Window::Profiler))) {
+					ImGui::End();
+					return;
+				}
+				auto& scene = *raytracingScene;
+				auto count = [](uint64_t n) {
+					char text[32];
+					if (n >= 1000000000ull) std::snprintf(text, sizeof(text), "%.2f G", n / 1e9);
+					else if (n >= 1000000ull) std::snprintf(text, sizeof(text), "%.2f M", n / 1e6);
+					else if (n >= 10000ull) std::snprintf(text, sizeof(text), "%.1f k", n / 1e3);
+					else std::snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(n));
+					return std::string(text);
+				};
+				auto bytes = [](uint64_t n) {
+					char text[32];
+					if (n >= (1ull << 30)) std::snprintf(text, sizeof(text), "%.2f GiB", n / double(1ull << 30));
+					else std::snprintf(text, sizeof(text), "%.1f MiB", n / double(1ull << 20));
+					return std::string(text);
+				};
+
+				// --- Frame ---
+				const float gpu = profiler ? profiler->GetFrameMilliseconds() : 0.0f;
+				float cpuAverage = 0.0f;
+				for (float ms : cpuHistory) cpuAverage += ms;
+				cpuAverage /= static_cast<float>(cpuHistory.size());
+				ImGui::Text("%s", gpuName.c_str());
+				ImGui::Text("GPU %.2f ms busy   |   frame %.2f ms (%.0f fps)", gpu, cpuAverage, cpuAverage > 0.0f ? 1000.0f / cpuAverage : 0.0f);
+				ImGui::TextDisabled("%ux%u -> %ux%u, %s, %s, %u spp, %u bounces, preset %s%s",
+					gbuffer->extent.width, gbuffer->extent.height, capabilities.currentExtent.width, capabilities.currentExtent.height,
+					denoisers[activeDenoiser]->GetName(), RayTracing::UpscalingModeName(upscalingMode), samplesPerPixel, maxBounces,
+					PresetName(EffectivePreset()), vsync ? ", vsync" : "");
+
+				if (profiler && profiler->IsSupported()) {
+					const std::vector<float> history = profiler->GetHistory();
+					const float peak = std::max({ profiler->GetPeakMilliseconds(), 16.7f, *std::max_element(cpuHistory.begin(), cpuHistory.end()) });
+					char overlay[64];
+					std::snprintf(overlay, sizeof(overlay), "GPU busy, peak %.1f ms", profiler->GetPeakMilliseconds());
+					ImGui::PlotLines("##gpu", history.data(), static_cast<int>(history.size()), 0, overlay, 0.0f, peak * 1.1f,
+						ImVec2(-1.0f, 60.0f * uiScale));
+					std::vector<float> cpu(cpuHistory.size());
+					for (size_t i = 0; i < cpu.size(); i++) cpu[i] = cpuHistory[(cpuHistoryNext + i) % cpuHistory.size()];
+					ImGui::PlotLines("##cpu", cpu.data(), static_cast<int>(cpu.size()), 0, "Frame (CPU, with waits)", 0.0f, peak * 1.1f,
+						ImVec2(-1.0f, 45.0f * uiScale));
+					ImGui::TextDisabled("Both graphs: the last 240 frames, the same scale (0 to %.0f ms)", peak * 1.1f);
+
+					// --- Passes ---
+					ImGui::SeparatorText("Passes (GPU, averaged)");
+					if (ImGui::BeginTable("##passes", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+						ImGui::TableSetupColumn("Pass", ImGuiTableColumnFlags_WidthFixed, 90.0f * uiScale);
+						ImGui::TableSetupColumn("ms", ImGuiTableColumnFlags_WidthFixed, 55.0f * uiScale);
+						ImGui::TableSetupColumn("share");
+						for (const auto& [name, ms] : profiler->GetSections()) {
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::TextUnformatted(name.c_str());
+							ImGui::TableNextColumn();
+							ImGui::Text("%.2f", ms);
+							ImGui::TableNextColumn();
+							char share[16];
+							std::snprintf(share, sizeof(share), "%.0f %%", gpu > 0.0f ? 100.0f * ms / gpu : 0.0f);
+							ImGui::ProgressBar(gpu > 0.0f ? ms / gpu : 0.0f, ImVec2(-1.0f, 0.0f), share);
+						}
+						ImGui::EndTable();
+					}
+				}
+				else {
+					ImGui::TextDisabled("This GPU has no timestamp queries: no timings");
+				}
+
+				// --- Geometry ---
+				const auto stats = scene.GetGeometryStats();
+				ImGui::SeparatorText("Acceleration structures");
+				if (ImGui::BeginTable("##geometry", 2, ImGuiTableFlags_SizingFixedFit)) {
+					auto row = [](const char* label, const std::string& value, const char* tip = nullptr) {
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn();
+						ImGui::TextUnformatted(label);
+						if (tip) ImGui::SetItemTooltip("%s", tip);
+						ImGui::TableNextColumn();
+						ImGui::TextUnformatted(value.c_str());
+					};
+					row("Triangles traced", count(stats.tracedTriangles),
+						"In the visible instances of the top level structure: every triangle a ray can hit this frame (instances counted each time)");
+					if (stats.clusterInstances > 0) {
+						row("  of them in tree clusters", "~" + count(stats.clusterTriangles) + " (" + count(stats.clustersSelected) + " clusters, "
+							+ count(stats.clusterInstances) + " trees)", "Cluster level of detail: the triangles chosen for this view, estimated from the clusters' average size");
+					}
+					row("Triangles stored", count(stats.storedTriangles), "In the bottom level structures, each once: instances share them");
+					row("Bottom level structures", count(stats.blasCount) + ", " + bytes(stats.blasBytes));
+					row("Top level instances", count(stats.visibleInstances) + " visible of " + count(stats.tlasInstances) + ", " + bytes(stats.tlasBytes));
+					if (stats.clusterBytes > 0) row("Cluster structures", bytes(stats.clusterBytes));
+					row("Objects", count(stats.objects));
+					row("Vertices", count(stats.vertices) + ", buffers " + bytes(stats.geometryBytes));
+					row("Materials / lights", count(stats.materials) + " / " + count(stats.lights));
+					const uint64_t pixels = static_cast<uint64_t>(gbuffer->extent.width) * gbuffer->extent.height * samplesPerPixel;
+					row("Paths per second", count(cpuAverage > 0.0f ? static_cast<uint64_t>(pixels * 1000.0 / cpuAverage) : 0),
+						"Render pixels x paths per pixel x frames per second (each path: a camera ray and its bounces and shadow rays)");
+					ImGui::EndTable();
+				}
+
+				// --- Memory ---
+				ImGui::SeparatorText("Video memory");
+				if (memoryBudget) {
+					VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+					VkPhysicalDeviceMemoryProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
+					properties.pNext = &budget;
+					vkGetPhysicalDeviceMemoryProperties2(physicalDevice, &properties);
+					for (uint32_t h = 0; h < properties.memoryProperties.memoryHeapCount; h++) {
+						if (!(properties.memoryProperties.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) continue;
+						const uint64_t used = budget.heapUsage[h], available = budget.heapBudget[h];
+						const uint64_t size = properties.memoryProperties.memoryHeaps[h].size;
+						if (size < (256ull << 20)) continue; // The small BAR window
+						char label[96];
+						std::snprintf(label, sizeof(label), "%s of %s (heap %s)", bytes(used).c_str(), bytes(available).c_str(), bytes(size).c_str());
+						ImGui::ProgressBar(available > 0 ? static_cast<float>(used) / available : 0.0f, ImVec2(-1.0f, 0.0f), label);
+						ImGui::SetItemTooltip("This process's use of the GPU's own memory, against what the driver says it may use now");
+					}
+				}
+				else {
+					ImGui::TextDisabled("No VK_EXT_memory_budget: memory use unknown");
+				}
+				ImGui::End();
 			}
 
 			void VulkanRHI::DrawInputActions() {

@@ -210,6 +210,11 @@ namespace Fox {
 				void UpdateScriptInput();
 				// The Input Actions window, and the binding it is listening for a key for
 				void DrawInputActions();
+				// The GPU Profiler window: frame times, passes, what the acceleration structures hold, memory
+				void DrawProfiler();
+				std::vector<float> cpuHistory = std::vector<float>(240, 0.0f);
+				size_t cpuHistoryNext = 0;
+				bool memoryBudget = false; // VK_EXT_memory_budget enabled: video memory use and budget
 				std::vector<std::string> prefabFiles; // Create > Prefab, listed again every few seconds
 				float prefabListAge = 1e9f;
 				struct InputCapture { int action = -1; int axis = -1; bool negative = false; };

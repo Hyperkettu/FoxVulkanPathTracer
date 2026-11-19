@@ -430,6 +430,13 @@ namespace Fox {
 				std::vector<VkExtensionProperties> available(availableCount);
 				vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &availableCount, available.data());
 
+				// Optional: how much video memory is in use and available (the GPU Profiler window)
+				if (std::any_of(available.begin(), available.end(), [](const VkExtensionProperties& e) {
+					return std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0; })) {
+					extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+					memoryBudget = true;
+				}
+
 				// Optional: shader execution reordering (NVIDIA RTX 40 series and newer). The path tracer then
 				// regroups threads by what their bounce rays hit (raygen_ser variant of raygen.slang).
 				VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV reorderFeatures{};
@@ -966,6 +973,8 @@ namespace Fox {
 
 				HandleCameraInput(deltaTime);
 				UpdateWindowTitle(deltaTime);
+				cpuHistory[cpuHistoryNext] = deltaTime * 1000.0f;
+				cpuHistoryNext = (cpuHistoryNext + 1) % cpuHistory.size();
 
 				FrameResource& frameResource = *frameResources[currentFrame];
 

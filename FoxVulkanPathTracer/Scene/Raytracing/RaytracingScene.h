@@ -269,6 +269,27 @@ namespace Fox {
                 // Number of analytic lights (emissive quads, directional lights). Can be zero.
                 uint32_t GetLightCount() const { return lightCount; }
 
+                // What the acceleration structures hold (the GPU Profiler window)
+                struct GeometryStats {
+                    uint64_t tracedTriangles = 0;   // In the visible TLAS instances: what rays can hit this frame
+                    uint64_t clusterTriangles = 0;  // Of them, in the trees' clusters (estimated: selected clusters x their average size)
+                    uint64_t storedTriangles = 0;   // In the bottom level structures, each once (instances share them)
+                    uint64_t blasCount = 0;
+                    uint64_t blasBytes = 0;
+                    uint64_t tlasInstances = 0;
+                    uint64_t visibleInstances = 0;
+                    uint64_t tlasBytes = 0;
+                    uint64_t objects = 0;           // Placements of meshes
+                    uint64_t vertices = 0;
+                    uint64_t materials = 0;
+                    uint64_t lights = 0;
+                    uint64_t clusterInstances = 0;
+                    uint64_t clustersSelected = 0;
+                    uint64_t clusterBytes = 0;
+                    uint64_t geometryBytes = 0;     // Vertex and index buffers
+                };
+                GeometryStats GetGeometryStats() const;
+
                 // Instance visibility bits, must match the masks in Shaders/common.slang
                 static constexpr uint32_t INSTANCE_MASK_OPAQUE = 0x01;
                 static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)

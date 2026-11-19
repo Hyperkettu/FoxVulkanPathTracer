@@ -39,6 +39,15 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Image grade** The Environment window's **Image** section sets exposure (stops, before the tone curve), then brightness,
   contrast (about mid grey) and saturation (against the luma) on the tone mapped image (`Shaders/tonemapping_frag.slang`).
   All four are saved with the scene (`"environment": { "image": { ... } }`), and **Reset image** brings back the neutral grade.
+* **GPU Profiler** Window > **GPU Profiler** (or F1 "gpu profiler") shows:
+  * the GPU's busy time and the CPU frame time as graphs of the last 240 frames;
+  * each pass's averaged GPU time from timestamp queries (skin, LOD select, clusters, instances, TLAS, trace, denoise, tonemap);
+  * what the acceleration structures hold:
+    * **Triangles traced**: the triangles in the visible TLAS instances, counting each instance, plus the tree clusters selected this frame (estimated);
+    * **Triangles stored**: each BLAS once;
+    * the BLAS count and memory, TLAS instances, cluster memory, vertices, materials and lights;
+  * paths per second;
+  * this process's video memory use against the driver's budget (`VK_EXT_memory_budget`, when the driver has it).
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind.

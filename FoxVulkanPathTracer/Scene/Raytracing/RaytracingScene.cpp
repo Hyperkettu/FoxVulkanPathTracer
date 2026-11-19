@@ -310,6 +310,7 @@ namespace Fox {
                         &buildInfo,
                         blas.primitiveCounts.data(), 
                         &sizeInfo);
+                    blas.sizeInfo = sizeInfo;
 
                     // The same scratch memory later refits the deforming ones
                     maxScratchSize = std::max({ maxScratchSize, sizeInfo.buildScratchSize, blas.dynamic ? sizeInfo.updateScratchSize : VkDeviceSize(0) });
@@ -960,6 +961,65 @@ namespace Fox {
                     << set.micromaps->DataSize() / 1024 << " KiB), " << seconds << " s\n";
             }
 
+            RayTracingScene::GeometryStats RayTracingScene::GetGeometryStats() const {
+                GeometryStats stats;
+                std::vector<uint64_t> blasTriangles(bottomLevelAccelerationStructure.size(), 0);
+                for (size_t b = 0; b < bottomLevelAccelerationStructure.size(); b++) {
+                    const auto& blas = bottomLevelAccelerationStructure[b];
+                    if (blas.handle == VK_NULL_HANDLE) {
+                        continue;
+                    }
+                    for (const auto& range : blas.ranges) {
+                        blasTriangles[b] += range.primitiveCount;
+                    }
+                    stats.blasCount++;
+                    stats.storedTriangles += blasTriangles[b];
+                    stats.blasBytes += blas.sizeInfo.accelerationStructureSize;
+                }
+                stats.tlasInstances = instances.size();
+                for (size_t i = 0; i < instances.size() && i < instanceBlasIndices.size(); i++) {
+                    if (instances[i].mask == 0) {
+                        continue; // Hidden
+                    }
+                    stats.visibleInstances++;
+                    const uint32_t b = instanceBlasIndices[i];
+                    if (b < blasTriangles.size()) {
+                        stats.tracedTriangles += blasTriangles[b];
+                    }
+                }
+                if (topLevelAccelerationStructure.buffer != VK_NULL_HANDLE) {
+                    VkMemoryRequirements requirements{};
+                    vkGetBufferMemoryRequirements(device, topLevelAccelerationStructure.buffer, &requirements);
+                    stats.tlasBytes = requirements.size;
+                }
+
+                // Trees traced through clusters: the clusters selected over all their instances, at their average size
+                if (clusterPass) {
+                    const auto lod = clusterPass->GetStats();
+                    uint64_t clusterSubmeshes = 0, clusterIndexCount = 0;
+                    for (const auto& submesh : submeshes) {
+                        if (submesh.pad1 == 1) {
+                            clusterSubmeshes++;
+                            clusterIndexCount += submesh.indexCount;
+                        }
+                    }
+                    stats.clusterInstances = lod.instances;
+                    stats.clustersSelected = lod.clustersSelected;
+                    stats.clusterBytes = lod.memory;
+                    if (clusterSubmeshes > 0) {
+                        stats.clusterTriangles = static_cast<uint64_t>(static_cast<double>(lod.clustersSelected) * clusterIndexCount / 3.0 / clusterSubmeshes);
+                        stats.tracedTriangles += stats.clusterTriangles;
+                    }
+                }
+
+                stats.objects = placements.size();
+                stats.vertices = vertices.size();
+                stats.materials = materials.size();
+                stats.lights = lightCount;
+                stats.geometryBytes = vertices.size() * sizeof(Fox::Graphics::Vulkan::Vertex) * 2 + indices.size() * sizeof(uint32_t);
+                return stats;
+            }
+
             void RayTracingScene::SetJointMatrices(size_t skinnedMesh, const std::vector<glm::mat4>& skinMatrices) {
                 SkinnedRecord& skinned = skinnedMeshes[skinnedMesh];
                 const size_t count = std::min(skinMatrices.size(), skinned.joints.size());
@@ -1605,6 +1665,7 @@ namespace Fox {
                     };
                     VkAccelerationStructureBuildSizesInfoKHR sizeInfo{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
                     vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, blas.primitiveCounts.data(), &sizeInfo);
+                    blas.sizeInfo = sizeInfo;
                     scratchSize = std::max({ scratchSize, sizeInfo.buildScratchSize, blas.dynamic ? sizeInfo.updateScratchSize : VkDeviceSize(0) });
                     CreateAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, sizeInfo.accelerationStructureSize, blas.handle, blas.buffer, blas.memory);
                 }

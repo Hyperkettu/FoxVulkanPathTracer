@@ -45,6 +45,13 @@ namespace Fox {
 				// e.g. "trace 8.1 | denoise 2.3 | tonemap 0.4"
 				std::string GetSectionSummary() const;
 
+				// The averaged sections (name, milliseconds), busy ones only, in frame order
+				const std::vector<std::pair<std::string, float>>& GetSections() const { return averages; }
+				// Busy GPU milliseconds of the last HISTORY frames, oldest first (each frame, not averaged)
+				static constexpr size_t HISTORY = 240;
+				std::vector<float> GetHistory() const;
+				float GetPeakMilliseconds() const;
+
 			private:
 				struct Slot {
 					VkQueryPool pool = VK_NULL_HANDLE;
@@ -71,6 +78,10 @@ namespace Fox {
 				std::vector<Section> sections;
 				double frameSum = 0.0;
 				uint32_t windowFrames = 0;
+
+				// Every frame's busy time, a ring of HISTORY
+				std::vector<float> history = std::vector<float>(HISTORY, 0.0f);
+				size_t historyNext = 0;
 
 				// Published averages
 				float frameMilliseconds = 0.0f;

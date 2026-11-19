@@ -77,6 +77,18 @@ namespace Fox {
 				vkCmdWriteTimestamp(commandList.Get(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, recording->pool, static_cast<uint32_t>(recording->names.size()));
 			}
 
+			std::vector<float> GpuProfiler::GetHistory() const {
+				std::vector<float> ordered(HISTORY);
+				for (size_t i = 0; i < HISTORY; i++) {
+					ordered[i] = history[(historyNext + i) % HISTORY];
+				}
+				return ordered;
+			}
+
+			float GpuProfiler::GetPeakMilliseconds() const {
+				return *std::max_element(history.begin(), history.end());
+			}
+
 			void GpuProfiler::ReadResults(uint32_t frameSlot) {
 				if (!supported || frameSlot >= slots.size()) {
 					return;
@@ -115,13 +127,17 @@ namespace Fox {
 				}
 
 				// Busy time only: idle sections (waiting for the display) are left out
+				double busy = 0.0;
 				for (size_t i = 0; i < sections.size(); i++) {
 					const double section = milliseconds(ticks[i], ticks[i + 1]);
 					sections[i].sum += section;
 					if (!sections[i].idle) {
 						frameSum += section;
+						busy += section;
 					}
 				}
+				history[historyNext] = static_cast<float>(busy);
+				historyNext = (historyNext + 1) % HISTORY;
 				windowFrames++;
 
 				if (windowFrames >= AVERAGING_FRAMES) {
