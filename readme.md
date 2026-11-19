@@ -113,6 +113,32 @@ tessellation shows smooth large-scale relief instead of noise.
 
 ### Performance
 
+**Render presets** (**Render > Preset**, saved to `Settings/Render.json`) set how hard the path tracer works:
+
+| Preset | Resolution | Bounces | Frame rate |
+| --- | --- | --- | --- |
+| Quality | Native (Quality upscaling at 4K and above) | 4 | As vsync allows |
+| Balanced | DLSS Balanced (58 % of the display's width and height) | 3 | 60 fps at most |
+| Performance | DLSS Performance (50 %) | 2 | 60 fps at most |
+
+* **Auto** (the default) picks **Balanced** on laptop GPUs (a name with "Laptop"), integrated GPUs and GPUs with less
+  than 10 GB of their own memory, and **Quality** on the others.
+* **The frame cap** keeps a laptop's GPU cooler, so it keeps its clocks: uncapped, an RTX 3070 Laptop reached 86 °C
+  and fell to 210 MHz, and every pass took two to three times longer.
+* **Picking a resolution by hand** (`U`) overrides the preset's until a preset is chosen again.
+
+On an RTX 3070 Laptop at 1280 x 840 (default scene, DLSS Ray Reconstruction, GPU time per frame):
+
+| Preset | Trace | Denoise | Frame |
+| --- | --- | --- | --- |
+| Quality | 7.9-8.5 ms | 11.5-11.7 ms | 21.1-21.6 ms |
+| Balanced (Auto there) | 2.1 ms | 3.1 ms | 6.1 ms |
+| Performance | 1.8 ms | 3.1 ms | 5.8 ms |
+
+Balanced looks nearly the same as Quality there (the finest leaves a little softer), at less than a third of the
+cost. Performance gains little more, because DLSS takes about the same time below that size.
+
+
 Measured in 4K fullscreen on an RTX 5090 (default scene, DLSS Ray Reconstruction, 1 path per pixel):
 
 | Upscaling mode (`U`) | Render resolution | GPU time | Uncapped frame rate |

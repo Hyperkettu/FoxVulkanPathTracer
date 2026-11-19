@@ -98,6 +98,31 @@ namespace Fox {
 				std::vector<std::unique_ptr<RayTracing::Denoiser>> denoisers;
 				size_t activeDenoiser = 0;
 
+				// Render presets: how hard the path tracer works. Auto picks Balanced on laptop and mid-range GPUs,
+				// Quality on the rest. Saved to Settings/Render.json.
+				enum class RenderPreset { Auto, Quality, Balanced, Performance };
+				struct PresetSettings {
+					RayTracing::UpscalingMode upscaling;
+					uint32_t bounces;
+					float frameCap; // Frames per second at most (0: as vsync allows)
+				};
+				static const char* PresetName(RenderPreset preset);
+				RenderPreset preset = RenderPreset::Auto;
+				bool presetLoaded = false;
+				std::string gpuName;
+				uint64_t gpuMemory = 0;      // Bytes of its own memory
+				bool modestGpu = false;      // A laptop or mid-range GPU (Auto: Balanced)
+				RenderPreset EffectivePreset() const;
+				PresetSettings SettingsOf(RenderPreset preset) const;
+				void LoadRenderSettings();
+				void SaveRenderSettings() const;
+				// Picks a preset: its resolution (unless the user picked one since: U), bounces and frame cap
+				void SetRenderPreset(RenderPreset newPreset);
+				uint32_t maxBounces = 4;
+				float frameCap = 0.0f;
+				std::chrono::steady_clock::time_point lastFrameStart{};
+				void WaitForFrameCap();
+
 				// Render resolution relative to the display (the G-buffer has the render resolution)
 				RayTracing::UpscalingMode upscalingMode = RayTracing::UpscalingMode::Native;
 				bool upscalingModeChosenByUser = false; // Until then it follows the display size

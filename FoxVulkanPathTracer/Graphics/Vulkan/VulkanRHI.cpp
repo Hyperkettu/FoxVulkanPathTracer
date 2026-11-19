@@ -1,4 +1,12 @@
 #include "FoxRenderer.h"
+#include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
+
+#include <fstream>
+#include <thread>
+#pragma comment(lib, "winmm.lib")
+
+// The system timer's resolution (winmm), declared here: windows.h would bring its macros (min, max, MemoryBarrier)
+extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int period);
 
 namespace Fox {
 
@@ -319,6 +327,19 @@ namespace Fox {
 					if (physicalDevice == VK_NULL_HANDLE || isDiscrete) {
 						physicalDevice = candidate;
 						std::cout << "Using GPU: " << properties.deviceName << "\n";
+
+						// For the Auto render preset: a laptop GPU, an integrated one, or one with little memory of its own
+						gpuName = properties.deviceName;
+						VkPhysicalDeviceMemoryProperties memory{};
+						vkGetPhysicalDeviceMemoryProperties(candidate, &memory);
+						gpuMemory = 0;
+						for (uint32_t i = 0; i < memory.memoryHeapCount; i++) {
+							if (memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+								gpuMemory = std::max<uint64_t>(gpuMemory, memory.memoryHeaps[i].size);
+							}
+						}
+						modestGpu = !isDiscrete || gpuName.find("Laptop") != std::string::npos
+							|| gpuMemory < 10ull * 1024 * 1024 * 1024;
 					}
 
 					if (isDiscrete) {
@@ -622,15 +643,120 @@ namespace Fox {
 			void VulkanRHI::CreateGBuffer() {
 				const VkExtent2D displayExtent = capabilities.currentExtent;
 
-				// Until the user picks a mode, choose one from the display size. At 4K, Quality (1440p) keeps
-				// a 60 fps frame well within budget (~4.5 ms on an RTX 5090; Native takes ~8.6 ms).
+				// Until the user picks a mode (U), the render preset's
+				if (!presetLoaded) {
+					LoadRenderSettings();
+				}
 				if (!upscalingModeChosenByUser) {
-					upscalingMode = displayExtent.height >= 2000 ? RayTracing::UpscalingMode::Quality
-						: RayTracing::UpscalingMode::Native;
+					upscalingMode = SettingsOf(EffectivePreset()).upscaling;
 				}
 
 				gbuffer = std::make_unique<RayTracing::GBuffer>(deviceContext, RayTracing::RenderExtentFor(displayExtent, upscalingMode));
 				ResetHistory();
+			}
+
+			// ------------------------------------------------------------------------------------------------------
+			// Render presets
+			// ------------------------------------------------------------------------------------------------------
+
+			const char* VulkanRHI::PresetName(RenderPreset preset) {
+				switch (preset) {
+				case RenderPreset::Quality: return "Quality";
+				case RenderPreset::Balanced: return "Balanced";
+				case RenderPreset::Performance: return "Performance";
+				default: return "Auto";
+				}
+			}
+
+			VulkanRHI::RenderPreset VulkanRHI::EffectivePreset() const {
+				return preset != RenderPreset::Auto ? preset : modestGpu ? RenderPreset::Balanced : RenderPreset::Quality;
+			}
+
+			VulkanRHI::PresetSettings VulkanRHI::SettingsOf(RenderPreset which) const {
+				using Mode = RayTracing::UpscalingMode;
+				switch (which) {
+				case RenderPreset::Performance:
+					// A quarter of the pixels, two bounces, 60 fps at most (a laptop stays cooler, so faster)
+					return { Mode::Performance, 2, 60.0f };
+				case RenderPreset::Balanced:
+					return { Mode::Balanced, 3, 60.0f };
+				default: {
+					// Full paths; resolution from the display size. At 4K, Quality (1440p) keeps a 60 fps frame well
+					// within budget (~4.5 ms on an RTX 5090; Native takes ~8.6 ms).
+					const bool large = capabilities.currentExtent.height >= 2000;
+					return { large ? Mode::Quality : Mode::Native, 4, 0.0f };
+				}
+				}
+			}
+
+			void VulkanRHI::LoadRenderSettings() {
+				presetLoaded = true;
+				try {
+					std::ifstream in("Settings/Render.json");
+					if (in) {
+						const nlohmann::json j = nlohmann::json::parse(in, nullptr, true, true);
+						const std::string name = j.value("preset", std::string("Auto"));
+						for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance }) {
+							if (name == PresetName(p)) preset = p;
+						}
+					}
+				}
+				catch (const std::exception& e) {
+					std::cout << "Settings/Render.json: " << e.what() << "\n";
+				}
+				const PresetSettings settings = SettingsOf(EffectivePreset());
+				maxBounces = settings.bounces;
+				frameCap = settings.frameCap;
+				std::cout << "Render preset: " << PresetName(preset);
+				if (preset == RenderPreset::Auto) {
+					std::cout << " (" << PresetName(EffectivePreset()) << ": " << gpuName << ", " << (gpuMemory >> 20) << " MiB"
+						<< (modestGpu ? ", a laptop or mid-range GPU" : "") << ")";
+				}
+				std::cout << " - " << settings.bounces << " bounces" << (settings.frameCap > 0.0f ? ", 60 fps at most" : "") << "\n";
+			}
+
+			void VulkanRHI::SaveRenderSettings() const {
+				try {
+					std::filesystem::create_directories("Settings");
+					std::ofstream out("Settings/Render.json");
+					out << nlohmann::json{ { "preset", PresetName(preset) } }.dump(2) << "\n";
+				}
+				catch (const std::exception& e) {
+					std::cout << "Settings/Render.json: " << e.what() << "\n";
+				}
+			}
+
+			void VulkanRHI::SetRenderPreset(RenderPreset newPreset) {
+				preset = newPreset;
+				SaveRenderSettings();
+				const PresetSettings settings = SettingsOf(EffectivePreset());
+				maxBounces = settings.bounces;
+				frameCap = settings.frameCap;
+				std::cout << "Render preset: " << PresetName(preset) << (preset == RenderPreset::Auto ? std::string(" (") + PresetName(EffectivePreset()) + ")" : "")
+					<< " - " << settings.bounces << " bounces" << (settings.frameCap > 0.0f ? ", 60 fps at most" : "") << "\n";
+				// Its resolution, instead of one picked by hand
+				SetUpscalingMode(settings.upscaling);
+				upscalingModeChosenByUser = false;
+				UpdateWindowTitle(0.0f);
+			}
+
+			void VulkanRHI::WaitForFrameCap() {
+				const auto now = std::chrono::steady_clock::now();
+				if (frameCap > 0.0f && lastFrameStart.time_since_epoch().count() != 0) {
+					const auto target = lastFrameStart + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / frameCap));
+					// Sleep most of the way (the timer is coarse), then spin the last bit
+					static const bool fineTimer = timeBeginPeriod(1) == 0; // 1 ms sleeps
+					(void)fineTimer;
+					if (target - now > std::chrono::milliseconds(2)) {
+						std::this_thread::sleep_for(target - now - std::chrono::milliseconds(2));
+					}
+					while (std::chrono::steady_clock::now() < target) {
+						std::this_thread::yield();
+					}
+					lastFrameStart = std::max(target, now);
+					return;
+				}
+				lastFrameStart = now;
 			}
 
 			void VulkanRHI::SetUpscalingMode(RayTracing::UpscalingMode mode) {
@@ -832,6 +958,9 @@ namespace Fox {
 					return;
 				}
 
+				// The preset's frame cap: less heat on a laptop, so it keeps its clocks up
+				WaitForFrameCap();
+
 				// Menu commands of the previous frame that replace rendering resources (as their keys do)
 				RunDeferredCommands();
 
@@ -972,6 +1101,7 @@ namespace Fox {
 				cam.pickSlot = currentFrame;
 				shaderTime += deltaTime;
 				cam.time = raytracingScene->GetAnimationTime();
+				cam.maxBounces = maxBounces;
 				raytracingScene->FillVolumeConstants(cam);
 				if (pickRequested) {
 					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);

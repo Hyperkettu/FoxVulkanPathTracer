@@ -196,7 +196,8 @@ struct Camera
     float4 cloudWind;       // Drift (m/s), w: scattering albedo
     uint volumeCount;       // Smoke volumes in use
     uint cloudShadows;      // 1: the clouds shade surfaces
-    uint2 _volumePad;
+    uint maxBounces;        // Diffuse and glossy bounces after the first hit (the render preset: 1..4)
+    uint _constantsPad;
     VolumeData volumes[MAX_VOLUMES];
 };
 

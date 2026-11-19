@@ -34,8 +34,9 @@ struct InstanceMotion
 // Object picking: x = instance index + 1 of the object seen at camera.pickPixel (0 = sky), y = distance
 [[vk::binding(14, 0)]] RWStructuredBuffer<uint2> gPickResult;
 
-// Bounces after the first hit. Longer paths are also cut probabilistically (Russian roulette).
-// Deeper bounces add little light outdoors but cost as much as the first ones.
+// Bounces after the first hit: at most MAX_BOUNCES, camera.maxBounces of them (the render preset). Longer paths are
+// also cut probabilistically (Russian roulette). Deeper bounces add little light outdoors but cost as much as the
+// first ones.
 static const int MAX_BOUNCES = 4;
 static const int ROULETTE_START_BOUNCE = 1;
 
@@ -454,7 +455,7 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
             radiance += isIndirect ? ClampIndirect(contribution) : contribution;
         }
 
-        if (bounce == MAX_BOUNCES || segment == MAX_BOUNCES + MAX_DELTA_EVENTS)
+        if (bounce >= clamp(int(camera.maxBounces), 1, MAX_BOUNCES) || segment == MAX_BOUNCES + MAX_DELTA_EVENTS)
             break;
 
         Surface surface = MakeSurface(hit, N, V);

@@ -626,6 +626,14 @@ namespace Fox {
 					shell.Add(label, [this, pixels] { raytracingScene->SetClusterLodThreshold(pixels); }, "",
 						raytracingScene->HasClusterMeshes(), raytracingScene->GetClusterLodThreshold() == pixels ? 1 : 0, "lod level of detail clusters nanite quality");
 				}
+				for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance }) {
+					std::string label = std::string("Render/Preset/") + PresetName(p);
+					if (p == RenderPreset::Auto) {
+						label += std::string(" (") + PresetName(modestGpu ? RenderPreset::Balanced : RenderPreset::Quality) + " here)";
+					}
+					shell.Add(label, [this, p] { Defer([this, p] { SetRenderPreset(p); }); }, "", true, preset == p ? 1 : 0,
+						"render speed laptop bounces frame cap fps");
+				}
 				shell.Add("Render/Vsync", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_V); }); }, "V", true, vsync ? 1 : 0, "frame rate");
 				shell.Separator("Render");
 				char samples[64];
