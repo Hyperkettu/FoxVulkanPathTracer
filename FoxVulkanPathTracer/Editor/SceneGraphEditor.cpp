@@ -20,6 +20,12 @@ namespace Fox {
 			using Fox::Scene::VolumeComponent;
 			using Fox::Scene::CameraComponent;
 			using Fox::Scene::ScriptComponent;
+			using Fox::Scene::PrefabComponent;
+
+			// Prefab instances in the Hierarchy: the instance blue, what is under it a paler blue
+			const ImVec4 PREFAB_COLOR(0.45f, 0.72f, 1.0f, 1.0f);
+			const ImVec4 PREFAB_PART_COLOR(0.62f, 0.78f, 0.95f, 1.0f);
+			std::string prefabMessage;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -377,6 +383,85 @@ namespace Fox {
 				}
 			}
 
+			// The prefab an instance comes from, and what it changes from it
+			void DrawPrefab(Scene& scene, Entity entity, State&) {
+				PrefabComponent& link = scene.GetSceneGraph().GetRegistry().Get<PrefabComponent>(entity);
+				const std::string file = link.file; // Rebuilding may move the component
+				const std::string name = std::filesystem::path(file).filename().string();
+				ImGui::TextColored(PREFAB_COLOR, "%s", name.c_str());
+				const size_t instances = scene.CountPrefabInstances(file);
+				ImGui::SameLine();
+				ImGui::TextDisabled("(%zu instance%s in the scene)", instances, instances == 1 ? "" : "s");
+
+				const auto overrides = scene.GetPrefabOverrides(entity);
+				std::string error;
+				if (ImGui::Button("Apply to prefab")) {
+					if (scene.ApplyPrefab(entity, error)) {
+						prefabMessage = "Applied: every instance of " + name + " now shows this (keeping their own changes)";
+					}
+				}
+				ImGui::SetItemTooltip("This instance as it is becomes the prefab");
+				ImGui::SameLine();
+				ImGui::BeginDisabled(overrides.empty());
+				if (ImGui::Button("Revert all")) {
+					scene.RevertPrefab(entity, "", error);
+					prefabMessage = "Reverted to the prefab";
+				}
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				if (ImGui::Button("Unpack")) {
+					scene.UnpackPrefab(entity);
+					prefabMessage = "Unpacked: no longer linked to " + name;
+					ImGui::TextDisabled("%s", prefabMessage.c_str());
+					return;
+				}
+				ImGui::SetItemTooltip("Keep what is under it as ordinary entities, no longer following the prefab");
+				if (!error.empty()) {
+					prefabMessage = error;
+				}
+
+				ImGui::SeparatorText(overrides.empty() ? "No overrides: just as the prefab" : "Overrides (this instance only)");
+				std::string revert;
+				for (const auto& [key, value] : overrides) {
+					// "path|component|field" shown as "path: component.field = value"
+					std::string shown = key;
+					const size_t bar = shown.find('|');
+					const std::string path = shown.substr(0, bar);
+					std::string rest = shown.substr(bar + 1);
+					std::replace(rest.begin(), rest.end(), '|', '.');
+					// Numbers short (floats come back as 0.600000023)
+					const nlohmann::json parsed = nlohmann::json::parse(value, nullptr, false);
+					std::string shownValue = value;
+					auto number = [](double x) { char b[32]; std::snprintf(b, sizeof(b), "%.4g", x); return std::string(b); };
+					if (parsed.is_number_float()) {
+						shownValue = number(parsed.get<double>());
+					}
+					else if (parsed.is_array() && !parsed.empty() && std::all_of(parsed.begin(), parsed.end(), [](const nlohmann::json& v) { return v.is_number(); })) {
+						shownValue = "[";
+						for (size_t i = 0; i < parsed.size(); i++) shownValue += (i ? ", " : "") + number(parsed[i].get<double>());
+						shownValue += "]";
+					}
+					std::string text = (path.empty() ? std::string("(itself)") : path) + ": " + rest + " = " + shownValue;
+					if (text.size() > 90) {
+						text = text.substr(0, 87) + "...";
+					}
+					ImGui::PushID(key.c_str());
+					if (ImGui::SmallButton("revert")) {
+						revert = key;
+					}
+					ImGui::PopID();
+					ImGui::SameLine();
+					ImGui::TextUnformatted(text.c_str());
+				}
+				if (!revert.empty()) {
+					scene.RevertPrefab(entity, revert, error);
+				}
+				if (!prefabMessage.empty()) {
+					ImGui::TextDisabled("%s", prefabMessage.c_str());
+				}
+				ImGui::TextDisabled("Its transform and name are its own; what is under it and its components follow the prefab");
+			}
+
 			// What the scripts offer: classes and their fields, and compile errors (the host's JSON, read again after
 			// every reload)
 			struct ScriptCatalog {
@@ -687,6 +772,13 @@ namespace Fox {
 
 			const ComponentEditor COMPONENT_EDITORS[] = {
 				{
+					"Prefab", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<PrefabComponent>(entity); },
+					[](Scene&, Entity) {}, // Made with Create Prefab (Hierarchy) or placed from Create > Prefab
+					[](Scene& scene, Entity entity) { scene.UnpackPrefab(entity); },
+					DrawPrefab,
+				},
+				{
 					"Transform", false,
 					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().HasTransform(entity); },
 					[](Scene& scene, Entity entity) {
@@ -933,12 +1025,15 @@ namespace Fox {
 			ImGui::PushID(static_cast<int>(entity.generation));
 
 			const bool inactive = !graph.IsActiveInHierarchy(entity);
-			if (inactive) {
-				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+			const Entity instance = scene.PrefabRootOf(entity);
+			const bool colored = inactive || graph.IsValid(instance);
+			if (colored) {
+				ImGui::PushStyleColor(ImGuiCol_Text, inactive ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+					: instance == entity ? PREFAB_COLOR : PREFAB_PART_COLOR);
 			}
 			const std::string& name = graph.GetName(entity);
 			const bool open = ImGui::TreeNodeEx("##node", flags, "%s", name.empty() ? "(unnamed)" : name.c_str());
-			if (inactive) {
+			if (colored) {
 				ImGui::PopStyleColor();
 			}
 
@@ -1022,6 +1117,30 @@ namespace Fox {
 					graph.SetActive(entity, active);
 				}
 				ImGui::Separator();
+				// Prefabs
+				const Entity owner = scene.PrefabRootOf(entity);
+				const bool isInstance = owner == entity;
+				const bool insideInstance = graph.IsValid(owner) && !isInstance;
+				if (ImGui::MenuItem(isInstance ? "Save as New Prefab" : "Create Prefab", nullptr, false, !insideInstance)) {
+					std::string file, error;
+					prefabMessage = scene.CreatePrefab(entity, graph.GetName(entity), file, error) ? "Saved " + file : error;
+				}
+				ImGui::SetItemTooltip(insideInstance ? "It is part of a prefab instance: unpack that first"
+					: "Saves it and everything under it to Prefabs/, and makes it an instance");
+				if (isInstance) {
+					if (ImGui::MenuItem("Apply to Prefab")) {
+						std::string error;
+						prefabMessage = scene.ApplyPrefab(entity, error) ? "Applied to the prefab" : error;
+					}
+					if (ImGui::MenuItem("Revert to Prefab")) {
+						std::string error;
+						scene.RevertPrefab(entity, "", error);
+					}
+					if (ImGui::MenuItem("Unpack Prefab")) {
+						scene.UnpackPrefab(entity);
+					}
+				}
+				ImGui::Separator();
 				if (ImGui::MenuItem("Delete", "Delete")) {
 					toDelete = entity;
 				}
@@ -1044,6 +1163,10 @@ namespace Fox {
 			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s %s%s", PhysicsComponent::MotionName(body->motion), body->trigger ? "trigger" : "body", body->enabled ? "" : " (off)");
+			}
+			if (const PrefabComponent* link = graph.GetRegistry().TryGet<PrefabComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextColored(PREFAB_COLOR, "[%s]", std::filesystem::path(link->file).stem().stem().string().c_str());
 			}
 			if (const ScriptComponent* component = graph.GetRegistry().TryGet<ScriptComponent>(entity)) {
 				std::string names;
@@ -1159,6 +1282,15 @@ namespace Fox {
 			const Entity parent = graph.GetParent(entity);
 			ImGui::TextDisabled("Entity %u.%u, %s%s", entity.index, entity.generation,
 				graph.IsValid(parent) ? "child of " : "a root", graph.IsValid(parent) ? graph.GetName(parent).c_str() : "");
+			const Entity owner = scene.PrefabRootOf(entity);
+			if (graph.IsValid(owner) && owner != entity) {
+				ImGui::TextColored(PREFAB_PART_COLOR, "Part of the prefab instance %s", graph.GetName(owner).c_str());
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Select it")) {
+					gizmo.Select(owner);
+				}
+				ImGui::TextDisabled("Changes here are overrides of that instance (Apply in its Prefab section)");
+			}
 			ImGui::Separator();
 
 			// Its components
@@ -1170,8 +1302,9 @@ namespace Fox {
 				ImGui::PushID(editor.name);
 				bool keep = true;
 				const bool open = editor.closeButton
-					? ImGui::CollapsingHeader(editor.name, &keep, ImGuiTreeNodeFlags_DefaultOpen)
-					: ImGui::CollapsingHeader(editor.name, ImGuiTreeNodeFlags_DefaultOpen);
+					// Its own ID: a field inside may have the section's name (Mesh > Mesh)
+					? ImGui::CollapsingHeader((std::string(editor.name) + "##section").c_str(), &keep, ImGuiTreeNodeFlags_DefaultOpen)
+					: ImGui::CollapsingHeader((std::string(editor.name) + "##section").c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 				if (ImGui::BeginPopupContextItem("##component")) {
 					if (ImGui::MenuItem("Remove Component")) {
 						keep = false;

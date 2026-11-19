@@ -445,6 +445,44 @@ sampling (glow is found only by the paths). The cost depends on how much of the 
 on a laptop RTX 3070 (the trace pass, before the GPU heated up and throttled): 7 ms without media, about 15 ms with
 fog everywhere, 20 to 26 ms with clouds.
 
+### Prefabs
+
+A prefab is an entity and everything under it saved as a file (`Prefabs/<Name>.prefab.json`), placed in scenes any
+number of times. Each placement (an instance) can differ from the prefab: its **overrides**.
+
+* **Make one:** right-click an entity in the Hierarchy > **Create Prefab** (or **Edit > Prefab > Create Prefab**). The
+  entity becomes its first instance.
+* **Place one:** **Create > Prefab > <name>**, in front of the camera. Instances show blue in the Hierarchy, their
+  prefab's name after them; what is under an instance is a paler blue.
+* **Override:** just edit an instance (or anything under it) in the Inspector. Whatever differs from the prefab is an
+  override of that instance only: a component's field (a sphere's radius, a material, a light's colour), whether
+  an entity is active, a component added or removed. The instance's **Prefab** section lists its overrides, each
+  with **revert**.
+* **Apply to prefab:** the instance as it is becomes the prefab. Every other instance updates, and keeps its own
+  overrides: change the prefab's material and the instance with a bigger radius gets the new material at its
+  bigger radius.
+* **Revert all** takes the instance back to the prefab. **Unpack** unlinks it: what is under it stays, as ordinary
+  entities.
+
+An instance's transform and name are always its own. Overrides are found by comparing the instance with its prefab
+field by field (`MainRayTracingScene::GetPrefabOverrides`), so no edit has to be recorded as one. A field that holds
+a whole object (a material) is one override. Entities are matched by their path of names under the instance
+(`Wheel/Hub`). Things added under an instance are not kept by it, so add them to the prefab (edit an instance,
+then Apply).
+
+Scenes save an instance as its prefab file, its transform and its overrides:
+
+```json
+"components": {
+  "transform": { ... },
+  "prefab": { "file": "Prefabs/Glass_ball.prefab.json", "overrides": { "|mesh|radius": 0.6 } }
+}
+```
+
+When the scene loads, every instance is made from its prefab with its overrides on top. Prefabs can contain
+instances of other prefabs (8 deep at most). A prefab file is read again when it changes on disk. Its trees are
+shared by all its instances: one geometry, like tree instances.
+
 ### Play mode
 
 **Play** (`F5`, the toolbar above the view, or the **Play** menu) runs the game on a copy of the scene. **Stop** puts
@@ -800,6 +838,7 @@ entity-component system whose registry keeps each component type in a packed arr
 | Volume | A puff or box of smoke that light scatters in, optionally glowing (see *Volumetrics*) |
 | Camera | The game looks through it while it plays (see *Play mode*) |
 | Script | C# scripts that run on it while the game plays (see *Scripting*) |
+| Prefab | It is an instance of a prefab: what is under it comes from the prefab, with its own overrides (see *Prefabs*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot

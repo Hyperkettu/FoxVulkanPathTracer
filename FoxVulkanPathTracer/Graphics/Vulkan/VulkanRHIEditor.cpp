@@ -437,6 +437,25 @@ namespace Fox {
 				shell.Add("Edit/Duplicate", [this, &scene, selected] { gizmo.Select(scene.DuplicateEntity(selected)); }, "Ctrl+D", hasSelection, -1, "copy entity");
 				shell.Add("Edit/Delete", [&] { RunKeyCommand(SDL_SCANCODE_DELETE); }, "Delete", hasSelection, -1, "remove entity");
 				shell.Add("Edit/Deselect", [&] { gizmo.Select({}); }, "", hasSelection, -1, "selection");
+				{
+					const auto owner = hasSelection ? scene.PrefabRootOf(selected) : Fox::ECS::Entity{};
+					const bool isInstance = hasSelection && owner == selected;
+					shell.Add("Edit/Prefab/Create Prefab", [&scene, selected] {
+						std::string file, error;
+						if (!scene.CreatePrefab(selected, scene.GetSceneGraph().GetName(selected), file, error)) {
+							std::cout << "Prefab: " << error << "\n";
+						}
+					}, "", hasSelection && (!graph.IsValid(owner) || isInstance), -1, "prefab save template reusable");
+					shell.Add("Edit/Prefab/Apply to Prefab", [&scene, selected] {
+						std::string error;
+						if (!scene.ApplyPrefab(selected, error)) std::cout << "Prefab: " << error << "\n";
+					}, "", isInstance, -1, "prefab update all instances");
+					shell.Add("Edit/Prefab/Revert to Prefab", [&scene, selected] {
+						std::string error;
+						scene.RevertPrefab(selected, "", error);
+					}, "", isInstance, -1, "prefab overrides reset");
+					shell.Add("Edit/Prefab/Unpack Prefab", [&scene, selected] { scene.UnpackPrefab(selected); }, "", isInstance, -1, "prefab unlink");
+				}
 				shell.Add("Edit/Duplicate as Instance", [this, &scene, selected] { gizmo.Select(scene.DuplicateEntity(selected, true)); }, "",
 					hasSelection, -1, "copy tree instance shared");
 				shell.Add("Edit/Drop to Ground", [this, &scene, selected] { Fox::Editor::MeshPainter::DropToGround(scene, selected); }, "",
@@ -487,6 +506,27 @@ namespace Fox {
 				shell.Add("Create/Game Camera", [&] {
 					gizmo.Select(scene.AddGameCamera(pose.position, glm::normalize(pose.target - pose.position), glm::degrees(Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->GetFov())));
 				}, "", true, -1, "camera play view look through");
+				prefabListAge += ImGui::GetIO().DeltaTime;
+				if (prefabListAge > 2.0f) {
+					prefabFiles = scene.ListPrefabs();
+					prefabListAge = 0.0f;
+				}
+				for (const std::string& file : prefabFiles) {
+					const std::string name = std::filesystem::path(file).stem().stem().string();
+					shell.Add("Create/Prefab/" + name, [&scene, this, file, spawn] {
+						std::string error;
+						const auto entity = scene.InstantiatePrefab(file, spawn, {}, error);
+						if (entity) {
+							gizmo.Select(entity);
+						}
+						else {
+							std::cout << "Prefab: " << error << "\n";
+						}
+					}, "", true, -1, "prefab instance place " + name);
+				}
+				if (prefabFiles.empty()) {
+					shell.Add("Create/Prefab/(none yet: right-click an entity > Create Prefab)", [] {}, "", false, -1, "prefab");
+				}
 				shell.Add("Create/Effects/Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f))); }, "", true, -1,
 					"volume volumetric smoke steam haze");
 				shell.Add("Create/Effects/Glowing Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f), true)); }, "", true, -1,

@@ -1,0 +1,52 @@
+{
+  "entities": [
+    {
+      "active": true,
+      "components": {
+        "mesh": {
+          "enabled": true,
+          "material": {
+            "attenuationColor": [
+              0.8,
+              0.94,
+              0.9
+            ],
+            "attenuationDistance": 2.0,
+            "color": [
+              1.0,
+              0.0,
+              1.0
+            ],
+            "ior": 1.5,
+            "metallic": 0.0,
+            "roughness": 0.0,
+            "transmission": 1.0
+          },
+          "radius": 1.74,
+          "type": "sphere"
+        },
+        "transform": {
+          "position": [
+            21.0,
+            -2.2613943,
+            15.018648
+          ],
+          "rotation": [
+            0.0,
+            -0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Glass ball (copy)",
+      "parent": -1
+    }
+  ],
+  "treeAssets": [],
+  "version": 1
+}

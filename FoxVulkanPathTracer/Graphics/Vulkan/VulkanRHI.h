@@ -185,6 +185,8 @@ namespace Fox {
 				void UpdateScriptInput();
 				// The Input Actions window, and the binding it is listening for a key for
 				void DrawInputActions();
+				std::vector<std::string> prefabFiles; // Create > Prefab, listed again every few seconds
+				float prefabListAge = 1e9f;
 				struct InputCapture { int action = -1; int axis = -1; bool negative = false; };
 				InputCapture inputCapture;
 				bool CapturingInput() const { return inputCapture.action >= 0 || inputCapture.axis >= 0; }

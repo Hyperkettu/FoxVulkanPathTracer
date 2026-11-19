@@ -35,6 +35,8 @@
 #include <charconv>
 #include <filesystem>
 #include <unordered_map>
+#include <fstream>
+#include <set>
 
 using json = nlohmann::json;
 
@@ -454,6 +456,30 @@ namespace Fox {
 						},
 					},
 					{
+						"prefab",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::PrefabComponent* prefab = graph.GetRegistry().TryGet<Fox::Scene::PrefabComponent>(entity);
+							if (!prefab) {
+								return false;
+							}
+							json overrides = json::object();
+							for (const auto& [key, value] : prefab->overrides) {
+								overrides[key] = json::parse(value, nullptr, false);
+							}
+							j = { { "file", prefab->file }, { "overrides", overrides } };
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							Fox::Scene::PrefabComponent prefab;
+							prefab.file = j.value("file", std::string());
+							const json overrides = j.value("overrides", json::object()); // Kept: items() refers to it
+							for (const auto& [key, value] : overrides.items()) {
+								prefab.overrides[key] = value.dump();
+							}
+							graph.GetRegistry().Add<Fox::Scene::PrefabComponent>(entity, std::move(prefab));
+						},
+					},
+					{
 						"script",
 						[](const SceneGraph& graph, Entity entity, json& j) {
 							const Fox::Scene::ScriptComponent* component = graph.GetRegistry().TryGet<Fox::Scene::ScriptComponent>(entity);
@@ -540,8 +566,34 @@ namespace Fox {
 					MainRayTracingScene::CreateSun(graph, sun);
 				}
 
-				json EntitiesToJson(const SceneGraph& graph) {
-					const std::vector<Entity> entities = graph.DepthFirst();
+				// The entities to save, depth first: those under a prefab instance come from its prefab, so they are
+				// left out (the instance itself is saved: its link, transform and overrides). root: only its subtree,
+				// itself included even if it is an instance.
+				std::vector<Entity> SavedEntities(const SceneGraph& graph, Entity root = {}) {
+					const std::vector<Entity> all = root.IsNull() ? graph.DepthFirst() : graph.Subtree(root);
+					std::vector<Entity> saved;
+					std::vector<Entity> instances;
+					for (Entity entity : all) {
+						bool inside = false;
+						for (Entity instance : instances) {
+							if (graph.IsAncestorOf(instance, entity)) {
+								inside = true;
+								break;
+							}
+						}
+						if (inside) {
+							continue;
+						}
+						saved.push_back(entity);
+						if (entity != root && graph.GetRegistry().Has<Fox::Scene::PrefabComponent>(entity)) {
+							instances.push_back(entity);
+						}
+					}
+					return saved;
+				}
+
+				json EntitiesToJson(const SceneGraph& graph, Entity root = {}) {
+					const std::vector<Entity> entities = SavedEntities(graph, root);
 					std::unordered_map<Entity, int> indices;
 					for (size_t i = 0; i < entities.size(); i++) {
 						indices[entities[i]] = static_cast<int>(i);
@@ -551,9 +603,15 @@ namespace Fox {
 					for (Entity entity : entities) {
 						json entry = { { "name", graph.GetName(entity) }, { "active", graph.IsActive(entity) } };
 						const Entity parent = graph.GetParent(entity);
-						entry["parent"] = graph.IsValid(parent) ? indices.at(parent) : -1;
+						entry["parent"] = graph.IsValid(parent) && indices.count(parent) ? indices.at(parent) : -1;
 						json components = json::object();
+						// An instance (other than the one saved as a prefab): its link and transform; the rest is its
+						// prefab's, with its overrides
+						const bool instance = entity != root && graph.GetRegistry().Has<Fox::Scene::PrefabComponent>(entity);
 						for (const ComponentSerializer& serializer : COMPONENT_SERIALIZERS) {
+							if (instance && std::string(serializer.key) != "transform" && std::string(serializer.key) != "prefab") {
+								continue;
+							}
 							json component;
 							if (serializer.save(graph, entity, component)) {
 								components[serializer.key] = std::move(component);
@@ -581,6 +639,163 @@ namespace Fox {
 							}
 						}
 						created.push_back(entity);
+					}
+				}
+
+				// --- Prefabs ---
+
+				// Each entry's path from the list's first entry: "" for it, "Child/Grandchild" below it (a name taken
+				// twice among siblings gets "#2", "#3")
+				std::vector<std::string> EntryPaths(const json& list) {
+					std::vector<std::string> paths(list.size());
+					std::map<std::pair<int, std::string>, int> seen;
+					for (size_t i = 0; i < list.size(); i++) {
+						const int parent = list[i].value("parent", -1);
+						if (i == 0 || parent < 0 || parent >= static_cast<int>(i)) {
+							paths[i] = "";
+							continue;
+						}
+						std::string name = list[i].value("name", std::string());
+						const int count = ++seen[{ parent, name }];
+						if (count > 1) {
+							name += "#" + std::to_string(count);
+						}
+						paths[i] = paths[parent].empty() ? name : paths[parent] + "/" + name;
+					}
+					return paths;
+				}
+
+				// Tree meshes written in place of their asset references, so instances and prefab compare as trees
+				void InlineTrees(json& list, const json& assets) {
+					for (json& entry : list) {
+						json* components = entry.contains("components") ? &entry["components"] : nullptr;
+						if (!components || !components->contains("mesh")) {
+							continue;
+						}
+						json& mesh = (*components)["mesh"];
+						const int asset = mesh.value("asset", -1);
+						if (asset >= 0 && asset < static_cast<int>(assets.size())) {
+							mesh.erase("asset");
+							mesh.update(assets[asset]);
+						}
+					}
+				}
+
+				// Equal, with numbers within a rounding error (rotations go through Euler angles and back)
+				bool Same(const json& a, const json& b) {
+					if (a.is_number() && b.is_number()) {
+						const double x = a.get<double>(), y = b.get<double>();
+						return std::abs(x - y) <= 1e-4 * std::max({ 1.0, std::abs(x), std::abs(y) });
+					}
+					if (a.type() != b.type()) {
+						return false;
+					}
+					if (a.is_array()) {
+						if (a.size() != b.size()) return false;
+						for (size_t i = 0; i < a.size(); i++) {
+							if (!Same(a[i], b[i])) return false;
+						}
+						return true;
+					}
+					if (a.is_object()) {
+						if (a.size() != b.size()) return false;
+						for (const auto& [key, value] : a.items()) {
+							if (!b.contains(key) || !Same(value, b.at(key))) return false;
+						}
+						return true;
+					}
+					return a == b;
+				}
+
+				// How actual (an instance's entities) differs from expected (its prefab's), by key (see PrefabComponent).
+				// The first entry's transform and name are the instance's own; entities only one of them has are
+				// not compared (an instance follows its prefab's structure).
+				std::map<std::string, std::string> DiffEntities(const json& expected, const json& actual) {
+					std::map<std::string, std::string> overrides;
+					const std::vector<std::string> expectedPaths = EntryPaths(expected), actualPaths = EntryPaths(actual);
+					std::map<std::string, const json*> byPath;
+					for (size_t i = 0; i < expected.size(); i++) {
+						byPath[expectedPaths[i]] = &expected[i];
+					}
+					for (size_t i = 0; i < actual.size(); i++) {
+						const std::string& path = actualPaths[i];
+						auto found = byPath.find(path);
+						if (found == byPath.end()) {
+							continue;
+						}
+						const json& e = *found->second;
+						const json& a = actual[i];
+						if (i > 0 && e.value("active", true) != a.value("active", true)) {
+							overrides[path + "|@active"] = json(a.value("active", true)).dump();
+						}
+						const json ec = e.value("components", json::object()), ac = a.value("components", json::object());
+						std::set<std::string> keys;
+						for (const auto& [key, value] : ec.items()) keys.insert(key);
+						for (const auto& [key, value] : ac.items()) keys.insert(key);
+						for (const std::string& key : keys) {
+							if (i == 0 && (key == "transform" || key == "prefab")) {
+								continue;
+							}
+							const bool inE = ec.contains(key), inA = ac.contains(key);
+							if (!inE) {
+								overrides[path + "|" + key] = ac.at(key).dump();
+							}
+							else if (!inA) {
+								overrides[path + "|" + key] = "null";
+							}
+							else if (ec.at(key).is_object() && ac.at(key).is_object()) {
+								std::set<std::string> fields;
+								for (const auto& [field, value] : ec.at(key).items()) fields.insert(field);
+								for (const auto& [field, value] : ac.at(key).items()) fields.insert(field);
+								for (const std::string& field : fields) {
+									const json* ev = ec.at(key).contains(field) ? &ec.at(key).at(field) : nullptr;
+									const json* av = ac.at(key).contains(field) ? &ac.at(key).at(field) : nullptr;
+									if (!av) {
+										overrides[path + "|" + key + "|" + field] = "null";
+									}
+									else if (!ev || !Same(*ev, *av)) {
+										overrides[path + "|" + key + "|" + field] = av->dump();
+									}
+								}
+							}
+							else if (!Same(ec.at(key), ac.at(key))) {
+								overrides[path + "|" + key] = ac.at(key).dump();
+							}
+						}
+					}
+					return overrides;
+				}
+
+				// The overrides written into a prefab's entity list (before it is made)
+				void ApplyOverrides(json& list, const std::map<std::string, std::string>& overrides) {
+					const std::vector<std::string> paths = EntryPaths(list);
+					for (const auto& [key, text] : overrides) {
+						const size_t bar = key.find('|');
+						if (bar == std::string::npos) continue;
+						const std::string path = key.substr(0, bar);
+						std::string rest = key.substr(bar + 1);
+						const size_t second = rest.find('|');
+						const std::string component = rest.substr(0, second);
+						const std::string field = second == std::string::npos ? std::string() : rest.substr(second + 1);
+						const json value = json::parse(text, nullptr, false);
+						for (size_t i = 0; i < list.size(); i++) {
+							if (paths[i] != path) continue;
+							json& entry = list[i];
+							if (component == "@active") {
+								entry["active"] = value.is_boolean() ? value.get<bool>() : true;
+							}
+							else if (field.empty()) {
+								if (value.is_null()) entry["components"].erase(component);
+								else entry["components"][component] = value;
+							}
+							else {
+								json& c = entry["components"][component];
+								if (!c.is_object()) c = json::object();
+								if (value.is_null()) c.erase(field);
+								else c[field] = value;
+							}
+							break;
+						}
 					}
 				}
 
@@ -648,6 +863,7 @@ namespace Fox {
 					file["treeAssets"] = json::parse(playScene->treeAssets);
 				}
 				else {
+					RefreshPrefabOverrides();
 					TreeAssets assets;
 					treeAssets = &assets;
 					file["entities"] = EntitiesToJson(graph);
@@ -714,6 +930,7 @@ namespace Fox {
 
 			void MainRayTracingScene::TakePlaySnapshot() {
 				auto snapshot = std::make_unique<PlaySnapshot>();
+				RefreshPrefabOverrides();
 				TreeAssets assets;
 				treeAssets = &assets;
 				const json entities = EntitiesToJson(graph);
@@ -833,6 +1050,7 @@ namespace Fox {
 					treeAssets = &assets;
 					EntitiesFromJson(json::parse(snapshot.entities), restored);
 					treeAssets = nullptr;
+					InstantiateAll(restored);
 				}
 				catch (const std::exception& e) {
 					treeAssets = nullptr;
@@ -929,6 +1147,7 @@ namespace Fox {
 							throw;
 						}
 						treeAssets = nullptr;
+						InstantiateAll(newGraph);
 					}
 					else {
 						Version1FromJson(file, newGraph);
@@ -961,6 +1180,380 @@ namespace Fox {
 				structureChanged = true;
 				treesChanged = true;
 				return true;
+			}
+
+			// --- Prefabs ---
+
+			std::shared_ptr<MainRayTracingScene::PrefabAsset> MainRayTracingScene::LoadPrefab(const std::string& file, std::string& error) {
+				std::error_code failed;
+				const auto written = std::filesystem::last_write_time(file, failed);
+				if (failed) {
+					error = "no prefab " + file;
+					return nullptr;
+				}
+				auto found = prefabs.find(file);
+				if (found != prefabs.end() && found->second->written == written) {
+					return found->second;
+				}
+				try {
+					std::ifstream in(file);
+					const json j = json::parse(in, nullptr, true, true);
+					auto asset = std::make_shared<PrefabAsset>();
+					asset->entities = j.value("entities", json::array()).dump();
+					const json trees = j.value("treeAssets", json::array());
+					asset->treeAssets = trees.dump();
+					// Its trees once, for all its instances (instances of the same tree: one geometry)
+					for (const json& tree : trees) {
+						asset->trees.push_back(TreeFromJson(tree));
+					}
+					asset->written = written;
+					prefabs[file] = asset;
+					return asset;
+				}
+				catch (const std::exception& e) {
+					error = file + ": " + e.what();
+					return nullptr;
+				}
+			}
+
+			bool MainRayTracingScene::SavePrefabFile(Entity root, const std::string& file, std::string& error) {
+				TreeAssets assets;
+				treeAssets = &assets;
+				json entities = EntitiesToJson(graph, root);
+				treeAssets = nullptr;
+				// The root's own link is not part of the prefab
+				if (!entities.empty() && entities[0].contains("components")) {
+					entities[0]["components"].erase("prefab");
+					entities[0]["parent"] = -1;
+				}
+				const json content = { { "version", 1 }, { "entities", entities }, { "treeAssets", assets.list } };
+				try {
+					std::filesystem::create_directories(std::filesystem::path(file).parent_path());
+					std::ofstream out(file);
+					if (!out) {
+						error = "Cannot write " + file;
+						return false;
+					}
+					json shortened = content;
+					ShortenFloats(shortened);
+					out << shortened.dump(2) << "\n";
+				}
+				catch (const std::exception& e) {
+					error = file + ": " + e.what();
+					return false;
+				}
+				// Cached with the trees the scene already has, so its instances share them
+				auto asset = std::make_shared<PrefabAsset>();
+				asset->entities = entities.dump();
+				asset->treeAssets = assets.list.dump();
+				asset->trees.resize(assets.list.size());
+				for (Entity e : graph.Subtree(root)) {
+					if (const MeshComponent* mesh = graph.GetRegistry().TryGet<MeshComponent>(e); mesh && mesh->tree) {
+						auto id = assets.ids.find(mesh->tree.get());
+						if (id != assets.ids.end()) {
+							asset->trees[id->second] = mesh->tree;
+						}
+					}
+				}
+				std::error_code failed;
+				asset->written = std::filesystem::last_write_time(file, failed);
+				prefabs[file] = asset;
+				return true;
+			}
+
+			bool MainRayTracingScene::InstantiateInto(Fox::Scene::SceneGraph& target, Entity root, int depth, std::string& error) {
+				const Fox::Scene::PrefabComponent* link = target.GetRegistry().TryGet<Fox::Scene::PrefabComponent>(root);
+				if (!link) {
+					return false;
+				}
+				if (depth > 8) {
+					error = "prefabs inside each other too deep (one contains itself?)";
+					return false;
+				}
+				const auto asset = LoadPrefab(link->file, error);
+				if (!asset) {
+					return false;
+				}
+				json list = json::parse(asset->entities);
+				if (list.empty()) {
+					return true;
+				}
+				ApplyOverrides(list, link->overrides);
+
+				TreeAssets assets;
+				assets.loaded = asset->trees;
+				treeAssets = &assets;
+				std::vector<Entity> created(list.size());
+				created[0] = root;
+				try {
+					for (size_t i = 0; i < list.size(); i++) {
+						const json& entry = list[i];
+						const json components = entry.value("components", json::object());
+						Entity entity = root;
+						if (i > 0) {
+							const int parent = entry.value("parent", -1);
+							const Entity under = parent >= 0 && parent < static_cast<int>(i) ? created[parent] : root;
+							entity = target.CreateEntity(entry.value("name", std::string("Entity")), under);
+							target.SetActive(entity, entry.value("active", true));
+							target.GetRegistry().Remove<TransformComponent>(entity); // Only when listed
+							created[i] = entity;
+						}
+						for (const ComponentSerializer& serializer : COMPONENT_SERIALIZERS) {
+							const std::string key = serializer.key;
+							// The instance keeps its own transform and link
+							if (i == 0 && (key == "transform" || key == "prefab")) {
+								continue;
+							}
+							if (components.contains(key)) {
+								serializer.load(target, entity, components.at(key));
+							}
+						}
+					}
+				}
+				catch (const std::exception& e) {
+					treeAssets = nullptr;
+					error = link->file + ": " + e.what();
+					return false;
+				}
+				treeAssets = nullptr;
+				target.UpdateTransforms();
+
+				// Prefabs inside it fill themselves
+				for (size_t i = 1; i < created.size(); i++) {
+					if (target.GetRegistry().Has<Fox::Scene::PrefabComponent>(created[i])) {
+						std::string inner;
+						if (!InstantiateInto(target, created[i], depth + 1, inner)) {
+							std::cout << "Prefab: " << inner << "\n";
+						}
+					}
+				}
+				return true;
+			}
+
+			void MainRayTracingScene::InstantiateAll(Fox::Scene::SceneGraph& target) {
+				std::vector<Entity> roots;
+				for (Entity entity : target.DepthFirst()) {
+					if (!target.GetRegistry().Has<Fox::Scene::PrefabComponent>(entity)) {
+						continue;
+					}
+					bool nested = false;
+					for (Entity e = target.GetParent(entity); target.IsValid(e); e = target.GetParent(e)) {
+						nested = nested || target.GetRegistry().Has<Fox::Scene::PrefabComponent>(e);
+					}
+					if (!nested) {
+						roots.push_back(entity);
+					}
+				}
+				for (Entity root : roots) {
+					std::string error;
+					if (!InstantiateInto(target, root, 0, error)) {
+						std::cout << "Prefab: " << error << " (" << target.GetName(root) << " stays empty)\n";
+					}
+				}
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::PrefabRootOf(Entity entity) const {
+				for (Entity e = entity; graph.IsValid(e); e = graph.GetParent(e)) {
+					if (graph.GetRegistry().Has<Fox::Scene::PrefabComponent>(e)) {
+						return e;
+					}
+				}
+				return Entity{};
+			}
+
+			std::map<std::string, std::string> MainRayTracingScene::GetPrefabOverrides(Entity root) {
+				const auto* link = graph.GetRegistry().TryGet<Fox::Scene::PrefabComponent>(root);
+				std::string error;
+				const auto asset = link ? LoadPrefab(link->file, error) : nullptr;
+				if (!asset) {
+					return link ? link->overrides : std::map<std::string, std::string>{};
+				}
+				json expected = json::parse(asset->entities);
+				InlineTrees(expected, json::parse(asset->treeAssets));
+				treeAssets = nullptr; // Trees in place
+				const json actual = EntitiesToJson(graph, root);
+				return DiffEntities(expected, actual);
+			}
+
+			void MainRayTracingScene::RefreshPrefabOverrides() {
+				std::vector<Entity> roots;
+				graph.GetRegistry().Each<Fox::Scene::PrefabComponent>([&](Entity entity, Fox::Scene::PrefabComponent&) { roots.push_back(entity); });
+				// Instances inside instances first: the outer ones compare their (fresh) overrides too
+				auto depth = [&](Entity e) {
+					int d = 0;
+					for (Entity p = graph.GetParent(e); graph.IsValid(p); p = graph.GetParent(p)) d++;
+					return d;
+				};
+				std::sort(roots.begin(), roots.end(), [&](Entity a, Entity b) { return depth(a) > depth(b); });
+				for (Entity root : roots) {
+					auto overrides = GetPrefabOverrides(root);
+					graph.GetRegistry().Get<Fox::Scene::PrefabComponent>(root).overrides = std::move(overrides);
+				}
+			}
+
+			namespace {
+				std::string PrefabFileName(const std::string& name) {
+					std::string clean;
+					for (char c : name) {
+						clean += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') ? c : (c == ' ' ? '_' : '\0');
+					}
+					clean.erase(std::remove(clean.begin(), clean.end(), '\0'), clean.end());
+					return clean.empty() ? "Prefab" : clean;
+				}
+			}
+
+			bool MainRayTracingScene::CreatePrefab(Entity root, const std::string& name, std::string& file, std::string& error) {
+				if (!graph.IsValid(root)) {
+					error = "Nothing selected";
+					return false;
+				}
+				const Entity owner = PrefabRootOf(graph.GetParent(root));
+				if (graph.IsValid(owner)) {
+					error = "It is part of the prefab instance " + graph.GetName(owner) + ": unpack that first";
+					return false;
+				}
+				const std::string base = std::string(PREFAB_FOLDER) + "/" + PrefabFileName(name);
+				file = base + ".prefab.json";
+				for (int n = 2; std::filesystem::exists(file); n++) {
+					file = base + "_" + std::to_string(n) + ".prefab.json";
+				}
+				// An instance saved as a new prefab: what it shows now
+				graph.GetRegistry().Remove<Fox::Scene::PrefabComponent>(root);
+				if (!SavePrefabFile(root, file, error)) {
+					return false;
+				}
+				graph.GetRegistry().Add<Fox::Scene::PrefabComponent>(root, Fox::Scene::PrefabComponent{ file, {} });
+				std::cout << "Prefab: saved " << file << "\n";
+				return true;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::InstantiatePrefab(const std::string& file, const glm::vec3& position, Entity parent, std::string& error) {
+				const auto asset = LoadPrefab(file, error);
+				if (!asset) {
+					return Entity{};
+				}
+				const json list = json::parse(asset->entities);
+				const std::string name = !list.empty() ? list[0].value("name", std::string("Prefab")) : std::filesystem::path(file).stem().stem().string();
+				const Entity root = graph.CreateEntity(name, parent);
+				Fox::Scene::Transform transform;
+				if (!list.empty() && list[0].contains("components") && list[0]["components"].contains("transform")) {
+					transform = TransformFromJson(list[0]["components"]["transform"]);
+				}
+				transform.position = position;
+				graph.SetWorldTransform(root, transform);
+				graph.GetRegistry().Add<Fox::Scene::PrefabComponent>(root, Fox::Scene::PrefabComponent{ file, {} });
+				if (!InstantiateInto(graph, root, 0, error)) {
+					graph.DestroyEntity(root);
+					return Entity{};
+				}
+				structureChanged = true;
+				treesChanged = true;
+				return root;
+			}
+
+			void MainRayTracingScene::RebuildPrefabInstance(Entity root, const std::map<std::string, std::string>& overrides) {
+				auto* link = graph.GetRegistry().TryGet<Fox::Scene::PrefabComponent>(root);
+				if (!link) {
+					return;
+				}
+				link->overrides = overrides;
+				// Empty it: what is under it, and its components (but its transform and link)
+				const std::vector<Entity> children = graph.GetChildren(root);
+				for (Entity child : children) {
+					DestroyEntity(child);
+				}
+				auto& registry = graph.GetRegistry();
+				if (registry.Has<MeshComponent>(root)) RemoveMeshComponent(root);
+				if (registry.Has<LightComponent>(root)) RemoveLightComponent(root);
+				if (auto* water = registry.TryGet<Fox::Scene::WaterComponent>(root)) {
+					water->enabled = false;
+					Update(0.0f);
+					registry.Remove<Fox::Scene::WaterComponent>(root);
+				}
+				registry.Remove<Fox::Scene::PhysicsComponent>(root);
+				registry.Remove<Fox::Scene::NavAgentComponent>(root);
+				registry.Remove<Fox::Scene::VolumeComponent>(root);
+				registry.Remove<Fox::Scene::CameraComponent>(root);
+				registry.Remove<Fox::Scene::ScriptComponent>(root);
+
+				std::string error;
+				if (!InstantiateInto(graph, root, 0, error)) {
+					std::cout << "Prefab: " << error << "\n";
+				}
+				structureChanged = true;
+				treesChanged = true;
+			}
+
+			bool MainRayTracingScene::ApplyPrefab(Entity root, std::string& error) {
+				const auto* link = graph.GetRegistry().TryGet<Fox::Scene::PrefabComponent>(root);
+				if (!link) {
+					error = "Not a prefab instance";
+					return false;
+				}
+				const std::string file = link->file;
+				// The other instances keep what they changed from the prefab as it was
+				std::vector<std::pair<Entity, std::map<std::string, std::string>>> others;
+				graph.GetRegistry().Each<Fox::Scene::PrefabComponent>([&](Entity entity, Fox::Scene::PrefabComponent& other) {
+					if (entity != root && other.file == file) {
+						others.emplace_back(entity, std::map<std::string, std::string>{});
+					}
+				});
+				for (auto& [entity, overrides] : others) {
+					overrides = GetPrefabOverrides(entity);
+				}
+
+				graph.GetRegistry().Remove<Fox::Scene::PrefabComponent>(root);
+				const bool saved = SavePrefabFile(root, file, error);
+				graph.GetRegistry().Add<Fox::Scene::PrefabComponent>(root, Fox::Scene::PrefabComponent{ file, {} });
+				if (!saved) {
+					return false;
+				}
+				for (const auto& [entity, overrides] : others) {
+					RebuildPrefabInstance(entity, overrides);
+				}
+				std::cout << "Prefab: applied to " << file << ", " << others.size() << " other instance" << (others.size() == 1 ? "" : "s") << " updated\n";
+				return true;
+			}
+
+			bool MainRayTracingScene::RevertPrefab(Entity root, const std::string& key, std::string& error) {
+				if (!graph.GetRegistry().Has<Fox::Scene::PrefabComponent>(root)) {
+					error = "Not a prefab instance";
+					return false;
+				}
+				auto overrides = GetPrefabOverrides(root);
+				if (key.empty()) {
+					overrides.clear();
+				}
+				else {
+					overrides.erase(key);
+				}
+				RebuildPrefabInstance(root, overrides);
+				return true;
+			}
+
+			void MainRayTracingScene::UnpackPrefab(Entity root) {
+				graph.GetRegistry().Remove<Fox::Scene::PrefabComponent>(root);
+			}
+
+			std::vector<std::string> MainRayTracingScene::ListPrefabs() const {
+				std::vector<std::string> files;
+				std::error_code failed;
+				for (const auto& entry : std::filesystem::directory_iterator(PREFAB_FOLDER, failed)) {
+					const std::string name = entry.path().filename().string();
+					if (name.size() > 12 && name.substr(name.size() - 12) == ".prefab.json") {
+						files.push_back(std::string(PREFAB_FOLDER) + "/" + name);
+					}
+				}
+				std::sort(files.begin(), files.end());
+				return files;
+			}
+
+			size_t MainRayTracingScene::CountPrefabInstances(const std::string& file) const {
+				size_t count = 0;
+				graph.GetRegistry().Each<Fox::Scene::PrefabComponent>([&](Entity, const Fox::Scene::PrefabComponent& link) {
+					count += link.file == file ? 1 : 0;
+				});
+				return count;
 			}
 		}
 	}

@@ -21,6 +21,7 @@
 //   VolumeComponent     it is a volume of smoke (or glowing haze) that light scatters in (Shaders/volumes.slang)
 //   CameraComponent     the game looks through it while it plays (it looks along its -Z axis)
 //   ScriptComponent     C# scripts run on it while the game plays (Scripts/*.cs, see Scripting/ScriptHost.h)
+//   PrefabComponent     it is an instance of a prefab (Prefabs/*.prefab.json): what is under it comes from there
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -286,6 +287,20 @@ namespace Fox {
 			bool enabled = true;
 			float fov = 60.0f; // Vertical, degrees
 			int priority = 0;
+		};
+
+		// The entity is an instance of a prefab: an entity tree saved in a file (Prefabs/*.prefab.json), placed any
+		// number of times. Its components and everything under it come from the prefab, with this instance's own
+		// changes on top (overrides): changing the prefab changes every instance, except where an instance has
+		// changed something itself. Its transform and name are its own.
+		//
+		// Overrides are found by comparing the instance with its prefab (MainRayTracingScene::GetPrefabOverrides);
+		// they are kept here (when the scene is saved) as JSON text by key: "path|component|field", where path names
+		// the entity under the instance ("" for itself, "Wheel/Hub" below it), "@active" in place of a component is
+		// whether it is active, and a key without a field is a whole component added (or removed: null).
+		struct PrefabComponent {
+			std::string file;
+			std::map<std::string, std::string> overrides;
 		};
 
 		// C# scripts on the entity (classes deriving from Fox.Script in Scripts/*.cs): while the game plays each gets

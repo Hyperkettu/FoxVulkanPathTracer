@@ -201,6 +201,27 @@ namespace Fox {
                 // A new entity with a CameraComponent, looking from position along forward
                 Entity AddGameCamera(const glm::vec3& position, const glm::vec3& forward, float fovDegrees);
 
+                // --- Prefabs (PrefabComponent): entity trees saved in Prefabs/*.prefab.json, placed many times ---
+                static constexpr const char* PREFAB_FOLDER = "Prefabs";
+                // Saves the entity and everything under it as a new prefab (file receives its path) and makes the
+                // entity an instance of it
+                bool CreatePrefab(Entity root, const std::string& name, std::string& file, std::string& error);
+                // A new instance of a prefab at position (under parent, or a root)
+                Entity InstantiatePrefab(const std::string& file, const glm::vec3& position, Entity parent, std::string& error);
+                // The instance the entity belongs to: itself or its nearest ancestor with a PrefabComponent (null: none)
+                Entity PrefabRootOf(Entity entity) const;
+                // What the instance changes from its prefab, by key (see PrefabComponent), as JSON text
+                std::map<std::string, std::string> GetPrefabOverrides(Entity root);
+                // The instance as it is becomes the prefab; every other instance updates, keeping its own overrides
+                bool ApplyPrefab(Entity root, std::string& error);
+                // Back to the prefab: one override (key), or all of them (empty key)
+                bool RevertPrefab(Entity root, const std::string& key, std::string& error);
+                // No longer an instance: what is under it stays, as ordinary entities
+                void UnpackPrefab(Entity root);
+                // The prefab files (Prefabs/*.prefab.json), and how many instances of one the scene has
+                std::vector<std::string> ListPrefabs() const;
+                size_t CountPrefabInstances(const std::string& file) const;
+
                 // --- Scripts (ScriptComponent): C# in Scripts/*.cs, run while the game plays (Scripting/ScriptHost.h) ---
                 // Off (null) when .NET or the scripting host is not there
                 Fox::Scripting::ScriptHost* GetScripts() { return scripts && scripts->IsReady() ? scripts.get() : nullptr; }
@@ -329,6 +350,25 @@ namespace Fox {
                     uint32_t droplets = 0;
                 };
                 std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
+
+                // Prefabs: loaded files (kept until they change on disk; their trees shared by all instances)
+                struct PrefabAsset {
+                    std::string entities;    // JSON list, as in a scene file
+                    std::string treeAssets;  // JSON list
+                    std::vector<std::shared_ptr<Tree>> trees;
+                    std::filesystem::file_time_type written{};
+                };
+                std::map<std::string, std::shared_ptr<PrefabAsset>> prefabs;
+                std::shared_ptr<PrefabAsset> LoadPrefab(const std::string& file, std::string& error);
+                bool SavePrefabFile(Entity root, const std::string& file, std::string& error);
+                // Fills an instance (in graph, which may not be the scene's yet): its components and what is under it
+                bool InstantiateInto(Fox::Scene::SceneGraph& target, Entity root, int depth, std::string& error);
+                // Every instance in the graph whose ancestors are not instances (they fill their own)
+                void InstantiateAll(Fox::Scene::SceneGraph& target);
+                // Empties an instance and fills it again from its prefab with these overrides
+                void RebuildPrefabInstance(Entity root, const std::map<std::string, std::string>& overrides);
+                // Every instance's overrides from how it is now (before the scene is saved)
+                void RefreshPrefabOverrides();
 
                 // Scripts: the host, and which running script belongs to which entity
                 friend struct ScriptBindings;
