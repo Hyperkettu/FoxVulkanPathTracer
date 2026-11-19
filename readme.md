@@ -187,6 +187,22 @@ Wind (`Animation/WindSkeleton`) treats every joint as an angular spring:
 Settings such as wind speed, gust strength, damping and response are in `WindSkeleton::Settings`; tree shape in
 `TreeSettings`.
 
+**Growing.** A tree can grow from a sprout (`Animation::TreeGrowth`, Trees window > Growth). It grows through the same
+rig the wind moves:
+
+* **Branches:** a growth front moves out from the root along the bones at a constant speed. Each bone scales up from
+  its base as the front passes it, lengthening and thickening, and carries its subtree with it. So the trunk rises,
+  and branches sprout where the front has been and reach out.
+* **Size:** meanwhile the whole tree enlarges from **Sprout size** to its full size.
+* **Leaves:** each leaf card unfolds from its stem, scaled about it in the skinning shader, when a second front
+  reaches it. That front follows the branches by **Leaves follow by** (a fraction of the tree). The generator stores
+  each leaf vertex's stem and its distance along the tree (`SkinnedMesh::growth`).
+
+The geometry is generated once: growing costs no more than the wind. The wind keeps blowing while it grows.
+**Duration** is from sprout to fully grown. **Loop** starts again once grown, the **Grown** slider scrubs (and
+pauses), and **Play** / **Restart** run it. Play mode (`F5`) grows every growing tree from the start. Instances of a
+tree grow together, and the growth settings are saved with the tree.
+
 The bark uses every texture in `Textures/bark`:
 
 | Texture | Use |
@@ -223,6 +239,7 @@ In edit mode (`E`) the **Trees** window lists the scene's trees.
 | Bark relief | Displacement depth, texture size, triangle size for the relief, radius below which branches stay smooth |
 | Materials | Bark and leaf textures of **this tree**, chosen from the images under `Textures/`, plus tint, roughness, alpha cutoff |
 | Wind | Direction, speed, gusts, flutter, response, damping, sway frequencies, maximum bend (takes effect immediately) |
+| Growth | Grows (from a sprout), how far grown (scrub), play / pause / restart, loop, duration, sprout size, how far the leaves lag |
 
 **Cross-section.** The trunk's rings follow a closed Catmull-Rom spline instead of a circle:
 
@@ -391,12 +408,94 @@ Limits: a vertical wave front cannot break (the equations have one height per po
 instead), spray does not collide with objects, and light refracted through the surface is not focused into caustics on
 the bed.
 
+### Volumetrics: fog, clouds and smoke
+
+The path tracer scatters light in participating media (`Shaders/volumes.slang`). They are lit by the sun, the lamps
+and the sky, shade what is behind them, and cast shadows:
+
+* **Fog** (Environment window, or **Create > Effects > Fog**): height fog, thickest at its **Base height** and
+  thinning exponentially above it (**Height falloff**). Its optical depth along a ray has a closed form, so where a
+  ray meets it is sampled exactly, and fog costs no marching.
+* **Clouds** (Environment window, or **Create > Effects > Clouds**): a layer of the sky between **Bottom** and
+  **Top**, shaped by noise that drifts with the **Wind**. **Coverage** sets how much of the sky they fill. They shade
+  the ground (**Cast shadows**).
+* **Smoke** (**Create > Effects > Smoke** and **Glowing Smoke**, or a **Volume** component on any entity): a puff (or
+  box) of **Size** metres, turned and scaled with its entity. Noise eats ragged edges, wisps and gaps into it, and
+  drifts through it (**Drift**: rising smoke). It can glow (**Glow**: fire, embers), lighting what is around it
+  through the paths that meet it. At most 8 render at a time; the selected one shows its box.
+
+How it works:
+
+* **Finding the media:** on every path segment the media are sampled for where the ray first meets them, each on its
+  own, and the nearest wins. Fog is sampled analytically. Clouds and smoke are marched in a fixed number of jittered
+  steps (fewer on later bounces and for shadow rays). Empty sky is skipped after the clouds' first noise octave.
+* **Scattering:** where a path meets a medium it scatters (Henyey-Greenstein, forward scattering set per medium).
+  Light is sampled there as at a surface, with the phase function in place of a BSDF and shadow rays that pass
+  through the media. Colour is the single scattering albedo: white scatters, dark absorbs.
+* **Multiple scattering in clouds:** paths stop after a few volume bounces, which would leave the inside of thick
+  clouds black. So light reaching a point in a cloud sums octaves of weaker extinction and wider scattering (as in
+  Wrenninge et al., "Oz: the great and volumetric").
+* **Fog bounces:** fog scatters on once; after that only its direct light is gathered.
+* **Denoising:** clouds, smoke and dense fog seen against the sky are described to the denoiser as a surface where
+  they begin, with their opacity along the ray as its albedo. The light in them is smoothed, and their edges and
+  wisps stay sharp.
+
+Media are grey (the same extinction for every colour), and smoke volumes do not act as light sources for light
+sampling (glow is found only by the paths). The cost depends on how much of the view they fill. Measured at 1280 x 840
+on a laptop RTX 3070 (the trace pass, before the GPU heated up and throttled): 7 ms without media, about 15 ms with
+fog everywhere, 20 to 26 ms with clouds.
+
+### Play mode
+
+**Play** (`F5`, the toolbar above the view, or the **Play** menu) runs the game on a copy of the scene. **Stop** puts
+the scene back exactly as it was when play started, whatever the game or you did meanwhile.
+
+**Game time** drives everything that moves while it plays: physics, agents, growing trees, water, wind, and the drift
+of clouds and smoke.
+
+* **Pause** (`F6`) freezes it.
+* **Step** (`F7`) advances one frame of 1/60 s, paused.
+* **Speed** (the toolbar's slider, or **Play > Speed**) runs it from a standstill to 16 times as fast.
+* A long frame (a hitch, a breakpoint) counts as at most 0.1 s, so nothing tunnels or explodes after it.
+
+The toolbar shows the game time and frame.
+
+**Systems run in a fixed order** every frame (`MainRayTracingScene::Update`):
+
+1. Transforms
+2. Agents
+3. Physics (fixed 1/60 s steps)
+4. The renderer's copy of meshes, lights and water
+5. Animation (water simulation, wind, growth)
+
+Entities given a Physics component while it plays (created by hand, or by the game later) join the simulation at once.
+
+**Game camera.** An entity with a **Camera** component (**Create > Game Camera** makes one where the view is, looking
+the same way) is what the game looks through while it plays. It looks along its -Z axis, with its own field of view;
+of several, the enabled one with the highest **Priority** wins.
+
+* **Free camera** (`F8`, or the toolbar's camera button) lets go of it, to fly around the running game, and `F8` takes
+  it again.
+* Stopping returns the editor's view to where it was before play.
+* The selected camera shows where it looks.
+
+**The copy.** When play starts, the scene is saved in memory (the same JSON as a scene file) along with every
+component's values. When it stops:
+
+* **Quick restore:** if the same entities are there with the same kinds of components, every value goes back in
+  place: transforms, names, physics, agents, lights, water settings, smoke, cameras, whether meshes show. Instant.
+* **Full restore:** otherwise (entities created or deleted, meshes changed, anything that rebuilt the scene), the
+  whole scene is restored from the saved copy, with one rebuild (about a second). Its trees are the same trees, so
+  they are not generated again.
+
+Saving while it plays saves the scene as it was when play started; loading a scene stops play without restoring.
+
 ### Physics
 
 Rigid bodies with [Jolt Physics](https://github.com/jrouwe/JoltPhysics) (v5.3.0, MIT, vendored in
 `ThirdParty/JoltPhysics`; `Scene/Physics` keeps its headers to itself). Give an entity a **Physics** component
 (Inspector > Add Component, or **Physics > Add Body to Selection**), or make one from **Create > Physics** (a ball, a
-metre box), then **Physics > Play** (`F5`). Bodies fall, collide and come to rest; their entities' transforms follow,
+metre box), then **Play** (`F5`, see *Play mode*). Bodies fall, collide and come to rest; their entities' transforms follow,
 and everything rendered with them moves as the gizmos would move it. `F5` again stops, and every entity goes back
 where it was. Saving while it plays saves the scene as it was before; loading a scene stops it.
 
@@ -564,6 +663,8 @@ entity-component system whose registry keeps each component type in a packed arr
 | Water | A body of water, simulated and refracting (see *Water*) |
 | Physics | A rigid body, simulated while physics plays (see *Physics*) |
 | Nav Agent | It walks over the ground to a target on a path found with A* (see *Navigation*) |
+| Volume | A puff or box of smoke that light scatters in, optionally glowing (see *Volumetrics*) |
+| Camera | The game looks through it while it plays (see *Play mode*) |
 
 Every scene starts with a **Sun** entity (a directional light): turn it to move the sun, or use the light's
 **Direction** and **Elevation**. Its **Size** (apparent radius in degrees) softens the shadows; a point or spot
@@ -729,7 +830,10 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `V` | Toggle vsync |
 | `T` | Toggle fullscreen (exclusive, at the desktop resolution) |
 | `P` | Fly the active camera path, or stop (see *Camera paths*) |
-| `F5` | Play physics and agents, or stop (everything goes back where it was; see *Physics*) |
+| `F5` | Play, or stop (the scene goes back as it was; see *Play mode*) |
+| `F6` | Pause or resume game time (playing) |
+| `F7` | Step one frame (playing; pauses) |
+| `F8` | Free camera, or back to the game's camera (playing) |
 | `Shift` + click (edit mode) | Send the selected agent there (see *Navigation*) |
 | `E` | Edit mode: select, move, rotate and scale objects, the Scene, Trees and Camera windows (see *Editing the scene*, *Scene files*, *Camera paths*, *Tree editor*) |
 | `Esc` | Quit |

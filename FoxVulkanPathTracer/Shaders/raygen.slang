@@ -14,6 +14,8 @@
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
 [[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
 
+#include "volumes.slang"
+
 // G-buffer of the current frame, consumed by the denoiser (see GBuffer.h for the exact contents)
 [[vk::binding(1, 0)]]  [[vk::image_format("rgba16f")]] RWTexture2D<float4> gRadiance;
 [[vk::binding(8, 0)]]  [[vk::image_format("rgba16f")]] RWTexture2D<float4> gAlbedo;
@@ -40,6 +42,9 @@ static const int ROULETTE_START_BOUNCE = 1;
 // Mirror reflections and refractions do not count as bounces, up to this many: light reaching a
 // surface through a glass ball has crossed two of them, and inside glass it may reflect a few times
 static const int MAX_DELTA_EVENTS = 6;
+
+// Scattering in fog, clouds and smoke, on top of the surface bounces: clouds need several to look bright
+static const int MAX_VOLUME_BOUNCES = 4;
 
 // See EnvironmentSelectionProbability()
 static const float ENVIRONMENT_LIGHT_PROBABILITY = 0.5f;
@@ -279,12 +284,69 @@ float3 DirectLighting(Surface surface, float3 position, float3 geometricNormal, 
     if (MaxComponent(bsdf * radiance) <= 0.0f)
         return float3(0.0f);
 
-    float3 transmittance = ShadowTransmittance(OffsetRayOrigin(position, geometricNormal, L), L, distance, !isEnvironment);
+    float3 shadowOrigin = OffsetRayOrigin(position, geometricNormal, L);
+    float3 transmittance = ShadowTransmittance(shadowOrigin, L, distance, !isEnvironment);
     if (MaxComponent(transmittance) <= 0.0f)
         return float3(0.0f);
+    if (VolumesOn())
+        // Cloud shadows from the sun and lamps; light from the sky is not marched through the clouds (too costly
+        // for what it adds: the sky dims a little under them)
+        transmittance *= MediaTransmittance(shadowOrigin, L, distance, camera.cloudShadows != 0 && !isEnvironment, rng);
 
     float weight = isDelta ? 1.0f : PowerHeuristic(lightPdf, bsdfPdf);
     return bsdf * radiance * transmittance * (weight / lightPdf);
+}
+
+// Light arriving at a point in fog, clouds or smoke directly from the light sources, scattered on along the
+// direction travelled (the phase function in place of a BSDF). One light sample, as DirectLighting.
+float3 DirectLightingInMedium(float3 position, float3 travel, float g, bool inCloud, inout uint rng)
+{
+    const float environmentProbability = EnvironmentSelectionProbability();
+
+    float3 L;
+    float distance;
+    float3 radiance;
+    float lightPdf;
+    bool isDelta = false;
+    bool isEnvironment = false;
+
+    if (NextRandomFloat(rng) < environmentProbability)
+    {
+        float environmentPdf;
+        L = SampleEnvironment(rng, environmentPdf);
+        if (environmentPdf <= 0.0f)
+            return float3(0.0f);
+        distance = RAY_MAX_DISTANCE;
+        radiance = EnvironmentRadiance(L);
+        lightPdf = environmentPdf * environmentProbability;
+        isEnvironment = true;
+    }
+    else
+    {
+        LightSample light = SampleLight(position, camera.lightCount, rng);
+        if (!light.valid)
+            return float3(0.0f);
+        L = light.L;
+        distance = light.distance * (1.0f - 1e-3f) - RAY_OFFSET;
+        radiance = light.radiance;
+        lightPdf = light.pdf * (1.0f - environmentProbability);
+        isDelta = light.isDelta;
+    }
+
+    float phase = PhaseHG(dot(travel, L), g);
+    if (MaxComponent(radiance) * phase <= 0.0f)
+        return float3(0.0f);
+
+    float3 transmittance = ShadowTransmittance(position, L, distance, !isEnvironment);
+    if (MaxComponent(transmittance) <= 0.0f)
+        return float3(0.0f);
+    float2 depth = MediaOpticalDepth(position, L, distance, true, rng);
+    // In a cloud: the light its many scattering events would bring (the path itself stops after a few)
+    float scattered = inCloud ? CloudMultipleScattering(depth.x, dot(travel, L), g) : exp(-depth.x) * phase;
+    transmittance *= exp(-depth.y);
+
+    float weight = isDelta ? 1.0f : PowerHeuristic(lightPdf, phase);
+    return radiance * transmittance * (scattered * weight / lightPdf);
 }
 
 float3 ClampIndirect(float3 radiance)
@@ -307,11 +369,57 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
 
     float3 mediumAbsorption = float3(0.0f); // Inside a solid: its absorption per meter
 
-    // bounce counts diffuse and glossy scattering; mirror reflections and refractions are extra
+    // bounce counts diffuse and glossy scattering; mirror reflections and refractions are extra, and so is
+    // scattering in the media
     int bounce = 0;
-    for (int segment = 0; segment <= MAX_BOUNCES + MAX_DELTA_EVENTS; segment++)
+    int volumeBounce = 0;
+    const bool media = VolumesOn();
+    for (int segment = 0; segment <= MAX_BOUNCES + MAX_DELTA_EVENTS + MAX_VOLUME_BOUNCES; segment++)
     {
         HitPayload hit = (segment == 0 && hasFirstHit) ? firstHit : TraceSurface(origin, direction, segment > 0);
+
+        // --- Fog, clouds, smoke: scattered on the way to the surface (or out of the scene)? ---
+        if (media)
+        {
+            MediumHit medium = SampleMedia(origin, direction, hit.hitT < 0.0f ? VOLUME_FAR : hit.hitT, bounce + volumeBounce > 1, rng);
+            if (medium.valid)
+            {
+                throughput *= exp(-mediumAbsorption * medium.t);
+                float3 position = origin + direction * medium.t;
+
+                // Glowing smoke gives off its light where the path meets it
+                float3 glow = throughput * medium.emission;
+                radiance += isIndirect ? ClampIndirect(glow) : glow;
+
+                if (volumeBounce == MAX_VOLUME_BOUNCES)
+                    break;
+                volumeBounce++;
+
+                throughput *= medium.albedo;
+                float3 direct = throughput * DirectLightingInMedium(position, direction, medium.g, medium.kind == MEDIUM_CLOUD, rng);
+                radiance += isIndirect ? ClampIndirect(direct) : direct;
+
+                // Fog scatters on once; after that only its direct light is gathered (more adds little light to
+                // thin fog, and nearly every ray meets fog)
+                if (medium.kind == MEDIUM_FOG && isIndirect)
+                    break;
+
+                float phasePdf;
+                float3 next = SamplePhaseHG(direction, medium.g, NextRandomFloat2(rng), phasePdf);
+                // Sampled in proportion to the phase function: the weight is 1
+                bsdfPdf = phasePdf;
+                sampledDelta = false;
+                isIndirect = true;
+                origin = position;
+                direction = next;
+
+                float survival = clamp(MaxComponent(throughput), 0.05f, 0.95f);
+                if (NextRandomFloat(rng) >= survival)
+                    break;
+                throughput /= survival;
+                continue;
+            }
+        }
 
         // --- Left the scene: environment ---
         if (hit.hitT < 0.0f)
@@ -556,6 +664,53 @@ void main()
     HitPayload primaryHit = TraceSurface(camera.camPos, primaryDirection);
 
     PrimarySurface primary = FindPrimarySurface(camera.camPos, primaryDirection, primaryHit);
+
+    // Clouds, smoke or thick fog where there is only sky: sky is not denoised, but light scattered in them is
+    // noisy. Described to the denoiser as a surface facing the camera where they begin, its albedo their opacity
+    // along the ray: the denoiser smooths the light in them and multiplies the opacity back in, so their wisps
+    // and edges stay sharp.
+    if (primary.distance < 0.0f && VolumesOn())
+    {
+        float cloudStart = -1.0f;
+        float opticalDepth = 0.0f;
+        float t0, t1, depth;
+        if (CloudInterval(camera.camPos, primaryDirection, VOLUME_FAR, t0, t1))
+        {
+            float t = March(-1, camera.camPos, primaryDirection, t0, t1, 16, 1e30f, 0.5f, depth);
+            opticalDepth += depth;
+            if (depth > 0.03f)
+            {
+                cloudStart = March(-1, camera.camPos, primaryDirection, t0, t1, 16, 0.03f, 0.5f, depth);
+            }
+        }
+        for (uint v = 0; v < camera.volumeCount; v++)
+        {
+            if (VolumeInterval(camera.volumes[v], camera.camPos, primaryDirection, VOLUME_FAR, t0, t1))
+            {
+                March(int(v), camera.camPos, primaryDirection, t0, t1, 8, 1e30f, 0.5f, depth);
+                opticalDepth += depth;
+                float t = depth > 0.03f ? March(int(v), camera.camPos, primaryDirection, t0, t1, 8, 0.03f, 0.5f, depth) : -1.0f;
+                if (t >= 0.0f && (cloudStart < 0.0f || t < cloudStart))
+                    cloudStart = t;
+            }
+        }
+        float fogStart = -1.0f;
+        if (FogOn())
+        {
+            fogStart = FogCollision(camera.camPos, primaryDirection, 0.05f);
+            opticalDepth += FogOpticalDepth(camera.camPos, primaryDirection, VOLUME_FAR);
+        }
+        float start = cloudStart >= 0.0f && (fogStart < 0.0f || cloudStart < fogStart) ? cloudStart : fogStart;
+        if (start >= 0.0f && start < VOLUME_FAR)
+        {
+            primary.distance = start;
+            primary.normal = -primaryDirection;
+            primary.diffuseAlbedo = float3(max(1.0f - exp(-opticalDepth), 0.05f));
+            primary.specularAlbedo = float3(0.0f);
+            primary.roughness = 1.0f;
+            primary.isFirstHit = false;
+        }
+    }
     bool isSky = primary.distance < 0.0f;
 
     // Motion vector: the scene is static, so only the camera moves. The sky is treated as infinitely

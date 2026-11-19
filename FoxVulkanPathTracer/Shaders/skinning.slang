@@ -21,6 +21,7 @@ struct SkinVertex
     float4 tangent;   // xyz + handedness
     uint4 joints;
     float4 weights;
+    float4 growth;    // A leaf: xyz its stem, w 1 + its distance along the tree; w 0: grows with its bones only
 };
 
 // Mirrors RayTracingScene::JointMatrix: pose * inverse(bind), 3x4 row major
@@ -35,6 +36,9 @@ struct SkinningConstants
     uint vertexCount;
     uint firstSkinVertex; // In gBindPose and gPreviousPositions
     uint firstJoint;
+    float leafFront;  // Leaves whose stem is less than this far along the tree have unfolded...
+    float leafSpan;   // ...over this distance (metres)
+    float pad0, pad1;
 };
 
 [[vk::binding(0, 0)]] StructuredBuffer<SkinVertex> gBindPose;
@@ -65,9 +69,20 @@ void main(uint3 id : SV_DispatchThreadID)
                   + JointTransform(bind.joints.z) * bind.weights.z
                   + JointTransform(bind.joints.w) * bind.weights.w;
 
-    // Joints only rotate and translate (rigid bones), so normals transform like directions
-    float3 position = mul(skin, float4(bind.position.xyz, 1.0f));
-    float3 normal = normalize(mul(skin, float4(bind.normal.xyz, 0.0f)));
+    // A growing leaf unfolds from its stem: its card scaled about it (all of it at the stem until its turn)
+    float3 bindPosition = bind.position.xyz;
+    if (bind.growth.w > 0.0f)
+    {
+        float grown = saturate((constants.leafFront - (bind.growth.w - 1.0f)) / constants.leafSpan);
+        grown = grown * grown * (3.0f - 2.0f * grown);
+        bindPosition = bind.growth.xyz + (bindPosition - bind.growth.xyz) * grown;
+    }
+
+    // Joints rotate, translate and (growing trees) scale uniformly, so normals transform like directions. A bone
+    // not grown yet has scale 0: its vertices collapse and keep their bind normal.
+    float3 position = mul(skin, float4(bindPosition, 1.0f));
+    float3 skinnedNormal = mul(skin, float4(bind.normal.xyz, 0.0f));
+    float3 normal = dot(skinnedNormal, skinnedNormal) > 1e-24f ? normalize(skinnedNormal) : bind.normal.xyz;
     float3 tangent = mul(skin, float4(bind.tangent.xyz, 0.0f));
     tangent = dot(tangent, tangent) > 1e-12f ? normalize(tangent) : tangent;
 

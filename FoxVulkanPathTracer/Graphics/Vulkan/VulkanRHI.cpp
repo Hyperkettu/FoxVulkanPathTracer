@@ -843,6 +843,7 @@ namespace Fox {
 
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				raytracingScene->Update(deltaTime);
+				FollowGameCamera();
 				// Entities moved, shown or hidden from the editor windows (the gizmos say so while dragging)
 				sceneChanged = raytracingScene->TakeObjectsChanged() || sceneChanged;
 
@@ -901,6 +902,10 @@ namespace Fox {
 					key(SDL_SCANCODE_R) - key(SDL_SCANCODE_F),
 					key(SDL_SCANCODE_W) - key(SDL_SCANCODE_S));
 
+				if (LooksThroughGameCamera()) {
+					return; // The game's camera places it (FollowGameCamera)
+				}
+
 				// Free flight, or along the camera path while it plays
 				auto& cameraManager = raytracingScene->GetCameraManager();
 				const bool wasPlaying = cameraManager.IsPlaying();
@@ -950,7 +955,8 @@ namespace Fox {
 				cam.pickPixel = glm::ivec2(-1, -1);
 				cam.pickSlot = currentFrame;
 				shaderTime += deltaTime;
-				cam.time = shaderTime;
+				cam.time = raytracingScene->GetAnimationTime();
+				raytracingScene->FillVolumeConstants(cam);
 				if (pickRequested) {
 					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
 					cam.pickPixel = glm::ivec2(pickMouse / display * glm::vec2(extent.width, extent.height));
@@ -1344,6 +1350,54 @@ namespace Fox {
 				UpdateWindowTitle(0.0f);
 			}
 
+			// ------------------------------------------------------------------------------------------------------
+			// Play mode
+			// ------------------------------------------------------------------------------------------------------
+
+			void VulkanRHI::TogglePlay() {
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+				if (raytracingScene->IsPlaying()) {
+					raytracingScene->StopPlay();
+					// Back where the editor was looking from
+					camera->SetPosition(editorView.position);
+					camera->SetCameraTarget(editorView.position + editorView.forward);
+					camera->SetFov(editorView.fov);
+				}
+				else {
+					editorView.position = camera->GetPosition();
+					editorView.forward = camera->GetForward();
+					editorView.fov = camera->GetFov();
+					std::string error;
+					if (!raytracingScene->StartPlay(error)) {
+						std::cout << "Play: " << error << "\n";
+					}
+				}
+				cameraEjected = false;
+				ResetHistory();
+				UpdateWindowTitle(0.0f);
+			}
+
+			bool VulkanRHI::LooksThroughGameCamera() const {
+				return raytracingScene && raytracingScene->IsPlaying() && !cameraEjected && raytracingScene->FindGameCamera();
+			}
+
+			void VulkanRHI::FollowGameCamera() {
+				if (!LooksThroughGameCamera()) {
+					return;
+				}
+				const auto entity = raytracingScene->FindGameCamera();
+				const auto& graph = raytracingScene->GetSceneGraph();
+				const glm::mat4 world = graph.GetWorldMatrix(entity);
+				const glm::vec3 position(world[3]);
+				glm::vec3 forward = -glm::vec3(world[2]);
+				forward = glm::dot(forward, forward) > 1e-12f ? glm::normalize(forward) : glm::vec3(0.0f, 0.0f, -1.0f);
+				auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+				camera->SetPosition(position);
+				camera->SetCameraTarget(position + forward);
+				const auto* component = graph.GetRegistry().TryGet<Fox::Scene::CameraComponent>(entity);
+				camera->SetFov(glm::radians(glm::clamp(component ? component->fov : 60.0f, 5.0f, 170.0f)));
+			}
+
 			void VulkanRHI::RegisterInput(Fox::Input::InputManager& input) {
 				inputManager = &input;
 
@@ -1353,7 +1407,7 @@ namespace Fox {
 					// Looking around: always outside edit mode, with the right mouse button held inside it
 					// Not while the camera flies its path
 					const bool look = (inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT)))
-						&& !raytracingScene->GetCameraManager().IsPlaying();
+						&& !raytracingScene->GetCameraManager().IsPlaying() && !LooksThroughGameCamera();
 					if (look) {
 						Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(
 							static_cast<float>(dx) * mouseSensitivity, -static_cast<float>(dy) * mouseSensitivity);
@@ -1438,22 +1492,28 @@ namespace Fox {
 					}
 					break;
 
-				// Fly the active camera path, or stop
-				// Physics: play, or stop (everything goes back where it was)
-				case SDL_SCANCODE_F5: {
-					if (raytracingScene->IsPhysicsPlaying()) {
-						raytracingScene->StopPhysics();
-					}
-					else {
-						std::string error;
-						raytracingScene->StartPhysics(error);
-						if (!error.empty()) {
-							std::cout << "Physics: " << error << "\n";
-						}
-					}
-					ResetHistory();
+				// Play mode: play or stop (everything goes back as it was), pause, step a frame, the game's camera
+				case SDL_SCANCODE_F5:
+					TogglePlay();
 					break;
-				}
+				case SDL_SCANCODE_F6:
+					if (raytracingScene->IsPlaying()) {
+						raytracingScene->SetPaused(!raytracingScene->GetClock().paused);
+						std::cout << (raytracingScene->GetClock().paused ? "Play: paused\n" : "Play: resumed\n");
+					}
+					break;
+				case SDL_SCANCODE_F7:
+					if (raytracingScene->IsPlaying()) {
+						raytracingScene->StepFrame();
+					}
+					break;
+				case SDL_SCANCODE_F8:
+					if (raytracingScene->IsPlaying()) {
+						cameraEjected = !cameraEjected;
+						std::cout << (cameraEjected ? "Play: free camera (F8 looks through the game's camera again)\n" : "Play: the game's camera\n");
+						ResetHistory();
+					}
+					break;
 
 				case SDL_SCANCODE_P: {
 					auto& cameraManager = raytracingScene->GetCameraManager();

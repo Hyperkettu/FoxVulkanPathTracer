@@ -45,6 +45,12 @@ namespace Fox {
 			Fox::Graphics::Geometry::TreeSettings shape; // Its height maps come from the look
 			TreeLook look;
 			Fox::Animation::WindSkeleton::Settings wind;
+			Fox::Animation::TreeGrowth growth;
+			float growthTime = 0.0f;   // Seconds grown (while growth is on)
+			bool growthPaused = false;
+			float GrowthProgress() const {
+				return growth.enabled ? glm::clamp(growthTime / std::max(growth.duration, 0.01f), 0.0f, 1.0f) : 1.0f;
+			}
 
 			// Set by the scene
 			bool regenerate = true; // The shape (or a texture the geometry depends on) changed
@@ -61,6 +67,7 @@ namespace Fox {
 				copy->shape = shape;
 				copy->look = look;
 				copy->wind = wind;
+				copy->growth = growth;
 				return copy;
 			}
 		};

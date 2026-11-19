@@ -77,6 +77,40 @@ namespace Fox {
 			changed |= ImGui::ColorEdit3("Ground colour", &environment.groundMaterial.color.x);
 			changed |= ImGui::SliderFloat("Ground roughness", &environment.groundMaterial.roughness, 0.0f, 1.0f, "%.2f");
 
+			// Fog and clouds: live, no rebuild
+			ImGui::SeparatorText("Fog");
+			auto& fog = environment.fog;
+			ImGui::Checkbox("Fog", &fog.enabled);
+			if (fog.enabled) {
+				ImGui::DragFloat("Fog density", &fog.density, 0.0005f, 0.0f, 2.0f, "%.4f /m");
+				ImGui::SetItemTooltip("Extinction per metre at the base height: about 3 / density metres of visibility");
+				ImGui::DragFloat("Height falloff", &fog.falloff, 0.001f, 0.0f, 5.0f, "%.3f /m");
+				ImGui::SetItemTooltip("How fast it thins upwards: halves every 0.69 / falloff metres (0: even everywhere)");
+				ImGui::DragFloat("Base height", &fog.baseHeight, 0.1f, -1000.0f, 10000.0f, "%.1f m");
+				ImGui::ColorEdit3("Fog colour", &fog.color.x);
+				ImGui::SetItemTooltip("What it scatters (the rest it absorbs): white fog is bright, grey fog is murky");
+				ImGui::SliderFloat("Fog forward scattering", &fog.anisotropy, -0.9f, 0.95f, "%.2f");
+				ImGui::SetItemTooltip("Towards 1: a bright halo around the sun and light shafts");
+			}
+
+			ImGui::SeparatorText("Clouds");
+			auto& clouds = environment.clouds;
+			ImGui::Checkbox("Clouds", &clouds.enabled);
+			if (clouds.enabled) {
+				ImGui::SameLine();
+				ImGui::Checkbox("Cast shadows", &clouds.shadows);
+				ImGui::SliderFloat("Coverage", &clouds.coverage, 0.0f, 1.0f, "%.2f");
+				ImGui::DragFloat("Cloud density", &clouds.density, 0.001f, 0.0f, 1.0f, "%.3f /m");
+				ImGui::DragFloat("Bottom", &clouds.bottom, 5.0f, -100.0f, 10000.0f, "%.0f m");
+				ImGui::DragFloat("Top", &clouds.top, 5.0f, -100.0f, 15000.0f, "%.0f m");
+				ImGui::DragFloat("Cloud size", &clouds.size, 5.0f, 10.0f, 20000.0f, "%.0f m");
+				ImGui::DragFloat3("Wind (m/s)", &clouds.wind.x, 0.1f, -100.0f, 100.0f, "%.1f");
+				ImGui::SliderFloat("Cloud forward scattering", &clouds.anisotropy, -0.9f, 0.95f, "%.2f");
+				ImGui::SliderFloat("Whiteness", &clouds.albedo, 0.5f, 1.0f, "%.3f");
+				ImGui::SetItemTooltip("Scattering albedo: real clouds are almost 1");
+			}
+			ImGui::TextDisabled("Smoke: Create > Effects > Smoke (a Volume component)");
+
 			ImGui::Spacing();
 			ImGui::TextWrapped("The sun and other lights are entities with a Light component: select the Sun in the Hierarchy.");
 			(void)uiScale;

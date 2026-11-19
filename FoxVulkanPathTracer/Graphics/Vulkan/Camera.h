@@ -74,6 +74,13 @@ namespace Fox {
                     UpdateViewMatrix();
                 }
 
+                // Vertical field of view in radians
+                void SetFov(float radians)
+                {
+                    fov = radians;
+                    UpdateProjectionMatrix();
+                }
+
                 void SetAspectRatio(float aspect)
                 {
                     this->aspect = aspect;

@@ -67,6 +67,7 @@ namespace Fox {
 			}
 
 			bool MainRayTracingScene::RebuildScene(std::string& error) {
+				rebuildCount++;
 				graph.UpdateTransforms();
 				Clear();
 				objectEntities.clear();
@@ -305,7 +306,7 @@ namespace Fox {
 			}
 
 			void MainRayTracingScene::ClearContent() {
-				StopPhysics();
+				StopPlay(false);
 				graph.Clear();
 				CreateSun(graph);
 				environment = Environment{};
@@ -478,20 +479,45 @@ namespace Fox {
 				return mesh && mesh->type == MeshComponent::Type::Tree ? mesh->tree.get() : nullptr;
 			}
 
-			void MainRayTracingScene::Update(float dt) {
-				time += dt;
+			float MainRayTracingScene::AdvanceClock(float realDelta) {
+				float step = 0.0f;
+				if (!clock.paused) {
+					step = std::min(realDelta, MAX_GAME_STEP) * clock.timeScale;
+				}
+				else if (clock.stepFrames > 0) {
+					clock.stepFrames--;
+					step = STEP_FRAME;
+				}
+				clock.delta = step;
+				if (step > 0.0f) {
+					clock.time += step;
+					clock.frame++;
+				}
+				return step;
+			}
 
-				// The scene graph's world transforms, and the meshes placed and shown as their entities are
+			void MainRayTracingScene::Update(float dt) {
+				// While playing everything moves on game time (paused: not at all); in edit mode on real time (water,
+				// wind, growing trees)
+				const float step = physicsPlaying ? AdvanceClock(dt) : dt;
+				time += step;
+
+				// The systems, in order:
+				//   1. transforms        world matrices from the hierarchy (and the gizmos' edits)
+				//   2. agents            walk their paths (edit mode: plan them)
+				//   3. physics           fixed steps; dynamic bodies move their entities, kinematic ones follow
+				//   4. render sync       meshes, lights and water placed as their entities are now
+				//   5. animation         water simulation, wind in the trees, growing trees
 				graph.UpdateTransforms();
-				UpdateNavigation(dt);
+				UpdateNavigation(step);
 				if (physicsPlaying) {
 					graph.UpdateTransforms();
-					UpdatePhysics(dt);
+					UpdatePhysics(step);
 					graph.UpdateTransforms();
 				}
 				SyncMeshes();
 				SyncLights();
-				UpdateWater(dt);
+				UpdateWater(step);
 
 				// Wind in every tree; it blows in world space, wherever a tree has been moved to. Instances of a tree
 				// share its deformation: it is computed once, for its first placement.
@@ -502,9 +528,19 @@ namespace Fox {
 						|| !blown.insert(tree).second) {
 						return;
 					}
+					// Growing: on to grown (or round again), unless paused
+					if (tree->growth.enabled && !tree->growthPaused) {
+						tree->growthTime += step;
+						const float duration = std::max(tree->growth.duration, 0.01f);
+						if (tree->growthTime > duration) {
+							tree->growthTime = tree->growth.loop ? std::fmod(tree->growthTime, duration) : duration;
+						}
+					}
 					tree->skeleton->GetSettings() = tree->wind;
-					tree->skeleton->Update(dt, time, GetObjectTransform(tree->handle.object).Matrix());
+					tree->skeleton->SetGrowth(tree->GrowthProgress(), tree->growth);
+					tree->skeleton->Update(step, time, GetObjectTransform(tree->handle.object).Matrix());
 					SetJointMatrices(tree->handle.skinnedMesh, tree->skeleton->GetSkinMatrices());
+					SetSkinGrowth(tree->handle.skinnedMesh, tree->skeleton->GetLeafFront(), tree->skeleton->GetLeafSpan());
 				});
 			}
 
@@ -1198,6 +1234,41 @@ namespace Fox {
 				return true;
 			}
 
+			bool MainRayTracingScene::AddPlayingBody(Entity entity, Fox::Scene::PhysicsComponent& component) {
+				Fox::Scene::PhysicsWorld::BodyDesc desc;
+				DescribeBody(entity, component, desc);
+				// An agent walks: its body follows it and pushes, as a kinematic one
+				const auto* agent = graph.GetRegistry().TryGet<Fox::Scene::NavAgentComponent>(entity);
+				const bool walks = agent && agent->enabled;
+				if (walks && desc.motion == Fox::Scene::PhysicsWorld::Motion::Dynamic) {
+					desc.motion = Fox::Scene::PhysicsWorld::Motion::Kinematic;
+				}
+				std::string bodyError;
+				const uint32_t body = physics->AddBody(desc, bodyError);
+				if (body == Fox::Scene::PhysicsWorld::INVALID_BODY) {
+					std::cout << "Physics: no body for " << graph.GetName(entity) << " (" << bodyError << ")\n";
+					failedBodies.insert(entity);
+					return false;
+				}
+				component.body = body;
+				PlayingBody playing;
+				playing.entity = entity;
+				playing.body = body;
+				playing.motion = walks && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic
+					? Fox::Scene::PhysicsComponent::Motion::Kinematic : component.motion;
+				glm::vec3 position;
+				glm::quat rotation;
+				DecomposeWorld(graph.GetWorldMatrix(entity), position, rotation, playing.scale);
+				playing.written = graph.GetWorldMatrix(entity);
+				const auto info = physics->GetBodyInfo(body);
+				playing.extent = std::max(info.extent, 0.05f);
+				playing.floats = component.floats && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic;
+				playing.waterDrag = component.waterDrag;
+				playing.buoyancy = info.mass > 0.0f && info.volume > 0.0f ? 1000.0f / (info.mass / info.volume) : 1.0f;
+				playingBodies.push_back(playing);
+				return true;
+			}
+
 			bool MainRayTracingScene::StartPhysics(std::string& error) {
 				if (physicsPlaying) {
 					return true;
@@ -1239,54 +1310,30 @@ namespace Fox {
 
 				// The bodies
 				size_t failed = 0;
+				failedBodies.clear();
 				graph.GetRegistry().Each<Fox::Scene::PhysicsComponent>([&](Entity entity, Fox::Scene::PhysicsComponent& component) {
 					component.body = Fox::Scene::PhysicsWorld::INVALID_BODY;
-					if (!component.enabled || !graph.IsActiveInHierarchy(entity)) {
-						return;
-					}
-					Fox::Scene::PhysicsWorld::BodyDesc desc;
-					DescribeBody(entity, component, desc);
-					// An agent walks: its body follows it and pushes, as a kinematic one
-					const auto* agent = graph.GetRegistry().TryGet<Fox::Scene::NavAgentComponent>(entity);
-					const bool walks = agent && agent->enabled;
-					if (walks && desc.motion == Fox::Scene::PhysicsWorld::Motion::Dynamic) {
-						desc.motion = Fox::Scene::PhysicsWorld::Motion::Kinematic;
-					}
-					std::string bodyError;
-					const uint32_t body = physics->AddBody(desc, bodyError);
-					if (body == Fox::Scene::PhysicsWorld::INVALID_BODY) {
-						std::cout << "Physics: no body for " << graph.GetName(entity) << " (" << bodyError << ")\n";
+					if (component.enabled && graph.IsActiveInHierarchy(entity) && !AddPlayingBody(entity, component)) {
 						failed++;
-						return;
 					}
-					component.body = body;
-					PlayingBody playing;
-					playing.entity = entity;
-					playing.body = body;
-					playing.motion = walks && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic
-						? Fox::Scene::PhysicsComponent::Motion::Kinematic : component.motion;
-					glm::vec3 position;
-					glm::quat rotation;
-					DecomposeWorld(graph.GetWorldMatrix(entity), position, rotation, playing.scale);
-					playing.written = graph.GetWorldMatrix(entity);
-					const auto info = physics->GetBodyInfo(body);
-					playing.extent = std::max(info.extent, 0.05f);
-					playing.floats = component.floats && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic;
-					playing.waterDrag = component.waterDrag;
-					playing.buoyancy = info.mass > 0.0f && info.volume > 0.0f ? 1000.0f / (info.mass / info.volume) : 1.0f;
-					playingBodies.push_back(playing);
 				});
 				physics->Optimize();
 				physicsPlaying = true;
 				StartNavigation();
+				// Growing trees start from a sprout
+				graph.GetRegistry().Each<MeshComponent>([](Entity, MeshComponent& mesh) {
+					if (mesh.type == MeshComponent::Type::Tree && mesh.tree && mesh.tree->growth.enabled) {
+						mesh.tree->growthTime = 0.0f;
+						mesh.tree->growthPaused = false;
+					}
+				});
 				std::cout << "Physics: playing, " << playingBodies.size() << " bodies" << (failed ? " (some failed, see above)" : "") << "\n";
 				size_t agents = 0;
 				graph.GetRegistry().Each<Fox::Scene::NavAgentComponent>([&](Entity, Fox::Scene::NavAgentComponent& agent) {
 					agents += agent.enabled ? 1 : 0;
 				});
-				if (playingBodies.empty() && agents == 0) {
-					error = "No entity has a Physics or Nav Agent component (Inspector > Add Component)";
-				}
+				(void)agents;
+				(void)error;
 				return true;
 			}
 
@@ -1318,6 +1365,18 @@ namespace Fox {
 					return;
 				}
 				using Motion = Fox::Scene::PhysicsComponent::Motion;
+
+				// Entities that got a body while it plays (created by hand or by the game, or switched on) join in
+				bool added = false;
+				graph.GetRegistry().Each<Fox::Scene::PhysicsComponent>([&](Entity entity, Fox::Scene::PhysicsComponent& component) {
+					if (component.body == Fox::Scene::PhysicsWorld::INVALID_BODY && component.enabled && graph.IsActiveInHierarchy(entity)
+						&& !failedBodies.count(entity)) {
+						added |= AddPlayingBody(entity, component);
+					}
+				});
+				if (added) {
+					physics->Optimize();
+				}
 
 				// Entities gone or switched off leave; dynamic ones moved by hand (the gizmo) go where they were put,
 				// thrown with the speed they were moved at

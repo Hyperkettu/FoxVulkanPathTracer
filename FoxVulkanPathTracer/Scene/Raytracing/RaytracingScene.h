@@ -98,6 +98,9 @@ namespace Fox {
                 // Per joint of the mesh: pose * inverse(bind), in mesh space. Applied with the next RecordFrameUpdate,
                 // which deforms the mesh on the GPU and refits its acceleration structure.
                 void SetJointMatrices(size_t skinnedMesh, const std::vector<glm::mat4>& skinMatrices);
+                // Growing leaves (SkinnedMesh::growth): those whose stem is less than leafFront metres along the tree
+                // have unfolded, over leafSpan metres (see Animation::TreeGrowth). 1e30: all grown.
+                void SetSkinGrowth(size_t skinnedMesh, float leafFront, float leafSpan);
 
                 // The object a skinned mesh is placed as (for GetObjectTransform)
                 size_t GetObjectOfSkinnedMesh(size_t skinnedMesh) const { return skinnedMeshes[skinnedMesh].object; }
@@ -109,6 +112,7 @@ namespace Fox {
                     float tangent[4];
                     uint32_t joints[4];
                     float weights[4];
+                    float growth[4]; // SkinnedMesh::growth: a leaf's stem and 1 + its distance along the tree (0: none)
                 };
 
                 // 3x4 row major, mirrors JointMatrix in Shaders/skinning.slang
@@ -390,6 +394,7 @@ namespace Fox {
                     uint32_t vertexCount = 0;
                     uint32_t firstSkinVertex = 0; // In bindPose / previous positions
                     uint32_t firstJoint = 0;
+                    float leafFront = 1e30f, leafSpan = 1.0f;
                     std::vector<JointMatrix> joints;
                 };
                 std::vector<SkinnedRecord> skinnedMeshes;

@@ -9,6 +9,16 @@ namespace Fox {
 
 	    namespace Vulkan {
 
+			// A smoke volume (VolumeComponent). Must match VolumeData in Shaders/common.slang.
+			struct VolumeGPU {
+				glm::vec4 rows[3];      // World to its own space, where it fills -0.5..0.5 (3x4, row major)
+				glm::vec4 colorDensity; // Scattering albedo, density per metre
+				glm::vec4 emission;     // Emitted radiance, phase anisotropy
+				glm::vec4 motion;       // Drift of its noise (m/s), noise size (metres)
+				glm::vec4 shape;        // Noise strength, edge softness, 1: round (0: box), unused
+			};
+			static constexpr uint32_t MAX_VOLUMES = 8;
+
 			struct CameraUBO {
 				alignas(16) glm::vec3 camPos;       // Offset 0 (12 bytes + 4 bytes auto-padding)
 				alignas(16) glm::vec3 camForward;   // Offset 16 (12 bytes + 4 bytes auto-padding)
@@ -32,6 +42,17 @@ namespace Fox {
 				alignas(8)  glm::ivec2 pickPixel{ -1, -1 }; // Offset 168 - report the object seen at this pixel (editor)
 				alignas(4)  uint32_t pickSlot;      // Offset 176 - entry of the pick result buffer to write
 				alignas(4)  float time;             // Offset 180 - seconds since start (animated surfaces: water)
+
+				// Participating media (Shaders/volumes.slang; MainRayTracingScene::FillVolumeConstants)
+				alignas(16) glm::vec4 fog{ 0.0f };        // Offset 192 - density, falloff, base height, anisotropy
+				alignas(16) glm::vec4 fogColor{ 0.0f };   // Offset 208 - albedo, w: on
+				alignas(16) glm::vec4 cloudLayer{ 0.0f }; // Offset 224 - bottom, top, coverage, density
+				alignas(16) glm::vec4 cloudShape{ 0.0f }; // Offset 240 - noise size, unused, anisotropy, w: on
+				alignas(16) glm::vec4 cloudWind{ 0.0f };  // Offset 256 - drift (m/s), w: albedo
+				alignas(4)  uint32_t volumeCount = 0;     // Offset 272
+				alignas(4)  uint32_t cloudShadows = 0;    // Offset 276
+				alignas(8)  glm::uvec2 volumePad{ 0u };   // Offset 280
+				alignas(16) VolumeGPU volumes[MAX_VOLUMES]; // Offset 288
 			};
 
 			// Must match the Camera struct in Shaders/common.slang (std140 layout).
@@ -45,6 +66,10 @@ namespace Fox {
 			static_assert(offsetof(CameraUBO, pickPixel) == 168, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, pickSlot) == 176, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, time) == 180, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, fog) == 192, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, volumeCount) == 272, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, volumes) == 288, "CameraUBO layout must match common.slang");
+			static_assert(sizeof(VolumeGPU) == 112, "VolumeGPU layout must match common.slang");
 
 			struct OldFrame {
 				alignas(16) glm::mat4 model;

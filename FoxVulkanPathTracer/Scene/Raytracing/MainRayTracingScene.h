@@ -3,6 +3,8 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <unordered_set>
+#include <functional>
 
 namespace Fox {
 
@@ -40,11 +42,36 @@ namespace Fox {
                 using Tree = Fox::Scene::Tree;
                 using Entity = Fox::ECS::Entity;
 
+                // Height fog: thickest at its base, thinning exponentially above it (Shaders/volumes.slang)
+                struct Fog {
+                    bool enabled = false;
+                    float density = 0.02f;      // Extinction per metre at the base height
+                    float falloff = 0.08f;      // Per metre: halves every ln(2) / falloff metres up
+                    float baseHeight = -3.73f;  // Metres
+                    glm::vec3 color{ 0.92f };   // Scattering albedo
+                    float anisotropy = 0.6f;    // Forward scattering: glows around the sun
+                };
+                // A layer of clouds in the sky: noise drifting with the wind, lit (and shading) by the sun
+                struct Clouds {
+                    bool enabled = false;
+                    float bottom = 250.0f;      // Metres
+                    float top = 700.0f;
+                    float coverage = 0.5f;      // 0..1
+                    float density = 0.05f;      // Extinction per metre where densest
+                    float size = 700.0f;        // Metres: the size of the noise's features
+                    glm::vec3 wind{ 8.0f, 0.0f, 3.0f }; // m/s
+                    float anisotropy = 0.7f;
+                    float albedo = 0.98f;
+                    bool shadows = true;        // Shade the ground
+                };
+
                 struct Environment {
                     bool ground = true;
                     bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
                     float groundHeight = -3.73f;
                     SurfaceMaterial groundMaterial{ glm::vec3(0.07f, 0.07f, 0.08f), 0.12f };
+                    Fog fog;
+                    Clouds clouds;
                 };
 
                 // The sun a new scene starts with (an entity with a directional LightComponent)
@@ -127,7 +154,39 @@ namespace Fox {
                 bool SplashWater(const glm::vec3& origin, const glm::vec3& direction);
                 void RecordSimulations(VkCommandBuffer cmd, uint32_t frameSlot) override;
 
-                // --- Physics (PhysicsComponent, Scene/Physics.h): Physics > Play (F5) ---
+                // --- Play mode (F5): the game runs on a copy of the scene ---
+                // Play starts the game systems (physics, agents, growing trees) on game time, which can be paused,
+                // stepped a frame at a time and sped up or slowed down. Stopping puts the scene back as it was when
+                // play started: entities created, destroyed, moved or changed while it played (by the game or by
+                // hand) come back as they were. Saving while it plays saves the scene as it was.
+                struct GameClock {
+                    bool paused = false;
+                    float timeScale = 1.0f;
+                    int stepFrames = 0;    // Paused: frames still to step
+                    double time = 0.0;     // Game seconds since play started
+                    uint64_t frame = 0;    // Game frames since play started
+                    float delta = 0.0f;    // This frame's step of game time
+                };
+                static constexpr float MAX_GAME_STEP = 0.1f; // Seconds: a long frame (a hitch, a breakpoint) counts as this
+                static constexpr float STEP_FRAME = 1.0f / 60.0f;
+
+                bool StartPlay(std::string& error);
+                // restore: put the scene back as it was when play started (false: keep it as it is now)
+                void StopPlay(bool restore = true);
+                bool IsPlaying() const { return physicsPlaying; }
+                const GameClock& GetClock() const { return clock; }
+                void SetPaused(bool paused) { clock.paused = paused; clock.stepFrames = 0; }
+                void SetTimeScale(float scale) { clock.timeScale = glm::clamp(scale, 0.0f, 16.0f); }
+                // Paused: advance one frame of STEP_FRAME (pauses if it was not)
+                void StepFrame() { clock.paused = true; clock.stepFrames++; }
+                // Seconds of animation (game time while playing): drifting clouds, smoke, water ripples
+                float GetAnimationTime() const { return time; }
+                // The entity the game looks through: the enabled CameraComponent of highest priority (null: none)
+                Entity FindGameCamera() const;
+                // A new entity with a CameraComponent, looking from position along forward
+                Entity AddGameCamera(const glm::vec3& position, const glm::vec3& forward, float fovDegrees);
+
+                // --- Physics (PhysicsComponent, Scene/Physics.h): Play (F5) ---
                 // Entities with a PhysicsComponent become rigid bodies on the ground or terrain; dynamic ones fall,
                 // collide and float in water, and their transforms follow. Stopping puts every entity back where it was.
                 bool StartPhysics(std::string& error);
@@ -154,6 +213,13 @@ namespace Fox {
                 Entity AddNavAgent(const glm::vec3& position);
                 // Where a ray from the camera meets the ground (terrain or ground plane)
                 bool RaycastGround(const glm::vec3& origin, const glm::vec3& direction, glm::vec3& hit) const;
+
+                // --- Volumetrics: fog and clouds (Environment), smoke (VolumeComponent) ---
+                // Fills the path tracer's media settings; returns how many smoke volumes there were (only the
+                // first MAX_VOLUMES are used)
+                size_t FillVolumeConstants(Fox::Graphics::Vulkan::CameraUBO& constants) const;
+                // A new entity with a smoke volume at position
+                Entity AddSmoke(const glm::vec3& position, bool glowing = false);
 
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
@@ -231,6 +297,24 @@ namespace Fox {
                 };
                 std::vector<PendingWater> pendingWater; // Placed, simulations made after Build
 
+                // Play mode: the clock, and the scene as it was when play started
+                GameClock clock;
+                float AdvanceClock(float realDelta);
+                struct PlaySnapshot {
+                    std::string entities, treeAssets;           // The entities as saved (JSON)
+                    std::vector<std::shared_ptr<Tree>> trees;   // The trees they refer to, by asset id
+                    Environment environment;
+                    std::vector<Entity> order;                  // Every entity, depth first
+                    size_t rebuilds = 0;
+                    // Put component values back in place (apply), or check that they still fit (the same entities
+                    // with the same components): the quick way back, without a rebuild
+                    std::vector<std::function<bool(bool apply)>> restores;
+                };
+                std::unique_ptr<PlaySnapshot> playScene;
+                size_t rebuildCount = 0;
+                void TakePlaySnapshot();
+                void RestorePlaySnapshot();
+
                 // Physics while it plays: the bodies of the entities, and where every entity was before it started
                 std::unique_ptr<Fox::Scene::PhysicsWorld> physics;
                 bool physicsPlaying = false;
@@ -250,6 +334,9 @@ namespace Fox {
                 std::vector<PlayingBody> playingBodies;
                 std::vector<std::pair<Entity, Fox::Scene::Transform>> playSnapshot;
                 bool DescribeBody(Entity entity, const Fox::Scene::PhysicsComponent& component, Fox::Scene::PhysicsWorld::BodyDesc& desc);
+                // A body for the entity's component, playing from now; false if its shape could not be made
+                bool AddPlayingBody(Entity entity, Fox::Scene::PhysicsComponent& component);
+                std::unordered_set<Entity> failedBodies; // Not tried again while it plays
                 void UpdatePhysics(float dt);
                 // Agents: plans their paths, and walks them while playing
                 void UpdateNavigation(float dt);

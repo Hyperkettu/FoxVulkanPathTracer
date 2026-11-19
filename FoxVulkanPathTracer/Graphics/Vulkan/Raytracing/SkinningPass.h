@@ -20,6 +20,9 @@ namespace Fox {
 						uint32_t vertexCount;
 						uint32_t firstSkinVertex;
 						uint32_t firstJoint;
+						float leafFront;  // Growing leaves (RayTracingScene::SetSkinGrowth)
+						float leafSpan;
+						float pad0, pad1;
 					};
 
 					SkinningPass(VkDevice device,

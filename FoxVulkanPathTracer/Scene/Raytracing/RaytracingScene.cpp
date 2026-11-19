@@ -736,6 +736,9 @@ namespace Fox {
                     else {
                         skinVertex.weights[0] = 1.0f;
                     }
+                    if (i < mesh.growth.size()) {
+                        std::memcpy(skinVertex.growth, &mesh.growth[i].x, sizeof(skinVertex.growth));
+                    }
                     bindPose.push_back(skinVertex);
                 }
 
@@ -968,6 +971,12 @@ namespace Fox {
                 }
             }
 
+            void RayTracingScene::SetSkinGrowth(size_t skinnedMesh, float leafFront, float leafSpan) {
+                SkinnedRecord& skinned = skinnedMeshes[skinnedMesh];
+                skinned.leafFront = leafFront;
+                skinned.leafSpan = std::max(leafSpan, 1e-4f);
+            }
+
             void RayTracingScene::RecordSkinning(VkCommandBuffer cmd) {
                 // The previous frame may still be tracing against these vertices and structures
                 VkMemoryBarrier beforeSkinning{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
@@ -978,7 +987,8 @@ namespace Fox {
                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &beforeSkinning, 0, nullptr, 0, nullptr);
 
                 for (const SkinnedRecord& skinned : skinnedMeshes) {
-                    skinningPass->Dispatch(cmd, { skinned.firstVertex, skinned.vertexCount, skinned.firstSkinVertex, skinned.firstJoint });
+                    skinningPass->Dispatch(cmd, { skinned.firstVertex, skinned.vertexCount, skinned.firstSkinVertex, skinned.firstJoint,
+                        skinned.leafFront, skinned.leafSpan, 0.0f, 0.0f });
                 }
 
                 // The refits read the new vertices, and so do the ray tracing shaders

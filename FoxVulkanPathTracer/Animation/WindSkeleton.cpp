@@ -25,6 +25,7 @@ namespace Fox {
 			pose.assign(bones.size(), glm::mat4(1.0f));
 
 			const float rootRadius = bones.empty() ? 1.0f : bones[0].radius;
+			const std::vector<float> distances = Fox::Graphics::Geometry::DistancesAlongRig(bones);
 
 			for (size_t i = 0; i < bones.size(); i++) {
 				const auto& bone = bones[i];
@@ -47,6 +48,8 @@ namespace Fox {
 					settings.trunkFrequency, settings.maxFrequency);
 				joint.frequency = glm::two_pi<float>() * hertz;
 				joint.phase = static_cast<float>(i) * 2.399963f; // Golden angle: well spread
+				joint.distance = distances[i];
+				treeLength = std::max(treeLength, joint.distance + joint.length);
 			}
 
 			// Inertia of each subtree about its joint: sum m |c - p|^2 = S2 - 2 p.S1 + |p|^2 S0, with the sums
@@ -69,6 +72,32 @@ namespace Fox {
 					s2[parent] += s2[i];
 				}
 			}
+		}
+
+		void WindSkeleton::SetGrowth(float progress, const TreeGrowth& growth) {
+			if (!growth.enabled || progress >= 1.0f) {
+				for (Joint& joint : joints) {
+					joint.growth = 1.0f;
+				}
+				rootScale = 1.0f;
+				leafFront = 1e30f;
+				leafSpan = 1.0f;
+				return;
+			}
+			const float p = glm::clamp(progress, 0.0f, 1.0f);
+			const float lag = std::max(growth.leafLag, 0.0f) * treeLength;
+			leafSpan = 0.12f * treeLength;
+			// The branches' front reaches the furthest tip, then the leaves' (lag behind it) does, and the last
+			// leaves have unfolded when progress is 1
+			const float branchFront = p * (treeLength + lag + leafSpan);
+			leafFront = branchFront - lag;
+			for (Joint& joint : joints) {
+				const float grown = glm::clamp((branchFront - joint.distance) / std::max(joint.length, 1e-4f), 0.0f, 1.0f);
+				joint.growth = grown * grown * (3.0f - 2.0f * grown);
+			}
+			// The whole tree enlarges too: quickly at first, then slowing
+			const float eased = 1.0f - (1.0f - p) * (1.0f - p);
+			rootScale = glm::mix(glm::clamp(growth.startScale, 0.001f, 1.0f), 1.0f, eased);
 		}
 
 		void WindSkeleton::Update(float deltaTime, float time, const glm::mat4& objectToWorld) {
@@ -160,7 +189,12 @@ namespace Fox {
 					bend = glm::rotate(glm::mat4(1.0f), bent, joint.angle / bent);
 				}
 
-				pose[i] = (joint.parent >= 0 ? pose[joint.parent] : glm::mat4(1.0f)) * joint.restLocal * bend;
+				// Growing: each bone scales about its base (and so carries its subtree along); the root sizes the tree
+				const glm::mat4 parent = joint.parent >= 0 ? pose[joint.parent] : glm::scale(glm::mat4(1.0f), glm::vec3(rootScale));
+				pose[i] = parent * joint.restLocal * bend;
+				if (joint.growth < 1.0f) {
+					pose[i] = pose[i] * glm::scale(glm::mat4(1.0f), glm::vec3(joint.growth));
+				}
 				skinMatrices[i] = pose[i] * joint.inverseBind;
 			}
 		}

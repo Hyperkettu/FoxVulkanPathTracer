@@ -365,6 +365,12 @@ namespace Fox {
 
 					SkinnedMesh mesh;
 					std::vector<uint32_t> leafIndices; // Second part of the mesh
+					struct LeafStem {
+						uint32_t firstVertex = 0, vertexCount = 0;
+						int bone = 0;
+						glm::vec3 base{ 0.0f };
+					};
+					std::vector<LeafStem> leafStems; // Where each card grows from
 
 				private:
 					static BranchPath PathThrough(const std::vector<glm::vec3>& points) {
@@ -405,6 +411,7 @@ namespace Fox {
 
 						SkinWeights weights;
 						weights.joints[0] = static_cast<uint32_t>(bone);
+						leafStems.push_back({ static_cast<uint32_t>(mesh.vertices.size()), static_cast<uint32_t>((std::max(settings.leafRows, 1) + 1) * (std::max(settings.leafColumns, 1) + 1)), bone, base });
 
 						const int columns = std::max(settings.leafColumns, 1);
 						const int rows = std::max(settings.leafRows, 1);
@@ -492,6 +499,17 @@ namespace Fox {
 				if (!builder.leafIndices.empty()) {
 					mesh.indices.insert(mesh.indices.end(), builder.leafIndices.begin(), builder.leafIndices.end());
 					mesh.parts.push_back({ barkIndices, static_cast<uint32_t>(builder.leafIndices.size()), 1 });
+				}
+
+				// Growing: leaf cards unfold from their stems, in order along the tree
+				mesh.growth.assign(mesh.vertices.size(), glm::vec4(0.0f));
+				const std::vector<float> distances = DistancesAlongRig(mesh.bones);
+				for (const auto& stem : builder.leafStems) {
+					const float distance = DistanceAlongRig(mesh.bones, distances, stem.bone, stem.base);
+					const size_t end = std::min(mesh.growth.size(), static_cast<size_t>(stem.firstVertex) + stem.vertexCount);
+					for (size_t v = stem.firstVertex; v < end; v++) {
+						mesh.growth[v] = glm::vec4(stem.base, 1.0f + distance);
+					}
 				}
 				return mesh;
 			}

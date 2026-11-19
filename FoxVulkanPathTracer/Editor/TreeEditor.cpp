@@ -174,6 +174,42 @@ namespace Fox {
 					ImGui::SliderFloat("Max bend", &wind.maxAngle, 0.05f, 1.0f, "%.2f rad");
 				}
 
+				if (ImGui::CollapsingHeader("Growth")) {
+					// Live, like the wind: the bones and the leaves' unfolding follow every frame
+					auto& growth = tree.growth;
+					if (ImGui::Checkbox("Grows", &growth.enabled) && growth.enabled) {
+						tree.growthTime = 0.0f;
+						tree.growthPaused = false;
+					}
+					ImGui::SetItemTooltip("From a sprout: the trunk rises, branches sprout and lengthen, then the leaves unfold");
+					if (growth.enabled) {
+						float progress = tree.GrowthProgress() * 100.0f;
+						if (ImGui::SliderFloat("Grown", &progress, 0.0f, 100.0f, "%.0f %%")) {
+							tree.growthTime = progress / 100.0f * std::max(growth.duration, 0.01f);
+							tree.growthPaused = true; // Scrubbing holds it there
+						}
+						if (ImGui::Button(tree.growthPaused ? "Play" : "Pause")) {
+							tree.growthPaused = !tree.growthPaused;
+							if (!tree.growthPaused && tree.GrowthProgress() >= 1.0f) {
+								tree.growthTime = 0.0f;
+							}
+						}
+						ImGui::SameLine();
+						if (ImGui::Button("Restart")) {
+							tree.growthTime = 0.0f;
+							tree.growthPaused = false;
+						}
+						ImGui::SameLine();
+						ImGui::Checkbox("Loop", &growth.loop);
+						ImGui::SliderFloat("Duration (s)", &growth.duration, 1.0f, 300.0f, "%.0f", ImGuiSliderFlags_Logarithmic);
+						ImGui::SliderFloat("Sprout size", &growth.startScale, 0.01f, 1.0f, "%.2f");
+						ImGui::SetItemTooltip("Size of the tree when it starts, relative to the grown tree");
+						ImGui::SliderFloat("Leaves follow by", &growth.leafLag, 0.0f, 1.0f, "%.2f");
+						ImGui::SetItemTooltip("How far behind the growing branches the leaves unfold (a fraction of the tree)");
+						ImGui::TextDisabled("Play (F5) grows it from the start; instances grow together");
+					}
+				}
+
 				if (shapeChanged) {
 					tree.regenerate = true;
 				}

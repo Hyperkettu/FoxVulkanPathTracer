@@ -567,6 +567,7 @@
     <SlangInclude Include="Shaders\denoise_common.slang" />
     <SlangInclude Include="Shaders\bsdf.slang" />
     <SlangInclude Include="Shaders\lighting.slang" />
+    <SlangInclude Include="Shaders\volumes.slang" />
     <None Include="Shaders\closest_hit_orig.slang" />
     <None Include="Shaders\closest_hit_reflection_mirror.slang" />
     <None Include="Shaders\visualize_normals.slang" />

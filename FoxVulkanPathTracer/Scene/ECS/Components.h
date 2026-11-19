@@ -17,6 +17,8 @@
 //   WaterComponent      it is a body of water, simulated (shallow water equations) and refracting
 //   PhysicsComponent    it is a rigid body (Jolt Physics, Scene/Physics.h): it falls, collides and floats in play mode
 //   NavAgentComponent   it walks over the ground to a target, on a path found with A* (Scene/Navigation.h)
+//   VolumeComponent     it is a volume of smoke (or glowing haze) that light scatters in (Shaders/volumes.slang)
+//   CameraComponent     the game looks through it while it plays (it looks along its -Z axis)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -253,6 +255,33 @@ namespace Fox {
 				planned = false;
 				arrived = false;
 			}
+		};
+
+		// The entity is a volume of smoke: a puff (or box) of `size` metres around it, turned and scaled with it,
+		// filled with noisy density drifting with `velocity`. The path tracer scatters light in it
+		// (Shaders/volumes.slang): lit by the sun and sky, casting shadows, optionally glowing. Up to 8 at a time.
+		struct VolumeComponent {
+			bool enabled = true;
+			glm::vec3 size{ 4.0f, 4.0f, 4.0f }; // Metres
+			bool round = true;                   // A puff (ellipsoid); off: fills the box
+			float softness = 0.6f;               // How gradually it thins towards its edge (0..1)
+			float density = 0.7f;                // Extinction per metre where densest
+			glm::vec3 color{ 0.55f, 0.55f, 0.57f }; // Scattering albedo: white smoke scatters, black absorbs
+			float anisotropy = 0.3f;             // -1 back, 0 even, 1 forward scattering
+			glm::vec3 glow{ 1.0f, 0.45f, 0.12f };
+			float glowStrength = 0.0f;           // Radiance it gives off (fire, embers)
+			float noiseSize = 0.8f;              // Metres
+			float noiseStrength = 0.8f;          // 0: even density
+			glm::vec3 velocity{ 0.0f, 0.6f, 0.0f }; // How its noise drifts (rising smoke), m/s
+		};
+
+		// The game looks through the entity while it plays (Play mode, F5): from where it is, along its -Z axis (as
+		// glTF cameras and the lights do), with this field of view. Of several, the enabled one with the highest
+		// priority; F8 lets go of it (a free camera) and takes it again.
+		struct CameraComponent {
+			bool enabled = true;
+			float fov = 60.0f; // Vertical, degrees
+			int priority = 0;
 		};
 
 		// The entity gives light. It shines along its -Z axis (as glTF lights do): a directional light's entity

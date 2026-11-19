@@ -15,6 +15,8 @@ namespace Fox {
 			using Fox::Scene::WaterComponent;
 			using Fox::Scene::PhysicsComponent;
 			using Fox::Scene::NavAgentComponent;
+			using Fox::Scene::VolumeComponent;
+			using Fox::Scene::CameraComponent;
 			using State = SceneGraphEditor::InspectorState;
 
 			const char* ENTITY_PAYLOAD = "FOX_ENTITY";
@@ -351,8 +353,44 @@ namespace Fox {
 					ImGui::TextDisabled(body.body != 0xffffffffu ? "Playing: changes apply when physics plays again" : "Playing: not a body (it was off)");
 				}
 				else {
-					ImGui::TextDisabled("Physics > Play (F5) simulates it");
+					ImGui::TextDisabled("Play (F5) simulates it");
 				}
+			}
+
+			void DrawCamera(Scene& scene, Entity entity, State&) {
+				CameraComponent& camera = scene.GetSceneGraph().GetRegistry().Get<CameraComponent>(entity);
+				ImGui::Checkbox("On", &camera.enabled);
+				ImGui::SliderFloat("Field of view", &camera.fov, 10.0f, 120.0f, "%.0f deg");
+				ImGui::DragInt("Priority", &camera.priority, 0.1f, -100, 100);
+				ImGui::SetItemTooltip("Of several cameras, the game looks through the enabled one with the highest priority");
+				const bool used = scene.FindGameCamera() == entity;
+				ImGui::TextDisabled(used ? "Play (F5) looks through it (F8: free camera)" : "Another camera has a higher priority");
+			}
+
+			void DrawVolume(Scene& scene, Entity entity, State&) {
+				VolumeComponent& volume = scene.GetSceneGraph().GetRegistry().Get<VolumeComponent>(entity);
+				ImGui::Checkbox("On", &volume.enabled);
+				ImGui::SameLine();
+				ImGui::Checkbox("Round", &volume.round);
+				ImGui::SetItemTooltip("A puff filling the ellipsoid in its box; off: it fills the box");
+				ImGui::DragFloat3("Size (m)", &volume.size.x, 0.05f, 0.01f, 1000.0f, "%.2f");
+				ImGui::SliderFloat("Soft edge", &volume.softness, 0.0f, 1.0f, "%.2f");
+				ImGui::DragFloat("Density (/m)", &volume.density, 0.01f, 0.0f, 50.0f, "%.2f");
+				ImGui::SetItemTooltip("Extinction per metre where densest: light gets about 1 / density metres into it");
+				ImGui::ColorEdit3("Colour", &volume.color.x);
+				ImGui::SetItemTooltip("What it scatters (the rest it absorbs): white steam, grey smoke, black soot");
+				ImGui::SliderFloat("Forward scattering", &volume.anisotropy, -0.9f, 0.95f, "%.2f");
+				ImGui::SeparatorText("Glow");
+				ImGui::ColorEdit3("Glow colour", &volume.glow.x);
+				ImGui::DragFloat("Glow strength", &volume.glowStrength, 0.05f, 0.0f, 1000.0f, "%.2f");
+				ImGui::SetItemTooltip("Radiance it gives off where it is (fire, embers); 0: none");
+				ImGui::SeparatorText("Detail");
+				ImGui::SliderFloat("Noise", &volume.noiseStrength, 0.0f, 1.0f, "%.2f");
+				ImGui::SetItemTooltip("0: even density; 1: wisps and gaps");
+				ImGui::DragFloat("Noise size (m)", &volume.noiseSize, 0.01f, 0.01f, 100.0f, "%.2f");
+				ImGui::DragFloat3("Drift (m/s)", &volume.velocity.x, 0.01f, -50.0f, 50.0f, "%.2f");
+				ImGui::SetItemTooltip("How its wisps move through it: rising smoke drifts up");
+				ImGui::TextDisabled("At most 8 volumes render at a time");
 			}
 
 			void DrawNavAgent(Scene& scene, Entity entity, State&) {
@@ -490,6 +528,28 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<PhysicsComponent>(entity); },
 					DrawPhysics,
+				},
+				{
+					"Camera", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<CameraComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Camera")) {
+							scene.GetSceneGraph().GetRegistry().Add<CameraComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<CameraComponent>(entity); },
+					DrawCamera,
+				},
+				{
+					"Volume", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<VolumeComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Volume (smoke)")) {
+							scene.GetSceneGraph().GetRegistry().Add<VolumeComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<VolumeComponent>(entity); },
+					DrawVolume,
 				},
 				{
 					"Nav Agent", true,
@@ -734,6 +794,14 @@ namespace Fox {
 			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
 				ImGui::SameLine();
 				ImGui::TextDisabled("%s body%s", PhysicsComponent::MotionName(body->motion), body->enabled ? "" : " (off)");
+			}
+			if (const CameraComponent* camera = graph.GetRegistry().TryGet<CameraComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("Camera%s", camera->enabled ? "" : " (off)");
+			}
+			if (const VolumeComponent* volume = graph.GetRegistry().TryGet<VolumeComponent>(entity)) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("Volume%s", volume->enabled ? "" : " (off)");
 			}
 			if (const NavAgentComponent* nav = graph.GetRegistry().TryGet<NavAgentComponent>(entity)) {
 				ImGui::SameLine();

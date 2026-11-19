@@ -159,6 +159,7 @@ namespace Fox {
 				Fox::ECS::Entity lastSelection;          // Selecting something new opens the Inspector
 				bool showAgentPaths = true;               // Physics > Show Agent Paths: agents' ways in the view
 				void DrawAgentPaths();
+				void DrawVolumeBounds();
 				std::vector<std::function<void()>> deferredCommands; // Menu commands run between frames
 
 				// The editor (VulkanRHIEditor.cpp)
@@ -169,6 +170,17 @@ namespace Fox {
 				void RunDeferredCommands();
 				// What a key does when released (the same as its menu command)
 				void RunKeyCommand(SDL_Scancode key);
+
+				// Play mode (F5): the editor's camera while the game plays, and whether it looks through the
+				// game's camera (F8 lets go of it: a free camera)
+				void TogglePlay();
+				void FollowGameCamera();
+				bool LooksThroughGameCamera() const;
+				void DrawPlayToolbar();
+				void DrawCameraFrustum();
+				struct EditorView { glm::vec3 position{ 0.0f }, forward{ 0.0f, 0.0f, -1.0f }; float fov = 1.0f; };
+				EditorView editorView;
+				bool cameraEjected = false;
 				Fox::Editor::CameraEditor cameraEditor;
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written

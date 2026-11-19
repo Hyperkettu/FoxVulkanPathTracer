@@ -133,6 +133,9 @@ namespace Fox {
 				if (showAgentPaths) {
 					DrawAgentPaths();
 				}
+				DrawVolumeBounds();
+				DrawCameraFrustum();
+				DrawPlayToolbar();
 
 				if (shell.IsOpen(Window::Controls)) {
 					shell.Place(Window::Controls, uiScale);
@@ -148,12 +151,146 @@ namespace Fox {
 				}
 				std::string hint = graph.IsValid(selected) ? graph.GetName(selected) + "   |   " : std::string();
 				hint += Fox::Editor::TransformGizmo::ModeName(gizmo.GetMode());
-				hint += raytracingScene->IsPhysicsPlaying() ? "   |   Playing: F5 stops" : "   |   F5 play";
+				hint += raytracingScene->IsPlaying() ? "   |   Playing: F5 stop  F6 pause  F7 step  F8 camera" : "   |   F5 play";
 				if (graph.IsValid(selected) && graph.GetRegistry().Has<Fox::Scene::NavAgentComponent>(selected)) {
 					hint += "   |   Shift+click: send it there";
 				}
 				hint += "   |   F1 find   Ctrl+Space content   E leave edit mode";
 				shell.DrawStatusBar(status, isError, hint, uiScale);
+			}
+
+			void VulkanRHI::DrawPlayToolbar() {
+				// Above the view, in the middle: play / stop, pause, step, speed, game time and which camera
+				auto& scene = *raytracingScene;
+				const bool playing = scene.IsPlaying();
+				const ImGuiViewport* viewport = ImGui::GetMainViewport();
+				ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + 4.0f * uiScale),
+					ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+				ImGui::SetNextWindowBgAlpha(0.85f);
+				const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings
+					| ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+				if (!ImGui::Begin("##play", nullptr, flags)) {
+					ImGui::End();
+					return;
+				}
+				if (playing) {
+					ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.2f, 0.18f, 1.0f));
+				}
+				if (ImGui::Button(playing ? "Stop" : "Play")) {
+					Defer([this] { TogglePlay(); });
+				}
+				if (playing) {
+					ImGui::PopStyleColor();
+				}
+				ImGui::SetItemTooltip(playing ? "F5: stop; the scene goes back as it was" : "F5: play the game on a copy of the scene");
+				ImGui::BeginDisabled(!playing);
+				ImGui::SameLine();
+				const bool paused = playing && scene.GetClock().paused;
+				if (ImGui::Button(paused ? "Resume" : "Pause")) {
+					scene.SetPaused(!paused);
+				}
+				ImGui::SetItemTooltip("F6");
+				ImGui::SameLine();
+				if (ImGui::Button("Step")) {
+					scene.StepFrame();
+				}
+				ImGui::SetItemTooltip("F7: one frame (1/60 s), paused");
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				float speed = scene.GetClock().timeScale;
+				ImGui::SetNextItemWidth(90.0f * uiScale);
+				if (ImGui::SliderFloat("##speed", &speed, 0.0f, 4.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
+					scene.SetTimeScale(speed);
+				}
+				ImGui::SetItemTooltip("Game speed (double click to type)");
+				if (playing) {
+					const auto& clock = scene.GetClock();
+					ImGui::SameLine();
+					ImGui::Text("%.1f s  frame %llu", clock.time, static_cast<unsigned long long>(clock.frame));
+					ImGui::SameLine();
+					const bool hasCamera = static_cast<bool>(scene.FindGameCamera());
+					ImGui::BeginDisabled(!hasCamera);
+					if (ImGui::Button(LooksThroughGameCamera() ? "Game camera" : "Free camera")) {
+						RunKeyCommand(SDL_SCANCODE_F8);
+					}
+					ImGui::EndDisabled();
+					ImGui::SetItemTooltip(hasCamera ? "F8: look through the game's camera, or fly freely"
+						: "No game camera: Create > Game Camera (an entity with a Camera component)");
+				}
+				ImGui::End();
+			}
+
+			void VulkanRHI::DrawCameraFrustum() {
+				// The selected game camera: where it looks and how wide (not while looking through it)
+				auto& graph = raytracingScene->GetSceneGraph();
+				const auto selected = gizmo.GetSelected();
+				const auto* component = graph.IsValid(selected) ? graph.GetRegistry().TryGet<Fox::Scene::CameraComponent>(selected) : nullptr;
+				if (!component || LooksThroughGameCamera()) {
+					return;
+				}
+				const glm::mat4 world = graph.GetWorldMatrix(selected);
+				const glm::vec3 origin(world[3]);
+				const glm::vec3 forward = -glm::normalize(glm::vec3(world[2]));
+				const glm::vec3 up = glm::normalize(glm::vec3(world[1]));
+				const glm::vec3 right = glm::normalize(glm::vec3(world[0]));
+				const float length = 2.0f;
+				const float halfHeight = std::tan(glm::radians(component->fov) * 0.5f) * length;
+				const float aspect = static_cast<float>(gbuffer->extent.width) / std::max(static_cast<float>(gbuffer->extent.height), 1.0f);
+				const float halfWidth = halfHeight * aspect;
+				glm::vec3 corners[4] = {
+					origin + forward * length - right * halfWidth - up * halfHeight,
+					origin + forward * length + right * halfWidth - up * halfHeight,
+					origin + forward * length + right * halfWidth + up * halfHeight,
+					origin + forward * length - right * halfWidth + up * halfHeight,
+				};
+				glm::vec2 apex, pixels[4];
+				if (!Fox::Editor::TransformGizmo::Project(GizmoView(), origin, apex)) {
+					return;
+				}
+				for (int i = 0; i < 4; i++) {
+					if (!Fox::Editor::TransformGizmo::Project(GizmoView(), corners[i], pixels[i])) {
+						return;
+					}
+				}
+				ImDrawList* draw = ImGui::GetBackgroundDrawList();
+				const ImU32 color = IM_COL32(255, 220, 120, 200);
+				for (int i = 0; i < 4; i++) {
+					draw->AddLine(ImVec2(apex.x, apex.y), ImVec2(pixels[i].x, pixels[i].y), color, 1.2f * uiScale);
+					draw->AddLine(ImVec2(pixels[i].x, pixels[i].y), ImVec2(pixels[(i + 1) % 4].x, pixels[(i + 1) % 4].y), color, 1.2f * uiScale);
+				}
+				// Its up side
+				const glm::vec3 top = origin + forward * length + up * halfHeight * 1.4f;
+				glm::vec2 topPixel;
+				if (Fox::Editor::TransformGizmo::Project(GizmoView(), top, topPixel)) {
+					draw->AddTriangleFilled(ImVec2(topPixel.x, topPixel.y), ImVec2(pixels[2].x, pixels[2].y), ImVec2(pixels[3].x, pixels[3].y), IM_COL32(255, 220, 120, 90));
+				}
+			}
+
+			void VulkanRHI::DrawVolumeBounds() {
+				// The selected smoke volume's box, so its extent shows where it is thin
+				auto& graph = raytracingScene->GetSceneGraph();
+				const auto selected = gizmo.GetSelected();
+				const auto* volume = graph.IsValid(selected) ? graph.GetRegistry().TryGet<Fox::Scene::VolumeComponent>(selected) : nullptr;
+				if (!volume) {
+					return;
+				}
+				const glm::mat4 box = graph.GetWorldMatrix(selected) * glm::scale(glm::mat4(1.0f), volume->size);
+				glm::vec2 corners[8];
+				for (int i = 0; i < 8; i++) {
+					const glm::vec3 local((i & 1) ? 0.5f : -0.5f, (i & 2) ? 0.5f : -0.5f, (i & 4) ? 0.5f : -0.5f);
+					if (!Fox::Editor::TransformGizmo::Project(GizmoView(), glm::vec3(box * glm::vec4(local, 1.0f)), corners[i])) {
+						return;
+					}
+				}
+				ImDrawList* draw = ImGui::GetBackgroundDrawList();
+				const ImU32 color = IM_COL32(200, 200, 255, 160);
+				for (int i = 0; i < 8; i++) {
+					for (int axis = 1; axis < 8; axis <<= 1) {
+						if (!(i & axis)) {
+							draw->AddLine(ImVec2(corners[i].x, corners[i].y), ImVec2(corners[i | axis].x, corners[i | axis].y), color, 1.2f * uiScale);
+						}
+					}
+				}
 			}
 
 			void VulkanRHI::DrawAgentPaths() {
@@ -340,6 +477,17 @@ namespace Fox {
 					"rigid body sphere drop");
 				shell.Add("Create/Physics/Box", [&] { gizmo.Select(scene.AddPhysicsCrate(spawn + glm::vec3(1.0f, 3.0f, 0.0f))); }, "", true, -1,
 					"rigid body crate cube drop");
+				shell.Add("Create/Game Camera", [&] {
+					gizmo.Select(scene.AddGameCamera(pose.position, glm::normalize(pose.target - pose.position), glm::degrees(Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->GetFov())));
+				}, "", true, -1, "camera play view look through");
+				shell.Add("Create/Effects/Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f))); }, "", true, -1,
+					"volume volumetric smoke steam haze");
+				shell.Add("Create/Effects/Glowing Smoke", [&] { gizmo.Select(scene.AddSmoke(spawn + glm::vec3(0.0f, 2.5f, 0.0f), true)); }, "", true, -1,
+					"volume volumetric fire embers glow");
+				shell.Add("Create/Effects/Fog", [&] { scene.GetEnvironment().fog.enabled = !scene.GetEnvironment().fog.enabled; }, "", true,
+					scene.GetEnvironment().fog.enabled ? 1 : 0, "volumetric height fog mist haze atmosphere");
+				shell.Add("Create/Effects/Clouds", [&] { scene.GetEnvironment().clouds.enabled = !scene.GetEnvironment().clouds.enabled; }, "", true,
+					scene.GetEnvironment().clouds.enabled ? 1 : 0, "volumetric cloud layer sky weather");
 				shell.Add("Create/Navigation/Agent", [&] { gizmo.Select(scene.AddNavAgent(spawn)); }, "", true, -1,
 					"nav agent walker pathfinding a star character");
 				shell.Separator("Create");
@@ -353,9 +501,23 @@ namespace Fox {
 					gizmo.Select(scene.AddLight(LightComponent::Type::Spot, spawn + glm::vec3(0.0f, 4.0f, 0.0f)));
 				}, "", true, -1, "lamp cone");
 
+				// --- Play ---
+				const bool playing = scene.IsPlaying();
+				shell.Add("Play/Play", [this] { Defer([this] { TogglePlay(); }); }, "F5", true, playing ? 1 : 0,
+					"start stop game simulate physics run");
+				shell.Add("Play/Pause", [this] { RunKeyCommand(SDL_SCANCODE_F6); }, "F6", playing, playing && scene.GetClock().paused ? 1 : 0,
+					"freeze game time resume");
+				shell.Add("Play/Step Frame", [this] { RunKeyCommand(SDL_SCANCODE_F7); }, "F7", playing, -1, "advance one frame paused");
+				shell.Add("Play/Free Camera", [this] { RunKeyCommand(SDL_SCANCODE_F8); }, "F8", playing, playing && cameraEjected ? 1 : 0,
+					"eject possess game camera fly");
+				for (float speed : { 0.1f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f }) {
+					char label[32];
+					std::snprintf(label, sizeof(label), "Play/Speed/%gx", speed);
+					shell.Add(label, [&scene, speed] { scene.SetTimeScale(speed); }, "", true,
+						scene.GetClock().timeScale == speed ? 1 : 0, "time scale slow motion fast forward");
+				}
+
 				// --- Physics ---
-				shell.Add("Physics/Play", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_F5); }); }, "F5", true,
-					scene.IsPhysicsPlaying() ? 1 : 0, "simulate rigid bodies jolt start stop");
 				shell.Add("Physics/Add Body to Selection", [&scene, selected] {
 					auto& registry = scene.GetSceneGraph().GetRegistry();
 					if (!registry.Has<Fox::Scene::PhysicsComponent>(selected)) {

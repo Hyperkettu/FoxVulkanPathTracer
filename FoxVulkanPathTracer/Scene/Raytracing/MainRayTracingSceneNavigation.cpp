@@ -442,6 +442,84 @@ namespace Fox {
 				});
 			}
 
+			// --- Game camera ---
+
+			MainRayTracingScene::Entity MainRayTracingScene::FindGameCamera() const {
+				Entity best;
+				int bestPriority = INT32_MIN;
+				graph.GetRegistry().Each<Fox::Scene::CameraComponent>([&](Entity entity, const Fox::Scene::CameraComponent& camera) {
+					if (camera.enabled && graph.IsActiveInHierarchy(entity) && camera.priority > bestPriority) {
+						best = entity;
+						bestPriority = camera.priority;
+					}
+				});
+				return best;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddGameCamera(const glm::vec3& position, const glm::vec3& forward, float fovDegrees) {
+				size_t count = 0;
+				graph.GetRegistry().Each<Fox::Scene::CameraComponent>([&](Entity, Fox::Scene::CameraComponent&) { count++; });
+				const Entity entity = graph.CreateEntity(count == 0 ? "Game camera" : "Game camera " + std::to_string(count + 1));
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				transform.rotation = RotationTowards(-forward); // Its -Z along forward
+				graph.SetWorldTransform(entity, transform);
+				graph.GetRegistry().Add<Fox::Scene::CameraComponent>(entity).fov = fovDegrees;
+				return entity;
+			}
+
+			// --- Volumetrics (here for want of a better file: short) ---
+
+			size_t MainRayTracingScene::FillVolumeConstants(Fox::Graphics::Vulkan::CameraUBO& constants) const {
+				const Fog& fog = environment.fog;
+				constants.fog = glm::vec4(std::max(fog.density, 0.0f), std::max(fog.falloff, 0.0f), fog.baseHeight, glm::clamp(fog.anisotropy, -0.95f, 0.95f));
+				constants.fogColor = glm::vec4(glm::clamp(fog.color, glm::vec3(0.0f), glm::vec3(1.0f)), fog.enabled ? 1.0f : 0.0f);
+				const Clouds& clouds = environment.clouds;
+				constants.cloudLayer = glm::vec4(clouds.bottom, std::max(clouds.top, clouds.bottom + 1.0f), glm::clamp(clouds.coverage, 0.0f, 1.0f), std::max(clouds.density, 0.0f));
+				constants.cloudShape = glm::vec4(std::max(clouds.size, 1.0f), 0.0f, glm::clamp(clouds.anisotropy, -0.95f, 0.95f), clouds.enabled ? 1.0f : 0.0f);
+				constants.cloudWind = glm::vec4(clouds.wind, glm::clamp(clouds.albedo, 0.0f, 1.0f));
+				constants.cloudShadows = clouds.shadows ? 1u : 0u;
+
+				size_t found = 0;
+				uint32_t count = 0;
+				graph.GetRegistry().Each<Fox::Scene::VolumeComponent>([&](Entity entity, const Fox::Scene::VolumeComponent& volume) {
+					if (!volume.enabled || !graph.IsActiveInHierarchy(entity) || volume.density <= 0.0f) {
+						return;
+					}
+					found++;
+					if (count >= Fox::Graphics::Vulkan::MAX_VOLUMES) {
+						return;
+					}
+					const glm::mat4 box = graph.GetWorldMatrix(entity) * glm::scale(glm::mat4(1.0f), glm::max(volume.size, glm::vec3(0.01f)));
+					const glm::mat4 toLocal = glm::inverse(box);
+					Fox::Graphics::Vulkan::VolumeGPU& gpu = constants.volumes[count++];
+					for (int row = 0; row < 3; row++) {
+						gpu.rows[row] = glm::vec4(toLocal[0][row], toLocal[1][row], toLocal[2][row], toLocal[3][row]);
+					}
+					gpu.colorDensity = glm::vec4(glm::clamp(volume.color, glm::vec3(0.0f), glm::vec3(1.0f)), volume.density);
+					gpu.emission = glm::vec4(volume.glow * std::max(volume.glowStrength, 0.0f), glm::clamp(volume.anisotropy, -0.95f, 0.95f));
+					gpu.motion = glm::vec4(volume.velocity, std::max(volume.noiseSize, 0.01f));
+					gpu.shape = glm::vec4(glm::clamp(volume.noiseStrength, 0.0f, 1.0f), glm::clamp(volume.softness, 0.0f, 1.0f), volume.round ? 1.0f : 0.0f, 0.0f);
+				});
+				constants.volumeCount = count;
+				return found;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddSmoke(const glm::vec3& position, bool glowing) {
+				const Entity entity = graph.CreateEntity(glowing ? "Glowing smoke" : "Smoke");
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+				auto& volume = graph.GetRegistry().Add<Fox::Scene::VolumeComponent>(entity);
+				if (glowing) {
+					volume.color = glm::vec3(0.25f, 0.22f, 0.2f);
+					volume.glowStrength = 3.0f;
+					volume.density = 0.8f;
+					volume.velocity = glm::vec3(0.0f, 1.2f, 0.0f);
+				}
+				return entity;
+			}
+
 			MainRayTracingScene::Entity MainRayTracingScene::AddNavAgent(const glm::vec3& position) {
 				size_t count = 0;
 				graph.GetRegistry().Each<NavAgentComponent>([&](Entity, NavAgentComponent&) { count++; });

@@ -91,10 +91,14 @@ namespace Fox {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(WindSkeleton::Settings,
 			windDirection, windSpeed, gustStrength, gustSpeed, turbulence,
 			trunkFrequency, maxFrequency, dampingRatio, response, maxAngle)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TreeGrowth, enabled, duration, startScale, leafLag, loop)
 	}
 
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(VolumeComponent, enabled, size, round, softness, density, color, anisotropy,
+			glow, glowStrength, noiseSize, noiseStrength, velocity)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainLayer, name, albedo, normal, roughness, metallic, occlusion, height,
 			normalGreenUp, tiling, tint, roughnessScale, normalStrength)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainSettings, size, resolution, blendResolution, position, blendSoftness, layers)
@@ -110,8 +114,10 @@ namespace Fox {
 
 			using Scene = MainRayTracingScene;
 
+			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Fog, enabled, density, falloff, baseHeight, color, anisotropy)
+			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Clouds, enabled, bottom, top, coverage, density, size, wind, anisotropy, albedo, shadows)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial)
+				ground, terrain, groundHeight, groundMaterial, fog, clouds)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
@@ -160,7 +166,7 @@ namespace Fox {
 				TreeAssets* treeAssets = nullptr; // While a file is saved or loaded
 
 				json TreeToJson(const Fox::Scene::Tree& tree) {
-					return { { "shape", tree.shape }, { "look", tree.look }, { "wind", tree.wind } };
+					return { { "shape", tree.shape }, { "look", tree.look }, { "wind", tree.wind }, { "growth", tree.growth } };
 				}
 
 				std::shared_ptr<Fox::Scene::Tree> TreeFromJson(const json& j) {
@@ -168,6 +174,7 @@ namespace Fox {
 					tree->shape = j.value("shape", Fox::Graphics::Geometry::TreeSettings{});
 					tree->look = j.value("look", Fox::Scene::TreeLook{});
 					tree->wind = j.value("wind", Fox::Animation::WindSkeleton::Settings{});
+					tree->growth = j.value("growth", Fox::Animation::TreeGrowth{});
 					return tree;
 				}
 
@@ -444,6 +451,34 @@ namespace Fox {
 						},
 					},
 					{
+						"camera",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::CameraComponent* camera = graph.GetRegistry().TryGet<Fox::Scene::CameraComponent>(entity);
+							if (!camera) {
+								return false;
+							}
+							j = *camera;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::CameraComponent>(entity, j.get<Fox::Scene::CameraComponent>());
+						},
+					},
+					{
+						"volume",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::VolumeComponent* volume = graph.GetRegistry().TryGet<Fox::Scene::VolumeComponent>(entity);
+							if (!volume) {
+								return false;
+							}
+							j = *volume;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::VolumeComponent>(entity, j.get<Fox::Scene::VolumeComponent>());
+						},
+					},
+					{
 						"navAgent",
 						[](const SceneGraph& graph, Entity entity, json& j) {
 							const Fox::Scene::NavAgentComponent* nav = graph.GetRegistry().TryGet<Fox::Scene::NavAgentComponent>(entity);
@@ -553,33 +588,13 @@ namespace Fox {
 			}
 
 			bool MainRayTracingScene::SaveToFile(const std::string& path, const CameraPose& camera, std::string& error) {
-				// While physics plays, the scene is saved as it was before it started
-				struct PutBack {
-					Fox::Scene::SceneGraph& graph;
-					std::vector<std::pair<Entity, Fox::Scene::Transform>> transforms;
-					~PutBack() {
-						for (const auto& [entity, transform] : transforms) {
-							graph.SetLocalTransform(entity, transform);
-						}
-						if (!transforms.empty()) {
-							graph.UpdateTransforms();
-						}
-					}
-				} putBack{ graph, {} };
-				if (physicsPlaying) {
-					for (const auto& [entity, transform] : playSnapshot) {
-						if (graph.IsValid(entity) && graph.HasTransform(entity)) {
-							putBack.transforms.emplace_back(entity, graph.GetLocalTransform(entity));
-							graph.SetLocalTransform(entity, transform);
-						}
-					}
-					graph.UpdateTransforms();
-				}
+				// While the game plays, the scene is saved as it was when play started
+				const bool fromSnapshot = physicsPlaying && playScene;
 
 				json file;
 				file["version"] = FILE_VERSION;
 				file["camera"] = camera;
-				file["environment"] = environment;
+				file["environment"] = fromSnapshot ? playScene->environment : environment;
 				// The terrain's heights and blend map go in files of their own beside the scene file
 				if (terrain.IsCreated()) {
 					json entry = terrain.settings;
@@ -599,7 +614,11 @@ namespace Fox {
 				}
 				file["cameraPaths"] = cameraManager.GetPaths();
 				file["activeCameraPath"] = cameraManager.GetActivePath();
-				{
+				if (fromSnapshot) {
+					file["entities"] = json::parse(playScene->entities);
+					file["treeAssets"] = json::parse(playScene->treeAssets);
+				}
+				else {
 					TreeAssets assets;
 					treeAssets = &assets;
 					file["entities"] = EntitiesToJson(graph);
@@ -627,8 +646,199 @@ namespace Fox {
 				}
 			}
 
+			// --- Play mode: the scene as it was when play started ---
+
+			namespace {
+				// Component values to put back on the same entities: fits(now, saved) says whether the component is
+				// still the same thing (otherwise the scene is restored the slow way, from JSON); apply(now, value)
+				// keeps what the renderer set up in `now` (placements) while value takes the rest from the snapshot
+				template <typename T, typename Fits, typename Apply>
+				std::function<bool(bool)> SnapshotOf(SceneGraph& graph, Fits fits, Apply apply) {
+					std::vector<std::pair<Entity, T>> saved;
+					graph.GetRegistry().Each<T>([&](Entity entity, T& component) { saved.emplace_back(entity, component); });
+					return [&graph, saved = std::move(saved), fits, apply](bool doApply) {
+						size_t now = 0;
+						graph.GetRegistry().Each<T>([&](Entity, T&) { now++; });
+						if (now != saved.size()) {
+							return false;
+						}
+						for (const auto& [entity, component] : saved) {
+							T* current = graph.IsValid(entity) ? graph.GetRegistry().TryGet<T>(entity) : nullptr;
+							if (!current || !fits(*current, component)) {
+								return false;
+							}
+							if (doApply) {
+								T value = component;
+								apply(*current, value);
+								*current = std::move(value);
+							}
+						}
+						return true;
+					};
+				}
+
+				template <typename T>
+				std::function<bool(bool)> SnapshotOf(SceneGraph& graph) {
+					return SnapshotOf<T>(graph, [](const T&, const T&) { return true; }, [](const T&, T&) {});
+				}
+			}
+
+			void MainRayTracingScene::TakePlaySnapshot() {
+				auto snapshot = std::make_unique<PlaySnapshot>();
+				TreeAssets assets;
+				treeAssets = &assets;
+				const json entities = EntitiesToJson(graph);
+				treeAssets = nullptr;
+				snapshot->entities = entities.dump();
+				snapshot->treeAssets = assets.list.dump();
+				snapshot->trees.resize(assets.list.size());
+				graph.GetRegistry().Each<MeshComponent>([&](Entity, MeshComponent& mesh) {
+					if (mesh.tree) {
+						auto found = assets.ids.find(mesh.tree.get());
+						if (found != assets.ids.end()) {
+							snapshot->trees[found->second] = mesh.tree;
+						}
+					}
+				});
+				snapshot->environment = environment;
+				snapshot->order = graph.DepthFirst();
+				snapshot->rebuilds = rebuildCount;
+
+				// The quick way back: values onto the same entities and components
+				std::vector<std::tuple<Entity, std::string, bool>> names;
+				for (Entity entity : snapshot->order) {
+					names.emplace_back(entity, graph.GetName(entity), graph.IsActive(entity));
+				}
+				snapshot->restores.push_back([this, names = std::move(names)](bool apply) {
+					if (apply) {
+						for (const auto& [entity, name, active] : names) {
+							graph.SetName(entity, name);
+							graph.SetActive(entity, active);
+						}
+					}
+					return true;
+				});
+				using namespace Fox::Scene;
+				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<NavAgentComponent>(graph,
+					[](const NavAgentComponent&, const NavAgentComponent&) { return true; },
+					[](const NavAgentComponent&, NavAgentComponent& value) { value.Invalidate(); }));
+				snapshot->restores.push_back(SnapshotOf<LightComponent>(graph,
+					[](const LightComponent&, const LightComponent&) { return true; },
+					[](const LightComponent& now, LightComponent& value) {
+						value.placed = now.placed;
+						value.index = now.index;
+						value.uploaded = now.uploaded;
+					}));
+				snapshot->restores.push_back(SnapshotOf<WaterComponent>(graph,
+					[](const WaterComponent& now, const WaterComponent& saved) {
+						return now.size == saved.size && now.cellSize == saved.cellSize && now.sprayDroplets == saved.sprayDroplets;
+					},
+					[](const WaterComponent& now, WaterComponent& value) {
+						value.placed = now.placed;
+						value.surface = now.surface;
+						value.spraySurface = now.spraySurface;
+						value.hasSpray = now.hasSpray;
+						value.simulation = now.simulation;
+						value.placedMatrix = now.placedMatrix;
+					}));
+				// Meshes: only whether they show (anything else about them needs a rebuild anyway)
+				snapshot->restores.push_back(SnapshotOf<MeshComponent>(graph,
+					[](const MeshComponent& now, const MeshComponent& saved) {
+						return now.type == saved.type && now.file == saved.file && now.displacement == saved.displacement
+							&& now.tree == saved.tree && now.radius == saved.radius;
+					},
+					[](const MeshComponent& now, MeshComponent& value) {
+						const bool enabled = value.enabled;
+						value = now;
+						value.enabled = enabled;
+					}));
+				playScene = std::move(snapshot);
+			}
+
+			void MainRayTracingScene::RestorePlaySnapshot() {
+				if (!playScene) {
+					return;
+				}
+				PlaySnapshot& snapshot = *playScene;
+
+				// The quick way when the same entities are there with the same kinds of components, and nothing
+				// needed a rebuild meanwhile
+				bool quick = rebuildCount == snapshot.rebuilds && !structureChanged && !treesChanged && graph.DepthFirst() == snapshot.order;
+				for (const auto& restore : snapshot.restores) {
+					quick = quick && restore(false);
+				}
+
+				const Environment& before = snapshot.environment;
+				const bool groundChanged = before.ground != environment.ground || before.terrain != environment.terrain
+					|| before.groundHeight != environment.groundHeight || before.groundMaterial.color != environment.groundMaterial.color
+					|| before.groundMaterial.roughness != environment.groundMaterial.roughness;
+				environment = before;
+
+				if (quick) {
+					for (const auto& restore : snapshot.restores) {
+						restore(true);
+					}
+					graph.UpdateTransforms();
+					if (groundChanged) {
+						structureChanged = true;
+					}
+					std::cout << "Play: stopped, the scene is back as it was\n";
+					return;
+				}
+
+				// Otherwise the whole scene again, from the snapshot (one rebuild; its trees are the same trees)
+				Fox::Scene::SceneGraph restored;
+				try {
+					TreeAssets assets;
+					assets.loaded = snapshot.trees;
+					treeAssets = &assets;
+					EntitiesFromJson(json::parse(snapshot.entities), restored);
+					treeAssets = nullptr;
+				}
+				catch (const std::exception& e) {
+					treeAssets = nullptr;
+					std::cout << "Play: could not restore the scene (" << e.what() << "): it stays as it is\n";
+					return;
+				}
+				graph = std::move(restored);
+				objectEntities.clear();
+				structureChanged = true;
+				treesChanged = true;
+				std::cout << "Play: stopped, the scene is back as it was (rebuilt: entities or meshes changed while it played)\n";
+			}
+
+			bool MainRayTracingScene::StartPlay(std::string& error) {
+				if (physicsPlaying) {
+					return true;
+				}
+				clock = GameClock{};
+				TakePlaySnapshot();
+				if (!StartPhysics(error)) {
+					playScene.reset();
+					return false;
+				}
+				std::cout << "Play: started\n";
+				return true;
+			}
+
+			void MainRayTracingScene::StopPlay(bool restore) {
+				if (!physicsPlaying) {
+					playScene.reset();
+					return;
+				}
+				StopPhysics(); // Bodies out, entities back where they were
+				if (restore) {
+					RestorePlaySnapshot();
+				}
+				playScene.reset();
+				clock = GameClock{};
+			}
+
 			bool MainRayTracingScene::LoadFromFile(const std::string& path, CameraPose& camera, std::string& error) {
-				StopPhysics();
+				StopPlay(false);
 				json file;
 				try {
 					std::ifstream in(path);

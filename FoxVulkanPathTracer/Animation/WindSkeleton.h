@@ -7,6 +7,18 @@ namespace Fox {
 
 	namespace Animation {
 
+		// A tree growing from a sprout: its bones grow out from the root in order along the tree (a growth front
+		// moving out at constant speed: the trunk rises and branches sprout where it has passed, each bone
+		// lengthening and thickening from its base), the whole tree enlarging from startScale meanwhile, and the
+		// leaf cards unfolding from their stems leafLag behind the branches (in the skinning shader).
+		struct TreeGrowth {
+			bool enabled = false;      // Off: grown
+			float duration = 20.0f;    // Seconds from sprout to grown
+			float startScale = 0.08f;  // Size of the sprout, relative to the grown tree
+			float leafLag = 0.3f;      // How far behind the branches the leaves are (a fraction of the tree)
+			bool loop = false;         // Starts again once grown
+		};
+
 		// Moves a rig of branches (see TreeGenerator) in the wind. Every joint is an angular spring: the bone
 		// is turned away from its rest angle by the wind's torque and pulled back in proportion to how far it
 		// turned, with damping:
@@ -44,6 +56,13 @@ namespace Fox {
 			// Per bone: pose * inverse(bind), in mesh space (for RayTracingScene::SetJointMatrices)
 			const std::vector<glm::mat4>& GetSkinMatrices() const { return skinMatrices; }
 
+			// How grown it is, from 0 (a sprout) to 1 (grown), for the next Update
+			void SetGrowth(float progress, const TreeGrowth& growth);
+			// The leaves' growth front for the skinning shader (RayTracingScene::SetSkinGrowth): leaves whose stem
+			// is less than front metres along the tree have grown, over span metres; 1e30 when grown
+			float GetLeafFront() const { return leafFront; }
+			float GetLeafSpan() const { return leafSpan; }
+
 		private:
 			struct Joint {
 				int parent = -1;
@@ -63,7 +82,13 @@ namespace Fox {
 
 				glm::vec3 angle{ 0.0f };    // Rotation vector in the bone's frame
 				glm::vec3 velocity{ 0.0f };
+
+				float distance = 0.0f;   // Metres along the tree from the root to its start
+				float growth = 1.0f;     // Its own scale while growing (its subtree's too)
 			};
+			float rootScale = 1.0f;
+			float treeLength = 1.0f;     // The furthest tip, metres along the tree
+			float leafFront = 1e30f, leafSpan = 1.0f;
 
 			Settings settings;
 			std::vector<Joint> joints;

@@ -150,6 +150,18 @@ bool IsAlphaHole(uint submeshIndex, uint primitive, float2 barycentrics)
 
 
 // Mirrors Fox::Graphics::Vulkan::CameraUBO (ConstantBuffers.h).
+// A smoke volume (VolumeComponent), mirrors Fox::Graphics::Vulkan::VolumeGPU (ConstantBuffers.h)
+struct VolumeData
+{
+    float4 rows[3];      // World to its own space, where it fills -0.5..0.5 (3x4, row major)
+    float4 colorDensity; // Scattering albedo, density (extinction per metre)
+    float4 emission;     // Emitted radiance, phase anisotropy
+    float4 motion;       // Drift of its noise (m/s), noise size (metres)
+    float4 shape;        // Noise strength, edge softness, 1: round (0: box), unused
+};
+
+static const uint MAX_VOLUMES = 8;
+
 struct Camera
 {
     float3 camPos;
@@ -175,6 +187,17 @@ struct Camera
     int2 pickPixel;         // Report the object seen at this pixel in gPickResult; negative: none
     uint pickSlot;          // Entry of gPickResult to write (the frame in flight)
     float time;             // Seconds since start (animated surfaces: water)
+
+    // Participating media (volumes.slang)
+    float4 fog;             // Density per metre at the base, falloff per metre above it, base height, anisotropy
+    float4 fogColor;        // Scattering albedo, w: 1 = on
+    float4 cloudLayer;      // Bottom, top (metres), coverage 0..1, density per metre
+    float4 cloudShape;      // Noise size (metres), unused, anisotropy, w: 1 = on
+    float4 cloudWind;       // Drift (m/s), w: scattering albedo
+    uint volumeCount;       // Smoke volumes in use
+    uint cloudShadows;      // 1: the clouds shade surfaces
+    uint2 _volumePad;
+    VolumeData volumes[MAX_VOLUMES];
 };
 
 // Core PCG hash function (transforms a 32-bit state)
