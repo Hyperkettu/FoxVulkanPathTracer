@@ -1,6 +1,7 @@
 // Light sources of the path tracer and how to sample them:
 //   - the HDR environment map, importance sampled so the sun and bright sky are found reliably
-//   - analytic lights collected from the scene: emissive quads (area lights) and directional lights
+//   - lights collected from the scene: the sun and lamps, emissive quads, and every triangle of the other emissive
+//     surfaces (their emissive maps included), picked by how much light they give off
 //
 // Used by raygen.slang only.
 
@@ -112,25 +113,35 @@ enum class LightType
     Directional = 0,
     Point,
     Spot,
-    QuadAreaLight
+    QuadAreaLight,
+    EmissiveTriangle
 };
 
 // Mirrors Fox::Graphics::Vulkan::Light (Light.h)
 struct Light
 {
-    float3 position;   // Quad: center. Point / spot: where it is
+    float3 position;   // Quad: center. Point / spot: where it is. Triangle: its first corner
     float  _pad0;
-    float3 normal;     // Quad: surface normal. Directional: direction towards the light. Spot: direction it shines
+    float3 normal;     // Quad, triangle: surface normal. Directional: direction towards the light. Spot: direction it shines
     float  _pad1;
-    float3 tangentX;   // Quad: half extent along its first edge. Spot: x = cos(outer cone angle), y = cos(inner)
+    float3 tangentX;   // Quad: half extent along its first edge. Spot: x = cos(outer cone angle), y = cos(inner). Triangle: first edge
     float  _pad2;
-    float3 tangentY;   // Half extent along its second edge
+    float3 tangentY;   // Quad: half extent along its second edge. Triangle: second edge
     float  _pad3;
-    float3 color;      // Quad: emitted radiance. Directional: irradiance on a surface facing the light. Point / spot: intensity
+    float3 color;      // Quad, triangle: emitted radiance. Directional: irradiance on a surface facing the light. Point / spot: intensity
     float  _pad4;
-    float  area;       // Quad: surface area. Directional: angular radius of the disc in radians. Point / spot: bulb radius
+    float  area;       // Quad, triangle: surface area. Directional: angular radius of the disc in radians. Point / spot: bulb radius
     int    type;
-    int2   _pad5;
+    int    material;   // Triangle: its material
+    float  selection;  // Chance that SampleLight picks it
+    float  cumulative; // Sum of the chances up to and including it
+    float  u0;         // Triangle: texture coordinates of its corners
+    float  v0;
+    float  u1;
+    float  v1;
+    float  u2;
+    float  v2;
+    float  _pad5;
 };
 
 [[vk::binding(7, 0)]] StructuredBuffer<Light> gAllLights;
@@ -145,21 +156,31 @@ struct LightSample
     bool valid;
 };
 
-// Chance of picking any particular light
-float LightSelectionProbability(uint lightCount)
+// Density with which SampleLight() would generate the direction towards a point on an area light (quad or
+// triangle), given the distance to that point and the cosine at the light's surface.
+float AreaLightPdf(int lightIndex, float distance, float cosAtLight)
 {
-    return 1.0f / float(max(lightCount, 1u));
+    Light light = gAllLights[lightIndex];
+    float area = max(light.area, 1e-8f);
+    return light.selection * distance * distance / (max(cosAtLight, 1e-6f) * area);
 }
 
-// Density with which SampleLight() would generate the direction towards a point on an area light,
-// given the distance to that point and the cosine at the light's surface.
-float AreaLightPdf(int lightIndex, uint lightCount, float distance, float cosAtLight)
+// What an emissive triangle gives off at a point of it (barycentrics b1, b2 of its second and third corner)
+float3 TriangleEmission(Light light, float b1, float b2)
 {
-    float area = max(gAllLights[lightIndex].area, 1e-8f);
-    return LightSelectionProbability(lightCount) * distance * distance / (max(cosAtLight, 1e-6f) * area);
+    if (light.material < 0)
+        return light.color;
+    Material material = gAllMaterials[light.material];
+    float3 emission = material.emissive;
+    if (material.emissiveTexture >= 0)
+    {
+        float2 uv = float2(light.u0, light.v0) * (1.0f - b1 - b2) + float2(light.u1, light.v1) * b1 + float2(light.u2, light.v2) * b2;
+        emission *= SampleTexture(material.emissiveTexture, TransformUV(uv, material)).rgb;
+    }
+    return emission;
 }
 
-// Picks one light uniformly and a point on it
+// Picks one light, in proportion to its chance (power for the area lights), and a point on it
 LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
 {
     LightSample result;
@@ -173,8 +194,21 @@ LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
     if (lightCount == 0)
         return result;
 
-    uint index = min(uint(NextRandomFloat(rng) * float(lightCount)), lightCount - 1);
+    // The first light whose running sum passes a random number
+    float u = NextRandomFloat(rng);
+    uint low = 0, high = lightCount - 1;
+    while (low < high)
+    {
+        uint middle = (low + high) / 2;
+        if (gAllLights[middle].cumulative <= u)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    uint index = low;
     Light light = gAllLights[index];
+    if (light.selection <= 0.0f)
+        return result; // Every light is off
 
     if (light.type == (int)LightType::Directional)
     {
@@ -191,9 +225,33 @@ LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
         result.L = normalize(tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + toSun * cosTheta);
         result.distance = 1e5f;
         result.radiance = light.color;
-        result.pdf = LightSelectionProbability(lightCount);
+        result.pdf = light.selection;
         result.isDelta = true;
         result.valid = true;
+    }
+    else if (light.type == (int)LightType::EmissiveTriangle)
+    {
+        // A uniformly distributed point of the triangle
+        float2 u = NextRandomFloat2(rng);
+        float root = sqrt(u.x);
+        float b1 = root * (1.0f - u.y);
+        float b2 = root * u.y;
+        float3 samplePoint = light.position + light.tangentX * b1 + light.tangentY * b2;
+
+        float3 toLight = samplePoint - position;
+        float distance = length(toLight);
+        float3 L = toLight / max(distance, 1e-6f);
+
+        // Emissive surfaces emit from both sides
+        float cosAtLight = abs(dot(light.normal, L));
+        if (cosAtLight > 1e-4f && distance > 1e-4f)
+        {
+            result.L = L;
+            result.distance = distance;
+            result.radiance = TriangleEmission(light, b1, b2);
+            result.pdf = AreaLightPdf(int(index), distance, cosAtLight);
+            result.valid = MaxComponent(result.radiance) > 0.0f;
+        }
     }
     else if (light.type == (int)LightType::QuadAreaLight)
     {
@@ -212,7 +270,7 @@ LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
             result.L = L;
             result.distance = distance;
             result.radiance = light.color;
-            result.pdf = AreaLightPdf(int(index), lightCount, distance, cosAtLight);
+            result.pdf = AreaLightPdf(int(index), distance, cosAtLight);
             result.valid = true;
         }
     }
@@ -249,7 +307,7 @@ LightSample SampleLight(float3 position, uint lightCount, inout uint rng)
                 result.L = L;
                 result.distance = distance;
                 result.radiance = light.color * falloff / (distance * distance);
-                result.pdf = LightSelectionProbability(lightCount);
+                result.pdf = light.selection;
                 result.isDelta = true;
                 result.valid = true;
             }

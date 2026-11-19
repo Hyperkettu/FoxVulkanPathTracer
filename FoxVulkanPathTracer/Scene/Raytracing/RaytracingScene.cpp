@@ -639,6 +639,11 @@ namespace Fox {
                     materials.push_back(material);
                 }
 
+                // Emissive triangles: lights after the mesh's own
+                record.firstLight = static_cast<uint32_t>(lightOffset);
+                record.triangleLights = MakeTriangleLights(record.firstSubmesh, static_cast<uint32_t>(submeshes.size()) - record.firstSubmesh,
+                    static_cast<uint32_t>(lightOffset + mesh->GetLights().size()));
+
                 vertexOffset += static_cast<uint32_t>(meshVertices.size());
                 indexOffset += static_cast<uint32_t>(meshIndices.size());
                 materialOffset += static_cast<uint32_t>(meshMaterials.size());
@@ -664,6 +669,8 @@ namespace Fox {
                 // Lights are stored in world space; the mesh-space originals follow the object when it moves
                 placement.firstLight = static_cast<uint32_t>(lights.size());
                 placement.localLights = mesh.GetLights();
+                const auto& triangleLights = meshRecords[record].triangleLights;
+                placement.localLights.insert(placement.localLights.end(), triangleLights.begin(), triangleLights.end());
                 for (const Fox::Graphics::Vulkan::Light& light : placement.localLights) {
                     lights.push_back(TransformLight(light, transform));
                 }
@@ -671,8 +678,98 @@ namespace Fox {
                 placements.push_back(std::move(placement));
             }
 
+            std::vector<Fox::Graphics::Vulkan::Light> RayTracingScene::MakeTriangleLights(uint32_t first, uint32_t count, uint32_t firstLightIndex) {
+                std::vector<Fox::Graphics::Vulkan::Light> result;
+                for (uint32_t s = first; s < first + count && s < submeshes.size(); s++) {
+                    Fox::Graphics::Vulkan::Submesh& submesh = submeshes[s];
+                    const Fox::Graphics::Vulkan::Material& material = materials[submesh.materialIndex];
+                    const float emission = std::max({ material.emissive[0], material.emissive[1], material.emissive[2] });
+                    // Not: dark, terrain and water (their emissive fields mean other things), quads already lights
+                    if (emission <= 0.0f || material.layerMaterial != -1 || material.lightIndex >= 0 || submesh.pad1 != 0) {
+                        continue;
+                    }
+                    const uint32_t triangles = submesh.indexCount / 3;
+                    if (result.size() + triangles > MAX_TRIANGLE_LIGHTS) {
+                        std::cout << "Emissive surface with too many triangles to sample as lights (" << triangles << "): lit only when hit\n";
+                        continue;
+                    }
+
+                    submesh.pad2 = firstLightIndex + static_cast<uint32_t>(result.size()) + 1;
+                    for (uint32_t t = 0; t < triangles; t++) {
+                        const Fox::Graphics::Vulkan::Vertex* corner[3];
+                        for (int c = 0; c < 3; c++) {
+                            corner[c] = &vertices[indices[submesh.indexOffset + 3 * t + c]];
+                        }
+                        auto position = [](const Fox::Graphics::Vulkan::Vertex* v) { return glm::vec3(v->position[0], v->position[1], v->position[2]); };
+
+                        Fox::Graphics::Vulkan::Light light{};
+                        light.type = static_cast<int>(Fox::Core::Loaders::GLTF::LightType::EmissiveTriangle);
+                        light.position = position(corner[0]);
+                        light.tangentX = position(corner[1]) - light.position;
+                        light.tangentY = position(corner[2]) - light.position;
+                        light.color = glm::vec3(material.emissive[0], material.emissive[1], material.emissive[2]);
+                        light.material = static_cast<int>(submesh.materialIndex);
+                        light.u0 = corner[0]->uv[0]; light.v0 = corner[0]->uv[1];
+                        light.u1 = corner[1]->uv[0]; light.v1 = corner[1]->uv[1];
+                        light.u2 = corner[2]->uv[0]; light.v2 = corner[2]->uv[1];
+                        result.push_back(TransformLight(light, glm::mat4(1.0f))); // Normal and area
+                    }
+                }
+                return result;
+            }
+
+            void RayTracingScene::BuildLightSelection() {
+                using Fox::Core::Loaders::GLTF::LightType;
+                auto isArea = [](const Fox::Graphics::Vulkan::Light& light) {
+                    return light.type == static_cast<int>(LightType::QuadAreaLight) || light.type == static_cast<int>(LightType::EmissiveTriangle);
+                };
+                std::vector<double> weights(lightCount, 0.0);
+                double analytic = 0.0, area = 0.0;
+                for (uint32_t i = 0; i < lightCount; i++) {
+                    const auto& light = lights[i];
+                    const double luminance = std::max(0.0, 0.2126 * light.color.r + 0.7152 * light.color.g + 0.0722 * light.color.b);
+                    if (isArea(light)) {
+                        weights[i] = luminance * std::max(light.area, 0.0f);
+                        area += weights[i];
+                    }
+                    else {
+                        weights[i] = luminance > 0.0 ? 1.0 : 0.0; // Off lamps are not sampled
+                        analytic += weights[i];
+                    }
+                }
+                const double areaShare = area > 0.0 ? (analytic > 0.0 ? 0.5 : 1.0) : 0.0;
+                double sum = 0.0;
+                uint32_t last = 0;
+                for (uint32_t i = 0; i < lightCount; i++) {
+                    auto& light = lights[i];
+                    const double pool = isArea(light) ? area : analytic;
+                    const double share = isArea(light) ? areaShare : 1.0 - areaShare;
+                    const double selection = pool > 0.0 ? share * weights[i] / pool : 0.0;
+                    sum += selection;
+                    light.selection = static_cast<float>(selection);
+                    light.cumulative = static_cast<float>(sum);
+                    if (selection > 0.0) {
+                        last = i;
+                    }
+                }
+                // Rounding: the last light that can be picked ends the range
+                for (uint32_t i = last; i < lightCount; i++) {
+                    lights[i].cumulative = 1.0f;
+                }
+            }
+
             Fox::Graphics::Vulkan::Light RayTracingScene::TransformLight(Fox::Graphics::Vulkan::Light light, const glm::mat4& transform) {
                 const glm::mat3 linearTransform(transform);
+                if (light.type == (int)Fox::Core::Loaders::GLTF::LightType::EmissiveTriangle) {
+                    light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
+                    light.tangentX = linearTransform * light.tangentX;
+                    light.tangentY = linearTransform * light.tangentY;
+                    const glm::vec3 normal = glm::cross(light.tangentX, light.tangentY);
+                    const float length = glm::length(normal);
+                    light.area = 0.5f * length;
+                    light.normal = length > 0.0f ? normal / length : glm::vec3(0.0f, 1.0f, 0.0f);
+                    return light;
+                }
                 if (light.type == (int)Fox::Core::Loaders::GLTF::LightType::QuadAreaLight) {
                     light.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
                     light.tangentX = linearTransform * light.tangentX;
@@ -1132,6 +1229,10 @@ namespace Fox {
                         }
                     }
                     placement.previousMatrix = current;
+                    const int lightOffset = static_cast<int>(placement.firstLight) - static_cast<int>(meshRecords[placement.record].firstLight);
+                    for (uint32_t instance : placement.instances) {
+                        motion[instance].lights = glm::ivec4(lightOffset, 0, 0, 0);
+                    }
                 }
 
                 if (lightsDirty) {
@@ -1143,11 +1244,12 @@ namespace Fox {
                             }
                         }
                     }
+                    BuildLightSelection();
                 }
 
                 const VkDeviceSize motionSize = sizeof(InstanceMotion) * motion.size();
                 const VkDeviceSize lightsSize = sizeof(Fox::Graphics::Vulkan::Light) * lights.size();
-                const bool uploadLights = lightsDirty && lightsSize <= 65536;
+                const bool uploadLights = lightsDirty && lightCount > 0;
                 lightsDirty = false;
 
                 // The previous frame may still be reading these buffers
@@ -1160,7 +1262,10 @@ namespace Fox {
                         reinterpret_cast<const uint8_t*>(motion.data()) + done);
                 }
                 if (uploadLights) {
-                    vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), 0, lightsSize, lights.data());
+                    for (VkDeviceSize done = 0; done < lightsSize; done += 65536) {
+                        vkCmdUpdateBuffer(cmd, lightsSSBO->GetBuffer().Get(), done, std::min<VkDeviceSize>(65536, lightsSize - done),
+                            reinterpret_cast<const uint8_t*>(lights.data()) + done);
+                    }
                 }
 
                 // Joint matrices of the skinned meshes (in pieces: vkCmdUpdateBuffer takes up to 64 KiB)
@@ -1304,6 +1409,16 @@ namespace Fox {
                 surfaceMaterial.lightIndex = -1;
                 materials.push_back(surfaceMaterial);
 
+                // Glowing: its triangles are lights
+                MeshRecord& added = meshRecords.back();
+                Placement& placed = placements.back();
+                added.firstLight = placed.firstLight = static_cast<uint32_t>(lights.size());
+                added.triangleLights = MakeTriangleLights(added.firstSubmesh, 1, placed.firstLight);
+                placed.localLights = added.triangleLights;
+                for (const Fox::Graphics::Vulkan::Light& light : placed.localLights) {
+                    lights.push_back(TransformLight(light, transform));
+                }
+
                 vertexOffset += submesh.vertexCount;
                 indexOffset += submesh.indexCount;
                 materialOffset += 1;
@@ -1415,6 +1530,7 @@ namespace Fox {
                 if (lights.empty()) {
                     lights.push_back(Fox::Graphics::Vulkan::Light{});
                 }
+                BuildLightSelection();
 
                 // What is here now is the static scene; dynamic meshes (RebuildDynamicMeshes) go after it
                 staticCounts.vertices = static_cast<uint32_t>(vertices.size());

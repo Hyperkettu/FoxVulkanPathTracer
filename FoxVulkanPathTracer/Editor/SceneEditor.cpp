@@ -6,7 +6,7 @@ namespace Fox {
 
 	namespace Editor {
 
-		const char* const SceneEditor::SPHERE_PRESETS[SceneEditor::SPHERE_PRESET_COUNT] = { "Glass", "Frosted glass", "Chrome", "Gold", "White plastic" };
+		const char* const SceneEditor::SPHERE_PRESETS[SceneEditor::SPHERE_PRESET_COUNT] = { "Glass", "Frosted glass", "Chrome", "Gold", "White plastic", "Lamp (glowing)" };
 
 		std::vector<std::string> SceneEditor::ListModels(const std::string& folder) {
 			std::vector<std::string> files;
@@ -51,6 +51,12 @@ namespace Fox {
 				material.color = glm::vec3(1.0f, 0.78f, 0.34f);
 				material.roughness = 0.2f;
 				material.metallic = 1.0f;
+				break;
+			case 5: // Warm white, like a frosted bulb
+				material.color = glm::vec3(0.9f);
+				material.roughness = 0.6f;
+				material.emission = glm::vec3(1.0f, 0.8f, 0.55f);
+				material.emissionStrength = 20.0f;
 				break;
 			default:
 				material.color = glm::vec3(0.85f);

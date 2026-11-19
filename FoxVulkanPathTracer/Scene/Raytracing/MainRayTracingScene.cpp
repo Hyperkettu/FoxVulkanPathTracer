@@ -21,6 +21,10 @@ namespace Fox {
 					const float attenuation[3] = { attenuationColor.r, attenuationColor.g, attenuationColor.b };
 					material.SetAttenuation(attenuation, attenuationDistance);
 				}
+				const float strength = std::max(emissionStrength, 0.0f);
+				for (int c = 0; c < 3; c++) {
+					material.emissive[c] = std::max(emission[c], 0.0f) * strength;
+				}
 				return material;
 			}
 
@@ -119,7 +123,11 @@ namespace Fox {
 						}
 					}
 					else if (mesh->type == MeshComponent::Type::Sphere) {
-						AddSphere(glm::vec3(0.0f), mesh->radius, mesh->material.ToMaterial(), name);
+						Fox::Graphics::Vulkan::Material material = mesh->material.ToMaterial();
+						if (!mesh->material.emissionMap.empty() && mesh->material.emissionStrength > 0.0f) {
+							material.emissiveTexture = textureLibrary->Texture(mesh->material.emissionMap, true);
+						}
+						AddSphere(glm::vec3(0.0f), mesh->radius, material, name);
 						placed(entity, *mesh, world);
 					}
 				}

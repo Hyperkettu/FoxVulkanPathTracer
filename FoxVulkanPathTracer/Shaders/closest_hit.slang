@@ -174,7 +174,9 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
     payload.absorption = float3(material.absorptionR, material.absorptionG, material.absorptionB);
     payload.specularWeight = material.specularWeight;
     payload.emission = emission;
-    payload.lightIndex = material.lightIndex;
+    // Emissive triangles are lights each, in order from the submesh's first (pad2 - 1). The index is that of the
+    // mesh's first object; raygen adds the offset of this instance's object.
+    payload.lightIndex = submesh.pad2 > 0 ? int(submesh.pad2 - 1 + PrimitiveIndex()) : material.lightIndex;
     payload.instanceIndex = InstanceIndex();
     payload.occlusion = occlusion;
 

@@ -47,7 +47,7 @@ namespace Fox {
 			static std::vector<std::string> ListModels(const std::string& folder);
 
 			// Sphere materials to start from
-			static constexpr int SPHERE_PRESET_COUNT = 5;
+			static constexpr int SPHERE_PRESET_COUNT = 6;
 			static const char* const SPHERE_PRESETS[SPHERE_PRESET_COUNT];
 			static Fox::Scene::SurfaceMaterial SpherePreset(int preset);
 

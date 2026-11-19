@@ -28,6 +28,11 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   internal reflection, rough (frosted) glass through GGX microfacets and coloured absorption inside (Beer–Lambert).
   The default scene (`Scenes/default.json`) has a glass ball in the foreground.
 * **Lighting** Importance-sampled HDR environment map, emissive quads as area lights, and light components: a sun with soft shadows, point and spot lights.
+* **Emissive surfaces** Every surface that glows lights its surroundings:
+  * glTF models: `emissiveFactor` × `KHR_materials_emissive_strength` × the emissive map;
+  * spheres: Inspector > **Emission**, **Emission strength** and **Emissive map**, or the **Lamp (glowing)** preset; saved with the scene.
+
+  Each emissive triangle is also a light (at most 65536 per mesh). Light sampling picks one with a chance in proportion to the power it gives off, and the light at the sampled point is read from the emissive map. Hits on glowing surfaces are weighed against light sampling (multiple importance sampling), so small, bright emitters come out clean rather than as fireflies. When there are both, half of the light samples go to the sun and lamps, half to emissive surfaces.
 * **Displacement Mapping** Surfaces are tessellated and displaced when a model loads, so the relief is real geometry
   (silhouettes, shadows, reflections). Height maps can be assigned per material; models without them (glTF has no slot
   for displacement) get heights reconstructed from their normal maps.

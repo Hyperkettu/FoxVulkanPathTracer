@@ -112,7 +112,7 @@ namespace Fox {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TerrainSettings, size, resolution, blendResolution, position, blendSoftness, layers)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraPath, name, speed, ease, loop, lookAlongPath, keys)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SurfaceMaterial,
-			color, roughness, metallic, transmission, ior, attenuationColor, attenuationDistance)
+			color, roughness, metallic, transmission, ior, attenuationColor, attenuationDistance, emission, emissionStrength, emissionMap)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SurfaceTextures,
 			albedo, normal, roughness, metallic, occlusion, displacement, normalGreenUp, invertDisplacement)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TreeLook,

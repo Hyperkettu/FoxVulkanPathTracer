@@ -16,6 +16,11 @@ namespace Fox {
 			float ior = 1.5f;                    // Glass: solid (refracting) when > 0
 			glm::vec3 attenuationColor{ 1.0f };  // Glass: colour left after attenuationDistance metres
 			float attenuationDistance = 0.0f;    // 0: clear
+			// Light it gives off: colour x strength (radiance; 1 is as bright as a white surface in a sky of 1),
+			// times the emissive map's colour where it has one (path from the working directory)
+			glm::vec3 emission{ 1.0f };
+			float emissionStrength = 0.0f;       // 0: does not glow
+			std::string emissionMap;
 
 			Fox::Graphics::Vulkan::Material ToMaterial() const;
 		};

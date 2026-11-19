@@ -31,7 +31,7 @@ struct HitPayload
     float specularWeight;    // Scales the dielectric specular reflection
 
     float3 emission;         // Emitted radiance
-    int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1
+    int lightIndex;          // Entry in the light buffer if this surface is sampled as a light, else -1 (of the mesh's first object)
 
     uint instanceIndex;      // Acceleration structure instance that was hit (an object, see RayTracingScene)
     float3 skinnedMotion;    // Deforming (skinned) surfaces: previous minus current position, world space

@@ -248,6 +248,7 @@ namespace Fox {
                 // Per acceleration structure instance: world space now -> world space in the previous frame
                 struct InstanceMotion {
                     glm::vec4 rows[3]; // 3x4 matrix, row major
+                    glm::ivec4 lights{ 0 }; // x: its object's first light - its mesh's first object's (light indices of hits)
                 };
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<InstanceMotion>> instanceMotionSSBO;
 
@@ -524,6 +525,11 @@ namespace Fox {
                     bool dynamic = false; // Skinned: its acceleration structures are refitted every frame
                     int clusterMesh = -1; // Traced through clusters (clusterMeshes): no structures of its own; one submesh per cluster
 
+                    // Its emissive triangles, each a light (mesh space), after the mesh's own lights in each placement's.
+                    // The submeshes' light indices are those of the first placement, which starts at firstLight.
+                    std::vector<Fox::Graphics::Vulkan::Light> triangleLights;
+                    uint32_t firstLight = 0;
+
                     uint32_t FirstOf(int kind) const {
                         uint32_t first = firstSubmesh;
                         for (int k = 0; k < kind; k++) first += count[k];
@@ -561,6 +567,14 @@ namespace Fox {
                 std::vector<uint32_t> instancePlacements; // Per TLAS instance
 
                 static Fox::Graphics::Vulkan::Light TransformLight(Fox::Graphics::Vulkan::Light light, const glm::mat4& transform);
+
+                // Emissive surfaces: a light per triangle of the emissive submeshes [first, first + count), whose light
+                // indices then start at firstLightIndex (submesh pad2 = 1 + that)
+                std::vector<Fox::Graphics::Vulkan::Light> MakeTriangleLights(uint32_t first, uint32_t count, uint32_t firstLightIndex);
+                static constexpr size_t MAX_TRIANGLE_LIGHTS = 1u << 16; // Per mesh
+                // Each light's chance of being sampled: the sun and lamps evenly, the emissive quads and triangles by
+                // the power they give off, half and half when there are both
+                void BuildLightSelection();
 
                 bool tlasDirty = false;
                 bool lightsDirty = false;

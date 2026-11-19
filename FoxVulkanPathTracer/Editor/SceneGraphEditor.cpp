@@ -130,6 +130,32 @@ namespace Fox {
 					changed |= ImGui::ColorEdit3("Absorption colour", &material.attenuationColor.x);
 					changed |= ImGui::DragFloat("Absorption distance (m)", &material.attenuationDistance, 0.05f, 0.0f, 100.0f, "%.2f");
 				}
+
+				// Emission: the sphere lights its surroundings (each triangle is sampled as a light)
+				changed |= ImGui::ColorEdit3("Emission", &material.emission.x);
+				changed |= ImGui::DragFloat("Emission strength", &material.emissionStrength, 0.1f, 0.0f, 10000.0f, "%.1f",
+					ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("0: no glow. 1: as bright as a white surface under a sky of 1; lamps: 10 to 100");
+				static std::vector<std::string> images;
+				static bool imagesListed = false;
+				if (!imagesListed) {
+					images = Fox::Scene::TextureLibrary::ListImages("Textures");
+					imagesListed = true;
+				}
+				if (ImGui::BeginCombo("Emissive map", material.emissionMap.empty() ? "(none)" : material.emissionMap.c_str(), ImGuiComboFlags_HeightLarge)) {
+					if (ImGui::Selectable("(none)", material.emissionMap.empty())) {
+						material.emissionMap.clear();
+						changed = true;
+					}
+					for (const std::string& image : images) {
+						if (ImGui::Selectable(image.c_str(), image == material.emissionMap)) {
+							material.emissionMap = image;
+							changed = true;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SetItemTooltip("Multiplies the emission colour (sRGB image); wrapped around the sphere");
 				if (changed) {
 					mesh.radius = std::max(mesh.radius, 0.01f);
 					scene.MeshChanged(&mesh, nullptr); // Rebuilt once the control is let go

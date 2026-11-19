@@ -28,6 +28,7 @@
 struct InstanceMotion
 {
     float4 rows[3];
+    int4 lights; // x: what to add to a hit's light index (the lights of the instance's object, see closest_hit.slang)
 };
 [[vk::binding(13, 0)]] StructuredBuffer<InstanceMotion> gInstanceMotion;
 
@@ -444,10 +445,12 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
         if (MaxComponent(hit.emission) > 0.0f)
         {
             float weight = 1.0f;
-            if (!sampledDelta && hit.lightIndex >= 0)
+            // Light sampling could have found it too (an emissive quad or triangle): weigh the two
+            int lightIndex = hit.lightIndex >= 0 ? hit.lightIndex + gInstanceMotion[hit.instanceIndex].lights.x : -1;
+            if (!sampledDelta && lightIndex >= 0 && lightIndex < int(camera.lightCount))
             {
                 float lightPdf = (1.0f - EnvironmentSelectionProbability())
-                    * AreaLightPdf(hit.lightIndex, camera.lightCount, hit.hitT, abs(dot(hit.geometricNormal, V)));
+                    * AreaLightPdf(lightIndex, hit.hitT, abs(dot(hit.geometricNormal, V)));
                 weight = PowerHeuristic(bsdfPdf, lightPdf);
             }
 

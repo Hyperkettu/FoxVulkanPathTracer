@@ -68,7 +68,7 @@ namespace Fox {
                     int lightIndex = -1; // Index into the light list if this surface is also sampled as a light
                 };
 
-                enum class LightType { Directional, Point, Spot, QuadAreaLight };
+                enum class LightType { Directional, Point, Spot, QuadAreaLight, EmissiveTriangle };
 
                 struct LightData {
                     std::string name;
