@@ -298,6 +298,23 @@ namespace Fox {
 				}
 				ImGui::SetItemTooltip("Static: stays. Dynamic: falls, collides, floats; its transform follows. Kinematic: follows its transform and pushes");
 
+				// Its layer, by name
+				const auto& layers = scene.GetEnvironment().layers;
+				if (ImGui::BeginCombo("Layer", layers.Name(body.layer).c_str())) {
+					for (int i = 0; i < Fox::Scene::PhysicsWorld::LAYER_COUNT; i++) {
+						if (layers.names[i].empty() && i != body.layer) {
+							continue; // Unnamed layers are not in use (name them in the Environment window)
+						}
+						if (ImGui::Selectable(layers.Name(i).c_str(), i == body.layer)) {
+							body.layer = i;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SetItemTooltip("Which layers it collides with: Environment window > Collision layers");
+				ImGui::Checkbox("Trigger", &body.trigger);
+				ImGui::SetItemTooltip("Collides with nothing; its scripts (and those of what enters) get OnTriggerEnter / OnTriggerExit");
+
 				int shape = static_cast<int>(body.shape);
 				const char* shapes[] = { "Auto", "Box", "Sphere", "Capsule", "Convex hull", "Triangle mesh" };
 				if (ImGui::Combo("Shape", &shape, shapes, 6)) {
@@ -1026,7 +1043,7 @@ namespace Fox {
 			}
 			if (const PhysicsComponent* body = graph.GetRegistry().TryGet<PhysicsComponent>(entity)) {
 				ImGui::SameLine();
-				ImGui::TextDisabled("%s body%s", PhysicsComponent::MotionName(body->motion), body->enabled ? "" : " (off)");
+				ImGui::TextDisabled("%s %s%s", PhysicsComponent::MotionName(body->motion), body->trigger ? "trigger" : "body", body->enabled ? "" : " (off)");
 			}
 			if (const ScriptComponent* component = graph.GetRegistry().TryGet<ScriptComponent>(entity)) {
 				std::string names;

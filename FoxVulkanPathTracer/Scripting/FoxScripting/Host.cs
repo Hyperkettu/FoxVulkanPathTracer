@@ -64,6 +64,7 @@ namespace Fox
             api->Update = &Update;
             api->StopAll = &StopAll;
             api->GetInfo = &GetInfo;
+            api->Contact = &Contact;
             return 1;
         }
 
@@ -147,6 +148,39 @@ namespace Fox
                     if (!Call(instance, "OnStart", () => instance.Script.OnStart())) continue;
                 }
                 Call(instance, "OnUpdate", () => instance.Script.OnUpdate(deltaTime));
+            }
+        }
+
+        // A contact or trigger of the entity began or ended: its scripts hear of it
+        [UnmanagedCallersOnly]
+        private static void Contact(ulong entity, int kind, ulong other, float* data)
+        {
+            try
+            {
+                var self = new Entity(entity);
+                var collision = new Collision
+                {
+                    Other = new Entity(other),
+                    Point = new Vector3(data[0], data[1], data[2]),
+                    Normal = new Vector3(data[3], data[4], data[5]),
+                    Speed = data[6],
+                };
+                foreach (Instance instance in instances.Values.ToArray())
+                {
+                    if (instance.Entity != self || !instance.Started || instance.Faulted) continue;
+                    Script script = instance.Script;
+                    switch (kind)
+                    {
+                        case 0: Call(instance, "OnCollisionEnter", () => script.OnCollisionEnter(collision)); break;
+                        case 1: Call(instance, "OnCollisionExit", () => script.OnCollisionExit(collision)); break;
+                        case 2: Call(instance, "OnTriggerEnter", () => script.OnTriggerEnter(collision.Other)); break;
+                        case 3: Call(instance, "OnTriggerExit", () => script.OnTriggerExit(collision.Other)); break;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Native.Log(2, "Scripts: " + e);
             }
         }
 

@@ -1,15 +1,18 @@
-using System;
+﻿using System;
 using System.Numerics;
 using Fox;
 
 // Rolls a ball with a Physics component: W A S D push it (relative to where the game's camera looks), Space jumps
-// while it is on something (a raycast down), B drops a box in front of it
+// while it is on something (a raycast down), Q blasts what is near away (an overlap), B drops a box in front of it.
+// Hard knocks are logged (collision events).
 public class PlayerBall : Script
 {
     public float push = 6.0f;        // Newtons per kilogram: how hard it accelerates
     public float jump = 5.0f;        // m/s upwards
     public float maxSpeed = 8.0f;    // m/s along the ground
     public float radius = 0.4f;      // Metres: how far down the ground can be and still count as standing on it
+    public float blastRadius = 5.0f;
+    public float blastSpeed = 6.0f;  // m/s given to what the blast reaches
 
     public override void OnUpdate(float deltaTime)
     {
@@ -40,10 +43,22 @@ public class PlayerBall : Script
             body.AddImpulse(Vector3.Normalize(wish) * push * body.Mass * deltaTime);
         }
 
-        bool grounded = Scene.Raycast(Entity.Position, -Vector3.UnitY, radius + 0.15f, out RaycastHit hit, Entity);
+        // Standing on the ground or on anything solid (not on triggers, which a raycast ignores unless asked)
+        bool grounded = Physics.Raycast(Entity.Position, -Vector3.UnitY, radius + 0.15f, out RaycastHit hit, Layers.All, Entity);
         if (grounded && Input.GetKeyDown(Key.Space))
         {
             body.Velocity = new Vector3(velocity.X, jump, velocity.Z);
+        }
+
+        if (Input.GetKeyDown(Key.Q))
+        {
+            foreach (Entity near in Physics.OverlapSphere(Entity.Position, blastRadius, Layers.All, Entity))
+            {
+                var other = near.Physics;
+                if (!other.Exists || other.Mass <= 0.0f) continue; // Static and kinematic bodies stay put
+                Vector3 away = near.Position - Entity.Position + Vector3.UnitY;
+                other.AddImpulse(Vector3.Normalize(away) * blastSpeed * other.Mass);
+            }
         }
 
         if (Input.GetKeyDown(Key.B))
@@ -51,5 +66,11 @@ public class PlayerBall : Script
             Entity box = Scene.Spawn("box", Entity.Position + forward * 2.0f + Vector3.UnitY * 2.0f);
             Debug.Log($"Dropped {box} (the scene rebuilds once for a new mesh)");
         }
+    }
+
+    public override void OnCollisionEnter(Collision collision)
+    {
+        if (collision.Speed > 4.0f)
+            Debug.Log($"{Entity} hit {(collision.Other.IsValid ? collision.Other.Name : "the ground")} at {collision.Speed:F1} m/s");
     }
 }

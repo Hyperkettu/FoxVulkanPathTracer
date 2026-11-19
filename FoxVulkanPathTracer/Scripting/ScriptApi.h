@@ -29,7 +29,15 @@ namespace Fox {
 			VolumeDensity,
 			VolumeColor,             // vec3
 			VolumeGlow,
+			PhysicsLayer,            // read / write (playing: moves the body to it)
+			PhysicsTrigger,          // read
 		};
+
+		// Contact events to scripts (ManagedApi::Contact)
+		enum class ContactKind : int32_t { CollisionEnter = 0, CollisionExit, TriggerEnter, TriggerExit };
+
+		// Shapes for casts and overlaps: size4 = radius (sphere), half extents (box), radius and half height (capsule, along y)
+		enum class QueryShapeType : int32_t { Sphere = 0, Box, Capsule };
 
 		// The engine's functions (ScriptBindings in MainRayTracingSceneScripting.cpp)
 		struct NativeApi {
@@ -70,6 +78,17 @@ namespace Fox {
 			void (*GetMouse)(float* value4);                     // Delta x, y this frame; position x, y
 			void (*GetTime)(double* value4);                     // Game time, delta, time scale, frame
 			uint64_t (*GetGameCamera)();
+
+			// Queries (physics bodies while playing; the ground only otherwise). Hits are point (3), normal (3), distance;
+			// entity 0 for the ground. They return how many there were (filling up to capacity, nearest first).
+			int32_t (*RaycastAll)(const float* origin3, const float* direction3, float maxDistance, uint32_t layerMask, uint64_t ignore,
+				int32_t triggers, uint64_t* entities, float* hits7, int32_t capacity);
+			int32_t (*ShapeCast)(int32_t shape, const float* size4, const float* origin3, const float* rotation4, const float* direction3,
+				float maxDistance, uint32_t layerMask, uint64_t ignore, int32_t triggers, uint64_t* entity, float* hit7);
+			int32_t (*Overlap)(int32_t shape, const float* size4, const float* center3, const float* rotation4, uint32_t layerMask,
+				uint64_t ignore, int32_t triggers, uint64_t* entities, int32_t capacity);
+			int32_t (*GetLayerName)(int32_t layer, char* buffer, int32_t capacity);
+			int32_t (*LayerFromName)(const char* name); // -1: none of that name
 		};
 
 		// The scripting host's functions (Host.cs; Bootstrap fills them in)
@@ -81,6 +100,8 @@ namespace Fox {
 			void (*Update)(float deltaTime);
 			void (*StopAll)();
 			int32_t (*GetInfo)(char* buffer, int32_t capacity);  // JSON of classes, fields and errors (see Host.GetInfo)
+			// A contact or trigger began or ended for the entity (ContactKind): data7 = point, normal (away from other), speed
+			void (*Contact)(uint64_t entity, int32_t kind, uint64_t other, const float* data7);
 		};
 	}
 }

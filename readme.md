@@ -527,8 +527,9 @@ stops or the script's entity goes. Scripts run first in the frame, before agents
 | | |
 | --- | --- |
 | `Entity` | `Name`, `Active`, `Parent`, `Children`; `Position` / `Rotation` (world), `LocalPosition` / `LocalRotation` / `Scale`; `Forward` / `Right` / `Up`, `Translate`, `Rotate`, `LookAt`, `AimAt` (cameras); `Destroy`, `Duplicate`; `Has` / `Add` / `Remove` components; `GetScript<T>`, `AddScript`; `Entity.Find(name)`, `Entity.Create(name)` |
-| Components | `Entity.Physics` (`Velocity`, `AngularVelocity`, `Mass`, `AddImpulse`, `AddForce`), `Entity.Agent` (`Target`, `Speed`, `Arrived`, `Stop`), `Entity.Light` (`Color`, `Intensity`, `Enabled`), `Entity.Mesh` (`Visible`), `Entity.Camera` (`FieldOfView`), `Entity.Volume` (`Density`, `Color`, `Glow`) |
+| Components | `Entity.Physics` (`Velocity`, `AngularVelocity`, `Mass`, `AddImpulse`, `AddForce`, `Layer`, `IsTrigger`), `Entity.Agent` (`Target`, `Speed`, `Arrived`, `Stop`), `Entity.Light` (`Color`, `Intensity`, `Enabled`), `Entity.Mesh` (`Visible`), `Entity.Camera` (`FieldOfView`), `Entity.Volume` (`Density`, `Color`, `Glow`) |
 | `Scene` | `Spawn("ball" / "box" / "sphere" / "smoke" / "glowing smoke" / "agent" / "empty" / a model file, position)`, `Find`, `Raycast(origin, direction, maxDistance, out hit, ignore)` (physics bodies and the ground), `GameCamera` |
+| `Physics`, `Layers` | Queries (`Raycast`, `RaycastAll`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `OverlapBox`, `OverlapCapsule`) with layer masks (`Layers.Mask`, `NameToLayer`); events: `OnCollisionEnter` / `Exit`, `OnTriggerEnter` / `Exit` (see *Physics*) |
 | `Input` | `GetKey` / `GetKeyDown` / `GetKeyUp` (`Key.W`, `Key.Space`, ...), `GetMouseButton...`, `MouseDelta`, `MousePosition` |
 | `Time` | `Delta`, `Elapsed`, `Scale`, `Frame` |
 | `Debug` | `Log`, `Warn`, `Error` (to the console) |
@@ -563,7 +564,6 @@ numbers, go to the console) until its file is saved again. **Play > Reload Scrip
 
 * A new mesh (`Spawn`, `Duplicate`, adding a Mesh) makes the scene rebuild once, a short pause. For things that
   appear often (shots, pickups), keep hidden ones ready and show them (`Active`, `Mesh.Visible`).
-* There are no collision events yet; poll with `Raycast` and velocities.
 * Script fields cannot refer to entities directly; use names and `Entity.Find`.
 
 ### Physics
@@ -585,8 +585,41 @@ where it was. Saving while it plays saves the scene as it was before; loading a 
 | --- | --- |
 | Auto | A sphere mesh's sphere; a model's convex hull (moving) or its triangles (static); a tree's trunk (a capsule as thick as its middle); otherwise the box |
 | Box, Sphere, Capsule | Their sizes (and a centre offset) in the entity's space: its world scale scales them |
-| Convex hull | Around the model's vertices (at most 256 corners); kept while the scene lives, so playing again is quick |
-| Triangle mesh | The model's triangles (without displacement): exact, for static and kinematic bodies only (it has no inside) |
+| Convex hull | Around the model's vertices (at most 256 corners), its parts where its glTF nodes put them (as rendered); kept while the scene lives, so playing again is quick |
+| Triangle mesh | The model's triangles (without displacement, placed by its glTF nodes): exact, for static and kinematic bodies only (it has no inside) |
+
+**Collision layers.** Every body is on one of 16 layers (**Layer** in its Physics component). The Environment window's
+**Collision layers** names them (Default, Ground, Player, Enemy, Projectile, Trigger, Debris to start with; the
+ground plane or terrain is on Ground) and has a matrix of which layers collide with which. The matrix applies at
+once, also while playing. Bodies that do not move never collide with each other. Scripts can move a body to
+another layer while playing (`Entity.Physics.Layer`).
+
+**Triggers.** A body with **Trigger** on collides with nothing and notices what enters and leaves it (a Jolt
+sensor; a static trigger notices static and kinematic bodies too). Queries pass through triggers unless asked
+(`hitTriggers`).
+
+**Events.** Scripts on a body's entity get:
+
+* `OnCollisionEnter(Collision)` and `OnCollisionExit(Collision)`. `Collision.Other` is the other entity (None for the
+  ground); `Point`; `Normal` points away from the other; `Speed` is how fast they closed in.
+* `OnTriggerEnter(Entity)` and `OnTriggerExit(Entity)`, both for the trigger and for what entered it.
+
+The events are collected while the physics steps run (on Jolt's threads) and handed to the scripts at the end of
+the physics update. A pair touching in several places (a mesh's triangles) begins and ends once. Bodies falling
+asleep while touching do not end their contact, and waking does not begin it again.
+
+**Queries** (`Fox.Physics`, while playing; the ground only otherwise). Each takes a layer mask (`Layers.Mask("Ground",
+"Enemy")`), an entity to ignore (usually yourself) and whether triggers count:
+
+| Query | |
+| --- | --- |
+| `Raycast` / `RaycastAll` | The first body along a ray / every one, nearest first (one hit per body): entity, point, normal, distance |
+| `SphereCast`, `BoxCast`, `CapsuleCast` | The shape swept along a direction: the first thing it touches |
+| `OverlapSphere`, `OverlapBox`, `OverlapCapsule` | The entities whose bodies the shape touches |
+
+`Scenes/scripting-demo.json` shows them: a goal zone (a trigger with `GoalZone`) glows while the player is in it.
+`PlayerBall` logs hard landings (collision events), checks the ground with a raycast, and blasts nearby bodies away
+with Q (an overlap).
 
 The ground is the terrain (a 512 x 512 height field resampled from it) or the ground plane. Mass comes from
 **Density** and the shape's volume unless **Mass** is set; friction, bounciness and damping are per body;

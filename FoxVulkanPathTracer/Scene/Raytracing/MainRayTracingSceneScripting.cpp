@@ -203,6 +203,8 @@ namespace Fox {
 					case Property::VolumeDensity: if (auto* x = r.TryGet<VolumeComponent>(e)) { v[0] = x->density; return 1; } return 0;
 					case Property::VolumeColor: if (auto* x = r.TryGet<VolumeComponent>(e)) return vec(x->color); return 0;
 					case Property::VolumeGlow: if (auto* x = r.TryGet<VolumeComponent>(e)) { v[0] = x->glowStrength; return 1; } return 0;
+					case Property::PhysicsLayer: if (auto* p = r.TryGet<PhysicsComponent>(e)) { v[0] = static_cast<float>(p->layer); return 1; } return 0;
+					case Property::PhysicsTrigger: if (auto* p = r.TryGet<PhysicsComponent>(e)) { v[0] = p->trigger ? 1.0f : 0.0f; return 1; } return 0;
 					}
 					return 0;
 				}
@@ -240,6 +242,14 @@ namespace Fox {
 					case Property::VolumeDensity: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->density = std::max(v[0], 0.0f); return 1; } return 0;
 					case Property::VolumeColor: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->color = x; return 1; } return 0;
 					case Property::VolumeGlow: if (auto* y = r.TryGet<VolumeComponent>(e)) { y->glowStrength = std::max(v[0], 0.0f); return 1; } return 0;
+					case Property::PhysicsLayer:
+						if (auto* p = r.TryGet<PhysicsComponent>(e)) {
+							p->layer = std::clamp(static_cast<int>(v[0]), 0, PhysicsWorld::LAYER_COUNT - 1);
+							const uint32_t b = Body(e);
+							if (b != PhysicsWorld::INVALID_BODY) scene->physics->SetLayer(b, p->layer);
+							return 1;
+						}
+						return 0;
 					default: return 0;
 					}
 				}
@@ -321,6 +331,138 @@ namespace Fox {
 					v[0] = clock.time; v[1] = clock.delta; v[2] = clock.timeScale; v[3] = static_cast<double>(clock.frame);
 				}
 				static uint64_t GetGameCamera() { return Id(scene->FindGameCamera()); }
+
+				// --- Queries ---
+
+				static bool Playing() { return scene->physics && scene->physicsPlaying; }
+
+				// The entity of a playing body (null for the ground)
+				static Entity EntityOfBody(uint32_t body) {
+					for (const auto& playing : scene->playingBodies) {
+						if (playing.body == body) return playing.entity;
+					}
+					return Entity{};
+				}
+
+				static PhysicsWorld::QueryFilter Filter(uint32_t layerMask, uint64_t ignore, int32_t triggers) {
+					PhysicsWorld::QueryFilter filter;
+					filter.layerMask = layerMask;
+					filter.triggers = triggers != 0;
+					Entity skip;
+					if (Valid(ignore, skip)) filter.ignore = Body(skip);
+					return filter;
+				}
+
+				static void WriteHit(const PhysicsWorld::RayHit& hit, uint64_t* entity, float* out) {
+					*entity = Id(EntityOfBody(hit.body));
+					const float values[7] = { hit.point.x, hit.point.y, hit.point.z, hit.normal.x, hit.normal.y, hit.normal.z, hit.distance };
+					std::memcpy(out, values, sizeof(values));
+				}
+
+				static PhysicsWorld::QueryShape Shape(int32_t type, const float* size) {
+					PhysicsWorld::QueryShape shape;
+					switch (static_cast<Fox::Scripting::QueryShapeType>(type)) {
+					case Fox::Scripting::QueryShapeType::Box:
+						shape.type = PhysicsWorld::QueryShape::Type::Box;
+						shape.halfExtents = glm::vec3(size[0], size[1], size[2]);
+						break;
+					case Fox::Scripting::QueryShapeType::Capsule:
+						shape.type = PhysicsWorld::QueryShape::Type::Capsule;
+						shape.radius = size[0];
+						shape.halfHeight = size[1];
+						break;
+					default:
+						shape.type = PhysicsWorld::QueryShape::Type::Sphere;
+						shape.radius = size[0];
+						break;
+					}
+					return shape;
+				}
+
+				static glm::quat Rotation(const float* q) {
+					glm::quat rotation(q[3], q[0], q[1], q[2]);
+					return glm::dot(rotation, rotation) > 1e-12f ? glm::normalize(rotation) : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+				}
+
+				static int32_t RaycastAll(const float* origin, const float* direction, float maxDistance, uint32_t layerMask, uint64_t ignore,
+					int32_t triggers, uint64_t* entities, float* hits, int32_t capacity) {
+					const glm::vec3 o(origin[0], origin[1], origin[2]);
+					glm::vec3 d(direction[0], direction[1], direction[2]);
+					if (glm::dot(d, d) < 1e-12f || capacity <= 0) return 0;
+					d = glm::normalize(d);
+					std::vector<PhysicsWorld::RayHit> found;
+					if (Playing()) {
+						const auto filter = Filter(layerMask, ignore, triggers);
+						if (capacity == 1) {
+							PhysicsWorld::RayHit hit;
+							if (scene->physics->CastRay(o, d, maxDistance, filter, hit)) found.push_back(hit);
+						}
+						else {
+							scene->physics->CastRayAll(o, d, maxDistance, filter, found);
+						}
+					}
+					else if ((layerMask >> PhysicsWorld::GROUND_LAYER) & 1u) {
+						// Not playing: the ground only
+						glm::vec3 point;
+						if (scene->RaycastGround(o, d, point) && glm::distance(o, point) <= maxDistance) {
+							PhysicsWorld::RayHit hit;
+							hit.point = point;
+							hit.distance = glm::distance(o, point);
+							found.push_back(hit);
+						}
+					}
+					const int32_t count = static_cast<int32_t>(found.size());
+					for (int32_t i = 0; i < std::min(count, capacity); i++) WriteHit(found[i], entities + i, hits + 7 * i);
+					return count;
+				}
+
+				static int32_t ShapeCast(int32_t shape, const float* size, const float* origin, const float* rotation, const float* direction,
+					float maxDistance, uint32_t layerMask, uint64_t ignore, int32_t triggers, uint64_t* entity, float* hit) {
+					*entity = 0;
+					glm::vec3 d(direction[0], direction[1], direction[2]);
+					if (!Playing() || glm::dot(d, d) < 1e-12f) return 0;
+					PhysicsWorld::RayHit result;
+					if (!scene->physics->CastShape(Shape(shape, size), glm::vec3(origin[0], origin[1], origin[2]), Rotation(rotation), glm::normalize(d),
+						maxDistance, Filter(layerMask, ignore, triggers), result)) {
+						return 0;
+					}
+					WriteHit(result, entity, hit);
+					return 1;
+				}
+
+				static int32_t Overlap(int32_t shape, const float* size, const float* center, const float* rotation, uint32_t layerMask,
+					uint64_t ignore, int32_t triggers, uint64_t* entities, int32_t capacity) {
+					if (!Playing()) return 0;
+					std::vector<PhysicsWorld::RayHit> found;
+					scene->physics->Overlap(Shape(shape, size), glm::vec3(center[0], center[1], center[2]), Rotation(rotation),
+						Filter(layerMask, ignore, triggers), found);
+					int32_t count = 0;
+					for (const auto& hit : found) {
+						const Entity e = EntityOfBody(hit.body);
+						if (e.IsNull()) continue; // The ground
+						if (count < capacity) entities[count] = Id(e);
+						count++;
+					}
+					return count;
+				}
+
+				static int32_t GetLayerName(int32_t layer, char* buffer, int32_t capacity) {
+					const std::string name = scene->environment.layers.Name(layer);
+					if (buffer && capacity > 0) {
+						const size_t n = std::min(name.size(), static_cast<size_t>(capacity - 1));
+						std::memcpy(buffer, name.data(), n);
+						buffer[n] = 0;
+					}
+					return static_cast<int32_t>(name.size());
+				}
+
+				static int32_t LayerFromName(const char* name) {
+					if (!name) return -1;
+					for (int i = 0; i < PhysicsWorld::LAYER_COUNT; i++) {
+						if (scene->environment.layers.Name(i) == name) return i;
+					}
+					return -1;
+				}
 			};
 
 			namespace {
@@ -367,6 +509,11 @@ namespace Fox {
 				api.GetMouse = ScriptBindings::GetMouse;
 				api.GetTime = ScriptBindings::GetTime;
 				api.GetGameCamera = ScriptBindings::GetGameCamera;
+				api.RaycastAll = ScriptBindings::RaycastAll;
+				api.ShapeCast = ScriptBindings::ShapeCast;
+				api.Overlap = ScriptBindings::Overlap;
+				api.GetLayerName = ScriptBindings::GetLayerName;
+				api.LayerFromName = ScriptBindings::LayerFromName;
 
 				scripts = std::make_unique<Fox::Scripting::ScriptHost>();
 				if (!scripts->Initialize("Scripts", api)) {
@@ -421,6 +568,32 @@ namespace Fox {
 
 				if (step > 0.0f) {
 					host->Update(step);
+				}
+			}
+
+			void MainRayTracingScene::DispatchContacts(const std::vector<Fox::Scene::PhysicsWorld::ContactEvent>& events) {
+				Fox::Scripting::ScriptHost* host = GetScripts();
+				if (!host || events.empty()) {
+					return;
+				}
+				auto hasScripts = [&](Entity entity) {
+					const ScriptComponent* component = graph.IsValid(entity) ? graph.GetRegistry().TryGet<ScriptComponent>(entity) : nullptr;
+					return component && component->enabled && !component->scripts.empty();
+				};
+				for (const auto& event : events) {
+					const Entity a = ScriptBindings::EntityOfBody(event.bodyA);
+					const Entity b = ScriptBindings::EntityOfBody(event.bodyB);
+					using Kind = Fox::Scripting::ContactKind;
+					const Kind kind = event.trigger ? (event.begin ? Kind::TriggerEnter : Kind::TriggerExit)
+						: (event.begin ? Kind::CollisionEnter : Kind::CollisionExit);
+					// Each side: the normal points away from the other (event.normal runs from A to B)
+					auto send = [&](Entity self, Entity other, const glm::vec3& normal) {
+						if (!hasScripts(self)) return;
+						const float data[7] = { event.point.x, event.point.y, event.point.z, normal.x, normal.y, normal.z, event.speed };
+						host->Contact(ScriptBindings::Id(self), static_cast<int32_t>(kind), ScriptBindings::Id(other), data);
+					};
+					send(a, b, -event.normal);
+					send(b, a, event.normal);
 				}
 			}
 

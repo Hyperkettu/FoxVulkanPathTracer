@@ -23,6 +23,13 @@ namespace Fox {
 			static constexpr float STEP = 1.0f / 60.0f;
 			static constexpr float GRAVITY = 9.81f;
 
+			// Collision layers: every body is on one of LAYER_COUNT layers, and a matrix (SetLayerMatrix) says which
+			// layers collide with which (masks of bits, one per layer). Static bodies never collide with each other.
+			// Queries hit the layers in their mask. The ground is on GROUND_LAYER.
+			static constexpr int LAYER_COUNT = 16;
+			static constexpr int GROUND_LAYER = 1;
+			static constexpr uint32_t ALL_LAYERS = 0xffffu;
+
 			enum class Motion { Static, Dynamic, Kinematic };
 			enum class ShapeType { Box, Sphere, Capsule, ConvexHull, Mesh };
 
@@ -47,7 +54,34 @@ namespace Fox {
 				float linearDamping = 0.05f;
 				float angularDamping = 0.05f;
 				bool continuous = false;       // Swept collision (fast, small bodies do not pass through others)
+				int layer = 0;                 // 0..LAYER_COUNT-1
+				bool trigger = false;          // A sensor: reports what enters and leaves it, collides with nothing
 				uint64_t user = 0;
+			};
+
+			// Something touched or stopped touching (a trigger: entered or left), between two bodies. Collected while
+			// stepping (TakeContactEvents). A pair touching in several places (a mesh's triangles) is one contact.
+			struct ContactEvent {
+				bool begin = true;     // false: they parted
+				bool trigger = false;  // One of them is a trigger
+				uint32_t bodyA = INVALID_BODY, bodyB = INVALID_BODY;
+				glm::vec3 point{ 0.0f };  // Where (begin only)
+				glm::vec3 normal{ 0.0f, 1.0f, 0.0f }; // From A towards B (begin only)
+				float speed = 0.0f;       // How fast they met along the normal, m/s (begin only)
+			};
+
+			// What a query hits: layers in the mask, not ignore, triggers only when asked
+			struct QueryFilter {
+				uint32_t layerMask = ALL_LAYERS;
+				uint32_t ignore = INVALID_BODY;
+				bool triggers = false;
+			};
+			// The shape a shape cast or overlap uses (capsule: along its y)
+			struct QueryShape {
+				enum class Type { Sphere, Box, Capsule } type = Type::Sphere;
+				float radius = 0.5f;
+				glm::vec3 halfExtents{ 0.5f };
+				float halfHeight = 0.5f;
 			};
 
 			struct BodyInfo {
@@ -90,7 +124,7 @@ namespace Fox {
 			// A push at its centre (kg m/s) and a twist (kg m^2/s); wakes it
 			void AddImpulse(uint32_t body, const glm::vec3& linear, const glm::vec3& angular);
 
-			// The first body along a ray from origin (direction normalised) within maxDistance, past ignore
+			// Queries. Rays and casts: from origin along direction (normalised) up to maxDistance.
 			struct RayHit {
 				uint32_t body = INVALID_BODY;
 				uint64_t user = 0;      // BodyDesc::user (0 for the ground)
@@ -99,6 +133,24 @@ namespace Fox {
 				float distance = 0.0f;
 			};
 			bool CastRay(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint32_t ignore, RayHit& hit) const;
+			// The nearest hit (all: every body it passes, nearest first)
+			bool CastRay(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, const QueryFilter& filter, RayHit& hit) const;
+			void CastRayAll(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, const QueryFilter& filter, std::vector<RayHit>& hits) const;
+			// The shape swept from origin (turned by rotation): the first body it touches (point and normal where)
+			bool CastShape(const QueryShape& shape, const glm::vec3& origin, const glm::quat& rotation, const glm::vec3& direction, float maxDistance,
+				const QueryFilter& filter, RayHit& hit) const;
+			// The bodies the shape at center overlaps (each once)
+			void Overlap(const QueryShape& shape, const glm::vec3& center, const glm::quat& rotation, const QueryFilter& filter, std::vector<RayHit>& bodies) const;
+
+			// Which layers collide with which: masks[i] has bit j when layer i collides with layer j (kept symmetric)
+			void SetLayerMatrix(const uint32_t (&masks)[LAYER_COUNT]);
+			// Moves a body to another layer while it plays
+			void SetLayer(uint32_t body, int layer);
+			int GetLayer(uint32_t body) const;
+			bool IsTrigger(uint32_t body) const;
+
+			// The contacts that began and ended since the last call
+			std::vector<ContactEvent> TakeContactEvents();
 			void SetVelocity(uint32_t body, const glm::vec3& linear, const glm::vec3& angular);
 			// Kinematic: moves it to this transform over the next step (pushing what is in the way)
 			void MoveKinematic(uint32_t body, const glm::vec3& position, const glm::quat& rotation, float stepTime);

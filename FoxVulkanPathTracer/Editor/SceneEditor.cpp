@@ -111,6 +111,60 @@ namespace Fox {
 			}
 			ImGui::TextDisabled("Smoke: Create > Effects > Smoke (a Volume component)");
 
+			// Physics layers: names, and which collide with which (live, also while playing)
+			if (ImGui::CollapsingHeader("Collision layers")) {
+				auto& layers = environment.layers;
+				constexpr int COUNT = Fox::Scene::PhysicsWorld::LAYER_COUNT;
+				ImGui::TextDisabled("Name a layer to use it. Ground: the ground plane or terrain.");
+				for (int i = 0; i < COUNT; i++) {
+					char name[64];
+					std::snprintf(name, sizeof(name), "%s", layers.names[i].c_str());
+					ImGui::PushID(i);
+					ImGui::SetNextItemWidth(160.0f * uiScale);
+					if (ImGui::InputText("##name", name, sizeof(name))) {
+						layers.names[i] = name;
+					}
+					ImGui::SameLine();
+					ImGui::TextDisabled("%d", i);
+					ImGui::PopID();
+				}
+				// The matrix of the named layers: a tick where two layers collide
+				std::vector<int> used;
+				for (int i = 0; i < COUNT; i++) {
+					if (!layers.names[i].empty()) used.push_back(i);
+				}
+				if (!used.empty() && ImGui::BeginTable("##matrix", static_cast<int>(used.size()) + 1,
+					ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollX)) {
+					ImGui::TableSetupColumn("collides with");
+					for (int j : used) {
+						ImGui::TableSetupColumn(layers.names[j].c_str(), ImGuiTableColumnFlags_AngledHeader);
+					}
+					ImGui::TableAngledHeadersRow();
+					ImGui::TableHeadersRow();
+					for (int i : used) {
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn();
+						ImGui::TextUnformatted(layers.names[i].c_str());
+						for (int j : used) {
+							ImGui::TableNextColumn();
+							if (j < i) {
+								continue; // The matrix is symmetric: its upper half is enough
+							}
+							bool collides = ((layers.collides[i] >> j) & 1u) != 0;
+							ImGui::PushID(i * COUNT + j);
+							if (ImGui::Checkbox("##c", &collides)) {
+								const uint32_t bitJ = 1u << j, bitI = 1u << i;
+								layers.collides[i] = collides ? (layers.collides[i] | bitJ) : (layers.collides[i] & ~bitJ);
+								layers.collides[j] = collides ? (layers.collides[j] | bitI) : (layers.collides[j] & ~bitI);
+							}
+							ImGui::SetItemTooltip("%s and %s", layers.names[i].c_str(), layers.names[j].c_str());
+							ImGui::PopID();
+						}
+					}
+					ImGui::EndTable();
+				}
+			}
+
 			ImGui::Spacing();
 			ImGui::TextWrapped("The sun and other lights are entities with a Light component: select the Sun in the Hierarchy.");
 			(void)uiScale;

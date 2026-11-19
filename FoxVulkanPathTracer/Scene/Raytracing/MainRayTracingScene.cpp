@@ -1179,6 +1179,8 @@ namespace Fox {
 				desc.linearDamping = component.linearDamping;
 				desc.angularDamping = component.angularDamping;
 				desc.continuous = component.continuous;
+				desc.layer = std::clamp(component.layer, 0, World::LAYER_COUNT - 1);
+				desc.trigger = component.trigger;
 				desc.user = (static_cast<uint64_t>(entity.generation) << 32) | entity.index;
 				desc.center = component.center * scale;
 				desc.halfExtents = component.halfExtents * scale;
@@ -1221,26 +1223,22 @@ namespace Fox {
 						desc.shape = World::ShapeType::Box; // Nothing to take the points from
 						break;
 					}
-					// From the model without displacement: its relief is far finer than collisions need
-					Fox::Graphics::Geometry::Vulkan::Mesh* model = nullptr;
-					try {
-						model = &LoadModel(mesh->file, false);
-					}
-					catch (const std::exception& e) {
-						std::cout << "Physics: " << mesh->file << " could not be loaded (" << e.what() << "), using a box\n";
-					}
+					// From the model without displacement (its relief is far finer than collisions need), its parts where
+					// its glTF nodes put them, as it is rendered
+					const ModelShape* model = ModelShapeOf(mesh->file);
 					if (!model) {
+						std::cout << "Physics: " << mesh->file << " could not be loaded, using a box\n";
 						desc.shape = World::ShapeType::Box;
 						break;
 					}
 					const bool triangles = shape == PhysicsComponent::Shape::Mesh;
 					desc.shape = triangles ? World::ShapeType::Mesh : World::ShapeType::ConvexHull;
-					desc.points.reserve(model->GetVertices().size());
-					for (const auto& vertex : model->GetVertices()) {
-						desc.points.emplace_back(vertex.position[0] * scale.x, vertex.position[1] * scale.y, vertex.position[2] * scale.z);
+					desc.points.reserve(model->positions.size());
+					for (const glm::vec3& p : model->positions) {
+						desc.points.push_back(p * scale);
 					}
 					if (triangles) {
-						desc.indices.assign(model->GetIndices().begin(), model->GetIndices().end());
+						desc.indices = model->indices;
 					}
 					char key[96];
 					std::snprintf(key, sizeof(key), "|%d|%.4f|%.4f|%.4f", triangles ? 1 : 0, scale.x, scale.y, scale.z);
@@ -1280,7 +1278,7 @@ namespace Fox {
 				playing.written = graph.GetWorldMatrix(entity);
 				const auto info = physics->GetBodyInfo(body);
 				playing.extent = std::max(info.extent, 0.05f);
-				playing.floats = component.floats && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic;
+				playing.floats = component.floats && !component.trigger && component.motion == Fox::Scene::PhysicsComponent::Motion::Dynamic;
 				playing.waterDrag = component.waterDrag;
 				playing.buoyancy = info.mass > 0.0f && info.volume > 0.0f ? 1000.0f / (info.mass / info.volume) : 1.0f;
 				playingBodies.push_back(playing);
@@ -1338,6 +1336,7 @@ namespace Fox {
 				physics->Optimize();
 				physicsPlaying = true;
 				StartNavigation();
+				physics->TakeContactEvents(); // Nothing touched yet
 				// Growing trees start from a sprout
 				graph.GetRegistry().Each<MeshComponent>([](Entity, MeshComponent& mesh) {
 					if (mesh.type == MeshComponent::Type::Tree && mesh.tree && mesh.tree->growth.enabled) {
@@ -1440,6 +1439,15 @@ namespace Fox {
 					return false;
 				};
 
+				// The collision matrix as it is now (it can be edited while playing)
+				{
+					uint32_t masks[Fox::Scene::PhysicsWorld::LAYER_COUNT];
+					for (int i = 0; i < Fox::Scene::PhysicsWorld::LAYER_COUNT; i++) {
+						masks[i] = environment.layers.collides[i];
+					}
+					physics->SetLayerMatrix(masks);
+				}
+
 				physics->Step(dt, [&](float step) {
 					for (PlayingBody& playing : playingBodies) {
 						if (playing.motion == Motion::Kinematic) {
@@ -1503,6 +1511,9 @@ namespace Fox {
 					}
 					playing.inWater = inWater;
 				}
+
+				// Last: scripts hear what touched and parted (they may destroy or add things: bodies follow next frame)
+				DispatchContacts(physics->TakeContactEvents());
 			}
 
 			MainRayTracingScene::Entity MainRayTracingScene::AddPhysicsBall(const glm::vec3& position) {
@@ -1519,22 +1530,14 @@ namespace Fox {
 				const Entity entity = AddModel("Models/box.glb", false, position);
 				graph.SetName(entity, "Box");
 				// Scaled to a metre across, whatever size the model is
-				try {
-					glm::vec3 low(1e30f), high(-1e30f);
-					for (const auto& vertex : LoadModel("Models/box.glb", false).GetVertices()) {
-						const glm::vec3 p(vertex.position[0], vertex.position[1], vertex.position[2]);
-						low = glm::min(low, p);
-						high = glm::max(high, p);
-					}
-					const glm::vec3 extent = high - low;
+				if (const ModelShape* model = ModelShapeOf("Models/box.glb")) {
+					const glm::vec3 extent = model->high - model->low;
 					const float size = std::max({ extent.x, extent.y, extent.z });
 					if (size > 1e-4f) {
 						Fox::Scene::Transform transform = graph.GetLocalTransform(entity);
 						transform.scale = glm::vec3(1.0f / size);
 						graph.SetLocalTransform(entity, transform);
 					}
-				}
-				catch (const std::exception&) {
 				}
 				auto& body = graph.GetRegistry().Add<Fox::Scene::PhysicsComponent>(entity);
 				body.density = 600.0f; // Wood

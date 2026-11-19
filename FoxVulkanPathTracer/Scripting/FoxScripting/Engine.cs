@@ -31,6 +31,14 @@ namespace Fox
         /// <summary>Its file was saved and reloaded while playing (fields were carried over)</summary>
         public virtual void OnReload() { }
 
+        /// <summary>Its body started touching another (or the ground: Other is None). Needs a Physics component.</summary>
+        public virtual void OnCollisionEnter(Collision collision) { }
+        /// <summary>It stopped touching it (only Other is set)</summary>
+        public virtual void OnCollisionExit(Collision collision) { }
+        /// <summary>Something entered its trigger, or it entered a trigger (either one is a trigger body)</summary>
+        public virtual void OnTriggerEnter(Entity other) { }
+        public virtual void OnTriggerExit(Entity other) { }
+
         // Shortcuts to its entity
         public Vector3 Position { get => Entity.Position; set => Entity.Position = value; }
         public Quaternion Rotation { get => Entity.Rotation; set => Entity.Rotation = value; }
@@ -56,6 +64,15 @@ namespace Fox
         Return = 40, Escape = 41, Backspace = 42, Tab = 43, Space = 44,
         Right = 79, Left = 80, Down = 81, Up = 82,
         LeftControl = 224, LeftShift = 225, LeftAlt = 226, RightControl = 228, RightShift = 229, RightAlt = 230,
+    }
+
+    /// <summary>A contact: what it touched, where, which way it is pushed (away from Other) and how hard they met</summary>
+    public struct Collision
+    {
+        public Entity Other;
+        public Vector3 Point;
+        public Vector3 Normal;
+        public float Speed;     // m/s along the normal
     }
 
     public struct RaycastHit
@@ -266,6 +283,15 @@ namespace Fox
         }
         public float Mass => entity.GetProperty(PropertyId.PhysicsMass).X;
 
+        /// <summary>Its collision layer (0..15, see Layers); can change while playing</summary>
+        public int Layer
+        {
+            get => (int)entity.GetProperty(PropertyId.PhysicsLayer).X;
+            set => entity.SetProperty(PropertyId.PhysicsLayer, Entity.W((float)value));
+        }
+        /// <summary>A trigger: collides with nothing, reports what enters and leaves it</summary>
+        public bool IsTrigger => entity.GetProperty(PropertyId.PhysicsTrigger).X != 0.0f;
+
         /// <summary>A push (kg m/s) at its centre: changes its velocity by impulse / mass at once</summary>
         public void AddImpulse(Vector3 impulse)
         {
@@ -358,26 +384,151 @@ namespace Fox
 
         public static Entity Find(string name) => Entity.Find(name);
 
-        /// <summary>The first physics body (or the ground) along a ray, within maxDistance; ignore: an entity to see through (e.g. yourself)</summary>
-        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RaycastHit hit, Entity ignore = default)
+        /// <summary>The first physics body (or the ground) along a ray, within maxDistance; ignore: an entity to see through (e.g. yourself). See Physics for more.</summary>
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RaycastHit hit, Entity ignore = default) =>
+            Physics.Raycast(origin, direction, maxDistance, out hit, Layers.All, ignore);
+
+        /// <summary>The entity the game looks through (its Camera component)</summary>
+        public static Entity GameCamera => new Entity(Native.Api->GetGameCamera());
+    }
+
+    /// <summary>Collision layers: 16, named in the Environment window, where a matrix says which collide</summary>
+    public static unsafe class Layers
+    {
+        public const uint All = 0xffff;
+
+        /// <summary>The layer of this name (-1: none)</summary>
+        public static int NameToLayer(string name) { fixed (byte* p = Native.Utf8(name)) return Native.Api->LayerFromName(p); }
+
+        public static string LayerToName(int layer)
+        {
+            byte* buffer = stackalloc byte[128];
+            int length = Native.Api->GetLayerName(layer, buffer, 128);
+            return System.Text.Encoding.UTF8.GetString(buffer, Math.Min(length, 127));
+        }
+
+        /// <summary>A mask of the named layers, for queries: Layers.Mask("Ground", "Enemy")</summary>
+        public static uint Mask(params string[] names)
+        {
+            uint mask = 0;
+            foreach (string name in names)
+            {
+                int layer = NameToLayer(name);
+                if (layer >= 0) mask |= 1u << layer;
+                else Debug.Warn($"Layers.Mask: no layer called \"{name}\"");
+            }
+            return mask;
+        }
+    }
+
+    /// <summary>
+    /// Physics queries, against the bodies while the game plays (and the ground). layerMask: the layers to hit (Layers.Mask);
+    /// ignore: an entity to pass through (usually yourself); hitTriggers: whether triggers count.
+    /// </summary>
+    public static unsafe class Physics
+    {
+        private const int MaxHits = 256;
+
+        private static RaycastHit Hit(ulong entity, float* h) => new RaycastHit
+        {
+            Entity = new Entity(entity),
+            Point = new Vector3(h[0], h[1], h[2]),
+            Normal = new Vector3(h[3], h[4], h[5]),
+            Distance = h[6],
+        };
+
+        public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out RaycastHit hit,
+            uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false)
         {
             hit = default;
             if (direction.LengthSquared() < 1e-12f) return false;
             direction = Vector3.Normalize(direction);
             float* o = stackalloc float[3] { origin.X, origin.Y, origin.Z };
             float* d = stackalloc float[3] { direction.X, direction.Y, direction.Z };
-            float* result = stackalloc float[7];
+            float* h = stackalloc float[7];
             ulong entity;
-            if (Native.Api->Raycast(o, d, maxDistance, ignore.Id, &entity, result) == 0) return false;
-            hit.Entity = new Entity(entity);
-            hit.Point = new Vector3(result[0], result[1], result[2]);
-            hit.Normal = new Vector3(result[3], result[4], result[5]);
-            hit.Distance = result[6];
+            if (Native.Api->RaycastAll(o, d, maxDistance, layerMask, ignore.Id, hitTriggers ? 1 : 0, &entity, h, 1) == 0) return false;
+            hit = Hit(entity, h);
             return true;
         }
 
-        /// <summary>The entity the game looks through (its Camera component)</summary>
-        public static Entity GameCamera => new Entity(Native.Api->GetGameCamera());
+        /// <summary>Everything along the ray, nearest first (one hit per body)</summary>
+        public static RaycastHit[] RaycastAll(Vector3 origin, Vector3 direction, float maxDistance,
+            uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false)
+        {
+            if (direction.LengthSquared() < 1e-12f) return Array.Empty<RaycastHit>();
+            direction = Vector3.Normalize(direction);
+            float* o = stackalloc float[3] { origin.X, origin.Y, origin.Z };
+            float* d = stackalloc float[3] { direction.X, direction.Y, direction.Z };
+            var entities = new ulong[MaxHits];
+            var hits = new float[MaxHits * 7];
+            int count;
+            fixed (ulong* e = entities)
+            fixed (float* h = hits)
+            {
+                count = Math.Min(Native.Api->RaycastAll(o, d, maxDistance, layerMask, ignore.Id, hitTriggers ? 1 : 0, e, h, MaxHits), MaxHits);
+                var result = new RaycastHit[count];
+                for (int i = 0; i < count; i++) result[i] = Hit(entities[i], h + i * 7);
+                return result;
+            }
+        }
+
+        private static bool Cast(int shape, Vector4 size, Vector3 origin, Quaternion rotation, Vector3 direction, float maxDistance,
+            out RaycastHit hit, uint layerMask, Entity ignore, bool hitTriggers)
+        {
+            hit = default;
+            if (direction.LengthSquared() < 1e-12f) return false;
+            direction = Vector3.Normalize(direction);
+            float* s = stackalloc float[4] { size.X, size.Y, size.Z, size.W };
+            float* o = stackalloc float[3] { origin.X, origin.Y, origin.Z };
+            float* r = stackalloc float[4] { rotation.X, rotation.Y, rotation.Z, rotation.W };
+            float* d = stackalloc float[3] { direction.X, direction.Y, direction.Z };
+            float* h = stackalloc float[7];
+            ulong entity;
+            if (Native.Api->ShapeCast(shape, s, o, r, d, maxDistance, layerMask, ignore.Id, hitTriggers ? 1 : 0, &entity, h) == 0) return false;
+            hit = Hit(entity, h);
+            return true;
+        }
+
+        /// <summary>A sphere swept along a direction: the first thing it touches (Distance: how far its centre got)</summary>
+        public static bool SphereCast(Vector3 origin, float radius, Vector3 direction, float maxDistance, out RaycastHit hit,
+            uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false) =>
+            Cast(0, new Vector4(radius, 0, 0, 0), origin, Quaternion.Identity, direction, maxDistance, out hit, layerMask, ignore, hitTriggers);
+
+        public static bool BoxCast(Vector3 center, Vector3 halfExtents, Quaternion rotation, Vector3 direction, float maxDistance, out RaycastHit hit,
+            uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false) =>
+            Cast(1, new Vector4(halfExtents, 0), center, rotation, direction, maxDistance, out hit, layerMask, ignore, hitTriggers);
+
+        /// <summary>A capsule (along its y: halfHeight is half its straight part) swept along a direction</summary>
+        public static bool CapsuleCast(Vector3 center, float radius, float halfHeight, Quaternion rotation, Vector3 direction, float maxDistance,
+            out RaycastHit hit, uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false) =>
+            Cast(2, new Vector4(radius, halfHeight, 0, 0), center, rotation, direction, maxDistance, out hit, layerMask, ignore, hitTriggers);
+
+        private static Entity[] Overlap(int shape, Vector4 size, Vector3 center, Quaternion rotation, uint layerMask, Entity ignore, bool hitTriggers)
+        {
+            float* s = stackalloc float[4] { size.X, size.Y, size.Z, size.W };
+            float* c = stackalloc float[3] { center.X, center.Y, center.Z };
+            float* r = stackalloc float[4] { rotation.X, rotation.Y, rotation.Z, rotation.W };
+            var entities = new ulong[MaxHits];
+            fixed (ulong* e = entities)
+            {
+                int count = Math.Min(Native.Api->Overlap(shape, s, c, r, layerMask, ignore.Id, hitTriggers ? 1 : 0, e, MaxHits), MaxHits);
+                var result = new Entity[count];
+                for (int i = 0; i < count; i++) result[i] = new Entity(entities[i]);
+                return result;
+            }
+        }
+
+        /// <summary>The entities whose bodies are inside or touch the sphere (not the ground)</summary>
+        public static Entity[] OverlapSphere(Vector3 center, float radius, uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false) =>
+            Overlap(0, new Vector4(radius, 0, 0, 0), center, Quaternion.Identity, layerMask, ignore, hitTriggers);
+
+        public static Entity[] OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, uint layerMask = Layers.All, Entity ignore = default, bool hitTriggers = false) =>
+            Overlap(1, new Vector4(halfExtents, 0), center, rotation, layerMask, ignore, hitTriggers);
+
+        public static Entity[] OverlapCapsule(Vector3 center, float radius, float halfHeight, Quaternion rotation, uint layerMask = Layers.All,
+            Entity ignore = default, bool hitTriggers = false) =>
+            Overlap(2, new Vector4(radius, halfHeight, 0, 0), center, rotation, layerMask, ignore, hitTriggers);
     }
 
     public static unsafe class Input

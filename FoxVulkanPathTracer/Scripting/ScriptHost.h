@@ -35,6 +35,7 @@ namespace Fox {
 			void DestroyInstance(int64_t instance);
 			void Update(float deltaTime);
 			void StopAll();
+			void Contact(uint64_t entity, int32_t kind, uint64_t other, const float* data7);
 
 			// Classes, their fields and compile errors, as JSON (see Host.GetInfo); kept until the next reload
 			const std::string& GetInfo();

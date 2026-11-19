@@ -43,6 +43,12 @@ namespace Fox.Interop
         public delegate* unmanaged<float*, void> GetMouse;
         public delegate* unmanaged<double*, void> GetTime;
         public delegate* unmanaged<ulong> GetGameCamera;
+
+        public delegate* unmanaged<float*, float*, float, uint, ulong, int, ulong*, float*, int, int> RaycastAll;
+        public delegate* unmanaged<int, float*, float*, float*, float*, float, uint, ulong, int, ulong*, float*, int> ShapeCast;
+        public delegate* unmanaged<int, float*, float*, float*, uint, ulong, int, ulong*, int, int> Overlap;
+        public delegate* unmanaged<int, byte*, int, int> GetLayerName;
+        public delegate* unmanaged<byte*, int> LayerFromName;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -55,6 +61,7 @@ namespace Fox.Interop
         public delegate* unmanaged<float, void> Update;
         public delegate* unmanaged<void> StopAll;
         public delegate* unmanaged<byte*, int, int> GetInfo;
+        public delegate* unmanaged<ulong, int, ulong, float*, void> Contact;
     }
 
     // Component types and properties (ScriptApi.h)
@@ -75,6 +82,8 @@ namespace Fox.Interop
         VolumeDensity = 12,
         VolumeColor = 13,
         VolumeGlow = 14,
+        PhysicsLayer = 15,
+        PhysicsTrigger = 16,
     }
 
     internal static unsafe class Native

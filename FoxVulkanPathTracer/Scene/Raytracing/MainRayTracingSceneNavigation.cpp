@@ -103,15 +103,15 @@ namespace Fox {
 				return false;
 			}
 
-			const MainRayTracingScene::NavShape* MainRayTracingScene::NavShapeOf(const std::string& file) {
-				auto found = navShapes.find(file);
-				if (found != navShapes.end()) {
+			const MainRayTracingScene::ModelShape* MainRayTracingScene::ModelShapeOf(const std::string& file) {
+				auto found = modelShapes.find(file);
+				if (found != modelShapes.end()) {
 					return found->second.get();
 				}
-				std::shared_ptr<NavShape> shape;
+				std::shared_ptr<ModelShape> shape;
 				try {
 					const auto& model = LoadModel(file, false);
-					shape = std::make_shared<NavShape>();
+					shape = std::make_shared<ModelShape>();
 					const auto& vertices = model.GetVertices();
 					shape->positions.reserve(vertices.size());
 					for (const auto& vertex : vertices) {
@@ -146,7 +146,7 @@ namespace Fox {
 					std::cout << "Navigation: " << file << " could not be loaded (" << e.what() << "): not an obstacle\n";
 					shape.reset();
 				}
-				navShapes[file] = shape;
+				modelShapes[file] = shape;
 				return shape.get();
 			}
 
@@ -295,7 +295,7 @@ namespace Fox {
 						}
 					}
 					else {
-						const NavShape* shape = mesh.file.empty() ? nullptr : NavShapeOf(mesh.file);
+						const ModelShape* shape = mesh.file.empty() ? nullptr : ModelShapeOf(mesh.file);
 						if (!shape) {
 							return;
 						}

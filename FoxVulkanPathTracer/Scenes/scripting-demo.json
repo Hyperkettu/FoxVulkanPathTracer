@@ -1,13 +1,40 @@
 {
   "version": 2,
-  "camera": { "position": [ 27.0, 1.0, 1.0 ], "target": [ 19.6, -3.0, 9.5 ] },
+  "camera": {
+    "position": [
+      27.0,
+      1.0,
+      1.0
+    ],
+    "target": [
+      19.6,
+      -3.0,
+      9.5
+    ]
+  },
   "environment": {
     "ground": true,
     "groundHeight": -3.73,
-    "groundMaterial": { "color": [ 0.18, 0.2, 0.16 ], "roughness": 0.6, "metallic": 0.0 },
+    "groundMaterial": {
+      "color": [
+        0.18,
+        0.2,
+        0.16
+      ],
+      "roughness": 0.6,
+      "metallic": 0.0
+    },
     "sun": true,
-    "sunDirection": [ 0.6, 0.55, 0.4 ],
-    "sunColor": [ 1.0, 0.85, 0.7 ],
+    "sunDirection": [
+      0.6,
+      0.55,
+      0.4
+    ],
+    "sunColor": [
+      1.0,
+      0.85,
+      0.7
+    ],
     "sunIntensity": 12.0,
     "sunAngularRadius": 0.8
   },
@@ -17,10 +44,54 @@
       "active": true,
       "parent": -1,
       "components": {
-        "transform": { "position": [ 19.6, -3.0, 9.5 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
-        "mesh": { "type": "sphere", "enabled": true, "radius": 0.4, "material": { "color": [ 0.8, 0.15, 0.1 ], "roughness": 0.35, "metallic": 0.0 } },
-        "physics": { "enabled": true, "motion": 1, "shape": 0, "density": 300.0, "restitution": 0.3, "friction": 0.6 },
-        "script": { "enabled": true, "scripts": [ { "class": "PlayerBall", "fields": {} } ] }
+        "transform": {
+          "position": [
+            19.6,
+            -3.0,
+            9.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "mesh": {
+          "type": "sphere",
+          "enabled": true,
+          "radius": 0.4,
+          "material": {
+            "color": [
+              0.8,
+              0.15,
+              0.1
+            ],
+            "roughness": 0.35,
+            "metallic": 0.0
+          }
+        },
+        "physics": {
+          "enabled": true,
+          "motion": 1,
+          "shape": 0,
+          "density": 300.0,
+          "restitution": 0.3,
+          "friction": 0.6
+        },
+        "script": {
+          "enabled": true,
+          "scripts": [
+            {
+              "class": "PlayerBall",
+              "fields": {}
+            }
+          ]
+        }
       }
     },
     {
@@ -28,9 +99,41 @@
       "active": true,
       "parent": -1,
       "components": {
-        "transform": { "position": [ 19.6, -0.5, 3.5 ], "rotation": [ 0.0, 180.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
-        "camera": { "enabled": true, "fov": 60.0, "priority": 0 },
-        "script": { "enabled": true, "scripts": [ { "class": "FollowCamera", "fields": { "target": "Player", "distance": "7", "height": "3" } } ] }
+        "transform": {
+          "position": [
+            19.6,
+            -0.5,
+            3.5
+          ],
+          "rotation": [
+            0.0,
+            180.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "camera": {
+          "enabled": true,
+          "fov": 60.0,
+          "priority": 0
+        },
+        "script": {
+          "enabled": true,
+          "scripts": [
+            {
+              "class": "FollowCamera",
+              "fields": {
+                "target": "Player",
+                "distance": "7",
+                "height": "3"
+              }
+            }
+          ]
+        }
       }
     },
     {
@@ -38,10 +141,53 @@
       "active": true,
       "parent": -1,
       "components": {
-        "transform": { "position": [ 10.0, -3.33, 2.0 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 1.0, 1.0, 1.0 ] },
-        "mesh": { "type": "sphere", "enabled": true, "radius": 0.4, "material": { "color": [ 0.12, 0.35, 0.8 ], "roughness": 0.4, "metallic": 0.0 } },
-        "navAgent": { "enabled": true, "speed": 2.5, "radius": 0.4 },
-        "script": { "enabled": true, "scripts": [ { "class": "Chaser", "fields": { "target": "Player" } } ] }
+        "transform": {
+          "position": [
+            10.0,
+            -3.33,
+            2.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "mesh": {
+          "type": "sphere",
+          "enabled": true,
+          "radius": 0.4,
+          "material": {
+            "color": [
+              0.12,
+              0.35,
+              0.8
+            ],
+            "roughness": 0.4,
+            "metallic": 0.0
+          }
+        },
+        "navAgent": {
+          "enabled": true,
+          "speed": 2.5,
+          "radius": 0.4
+        },
+        "script": {
+          "enabled": true,
+          "scripts": [
+            {
+              "class": "Chaser",
+              "fields": {
+                "target": "Player"
+              }
+            }
+          ]
+        }
       }
     },
     {
@@ -49,9 +195,115 @@
       "active": true,
       "parent": -1,
       "components": {
-        "transform": { "position": [ 24.0, -2.2, 12.0 ], "rotation": [ 0.0, 0.0, 0.0 ], "scale": [ 0.2, 0.2, 0.2 ] },
-        "mesh": { "type": "model", "enabled": true, "file": "Models/box.glb", "displacement": false },
-        "script": { "enabled": true, "scripts": [ { "class": "Spinner", "fields": { "degreesPerSecond": "45", "bobHeight": "0.5" } } ] }
+        "transform": {
+          "position": [
+            24.0,
+            -2.2,
+            12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.2,
+            0.2,
+            0.2
+          ]
+        },
+        "mesh": {
+          "type": "model",
+          "enabled": true,
+          "file": "Models/box.glb",
+          "displacement": false
+        },
+        "script": {
+          "enabled": true,
+          "scripts": [
+            {
+              "class": "Spinner",
+              "fields": {
+                "degreesPerSecond": "45",
+                "bobHeight": "0.5"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Goal zone",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            19.6,
+            -2.2,
+            16.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "physics": {
+          "enabled": true,
+          "motion": 0,
+          "shape": 1,
+          "halfExtents": [
+            1.5,
+            1.5,
+            1.5
+          ],
+          "trigger": true,
+          "layer": 5
+        },
+        "volume": {
+          "enabled": true,
+          "size": [
+            3.0,
+            3.0,
+            3.0
+          ],
+          "round": false,
+          "softness": 0.3,
+          "density": 0.15,
+          "color": [
+            0.4,
+            0.9,
+            0.5
+          ],
+          "glow": [
+            0.2,
+            1.0,
+            0.4
+          ],
+          "glowStrength": 0.3,
+          "noiseStrength": 0.4,
+          "noiseSize": 0.8,
+          "velocity": [
+            0,
+            0.4,
+            0
+          ]
+        },
+        "script": {
+          "enabled": true,
+          "scripts": [
+            {
+              "class": "GoalZone",
+              "fields": {}
+            }
+          ]
+        }
       }
     }
   ]

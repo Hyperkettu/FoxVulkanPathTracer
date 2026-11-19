@@ -66,6 +66,19 @@ namespace Fox {
                     bool shadows = true;        // Shade the ground
                 };
 
+                // Physics collision layers (Scene/Physics.h): their names and which collide with which
+                struct PhysicsLayers {
+                    std::array<std::string, Fox::Scene::PhysicsWorld::LAYER_COUNT> names{
+                        "Default", "Ground", "Player", "Enemy", "Projectile", "Trigger", "Debris" };
+                    // collides[i] bit j: layers i and j collide (kept symmetric)
+                    std::array<uint32_t, Fox::Scene::PhysicsWorld::LAYER_COUNT> collides;
+                    PhysicsLayers() { collides.fill(Fox::Scene::PhysicsWorld::ALL_LAYERS); }
+                    std::string Name(int layer) const {
+                        return layer >= 0 && layer < Fox::Scene::PhysicsWorld::LAYER_COUNT && !names[layer].empty()
+                            ? names[layer] : "Layer " + std::to_string(layer);
+                    }
+                };
+
                 struct Environment {
                     bool ground = true;
                     bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
@@ -73,6 +86,7 @@ namespace Fox {
                     SurfaceMaterial groundMaterial{ glm::vec3(0.07f, 0.07f, 0.08f), 0.12f };
                     Fog fog;
                     Clouds clouds;
+                    PhysicsLayers layers;
                 };
 
                 // The sun a new scene starts with (an entity with a directional LightComponent)
@@ -364,18 +378,20 @@ namespace Fox {
                 bool AddPlayingBody(Entity entity, Fox::Scene::PhysicsComponent& component);
                 std::unordered_set<Entity> failedBodies; // Not tried again while it plays
                 void UpdatePhysics(float dt);
+                // Contacts and triggers that began or ended this frame, to the entities' scripts
+                void DispatchContacts(const std::vector<Fox::Scene::PhysicsWorld::ContactEvent>& events);
                 // Agents: plans their paths, and walks them while playing
                 void UpdateNavigation(float dt);
                 void StartNavigation();
-                // A model as an obstacle: its triangles (without displacement) with its glTF nodes' transforms applied,
-                // as the renderer places them. Kept by file; null when it cannot be loaded.
-                struct NavShape {
+                // A model's triangles (without displacement) with its glTF nodes' transforms applied, as the renderer
+                // places them: obstacles for navigation, shapes for physics. Kept by file; null when it cannot be loaded.
+                struct ModelShape {
                     std::vector<glm::vec3> positions;
                     std::vector<uint32_t> indices;
                     glm::vec3 low{ 0.0f }, high{ 0.0f };
                 };
-                std::map<std::string, std::shared_ptr<NavShape>> navShapes;
-                const NavShape* NavShapeOf(const std::string& file);
+                std::map<std::string, std::shared_ptr<ModelShape>> modelShapes;
+                const ModelShape* ModelShapeOf(const std::string& file);
                 // An enabled agent or part of one (they move: not obstacles)
                 bool IsNavAgentPart(Entity entity) const;
                 uint64_t obstacleGeneration = 0; // Counts the frames obstacles moved in

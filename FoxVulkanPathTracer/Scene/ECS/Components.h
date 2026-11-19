@@ -176,6 +176,8 @@ namespace Fox {
 			float linearDamping = 0.05f;
 			float angularDamping = 0.05f;
 			bool continuous = false;        // Swept collision, for fast small bodies
+			int layer = 0;                  // Collision layer (names and which collide: Environment > Collision layers)
+			bool trigger = false;           // Collides with nothing, tells its scripts what enters and leaves it
 
 			// In water (a WaterComponent's): lifted by what it displaces, slowed and carried by the flow, and it splashes
 			bool floats = true;

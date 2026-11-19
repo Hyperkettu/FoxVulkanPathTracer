@@ -116,8 +116,9 @@ namespace Fox {
 
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Fog, enabled, density, falloff, baseHeight, color, anisotropy)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Clouds, enabled, bottom, top, coverage, density, size, wind, anisotropy, albedo, shadows)
+			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::PhysicsLayers, names, collides)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial, fog, clouds)
+				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
@@ -273,7 +274,7 @@ namespace Fox {
 						{ "halfExtents", body.halfExtents }, { "radius", body.radius }, { "halfHeight", body.halfHeight }, { "center", body.center },
 						{ "mass", body.mass }, { "density", body.density }, { "friction", body.friction }, { "restitution", body.restitution },
 						{ "linearDamping", body.linearDamping }, { "angularDamping", body.angularDamping }, { "continuous", body.continuous },
-						{ "floats", body.floats }, { "waterDrag", body.waterDrag },
+						{ "floats", body.floats }, { "waterDrag", body.waterDrag }, { "layer", body.layer }, { "trigger", body.trigger },
 					};
 				}
 
@@ -295,6 +296,8 @@ namespace Fox {
 					body.continuous = j.value("continuous", body.continuous);
 					body.floats = j.value("floats", body.floats);
 					body.waterDrag = j.value("waterDrag", body.waterDrag);
+					body.layer = std::clamp(j.value("layer", 0), 0, Fox::Scene::PhysicsWorld::LAYER_COUNT - 1);
+					body.trigger = j.value("trigger", false);
 					return body;
 				}
 

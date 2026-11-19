@@ -206,6 +206,12 @@ namespace Fox {
 			}
 		}
 
+		void ScriptHost::Contact(uint64_t entity, int32_t kind, uint64_t other, const float* data7) {
+			if (ready && managed.Contact) {
+				managed.Contact(entity, kind, other, data7);
+			}
+		}
+
 		void ScriptHost::StopAll() {
 			if (ready) {
 				managed.StopAll();
