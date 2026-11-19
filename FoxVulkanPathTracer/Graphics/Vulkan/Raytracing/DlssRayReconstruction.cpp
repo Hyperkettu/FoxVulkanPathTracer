@@ -231,6 +231,10 @@ namespace Fox {
 
 					commandList.End().SubmitAndWait(context.graphicsQueue);
 
+					// The capability query can pass and the feature still be refused: this DLSS is newer than the driver
+					if (result == NVSDK_NGX_Result_FAIL_OutOfDate) {
+						throw std::runtime_error("the NVIDIA driver is too old for this DLSS version (update the driver)");
+					}
 					ThrowIfFailed(result, "Creating the DLSS Ray Reconstruction feature");
 				}
 

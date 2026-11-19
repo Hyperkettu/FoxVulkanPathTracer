@@ -496,7 +496,7 @@ Gameplay is written in C#: classes deriving from `Fox.Script` in `Scripts/*.cs`,
 entity a **Script** component (Inspector > Add Component > Script, then **Add script...**, or **New script file** to
 start one from a template). `Scenes/scripting-demo.json` has examples at work:
 
-* `PlayerBall` rolls a ball with W A S D, jumps with Space and drops boxes with B.
+* `PlayerBall` rolls a ball with the MoveX / MoveY axes (W A S D), jumps with Jump (Space), and drops boxes with Drop (B).
 * `FollowCamera` follows it with the game's camera.
 * `Chaser` sends an agent after it.
 * `Spinner` turns and bobs a box.
@@ -530,9 +530,34 @@ stops or the script's entity goes. Scripts run first in the frame, before agents
 | Components | `Entity.Physics` (`Velocity`, `AngularVelocity`, `Mass`, `AddImpulse`, `AddForce`, `Layer`, `IsTrigger`), `Entity.Agent` (`Target`, `Speed`, `Arrived`, `Stop`), `Entity.Light` (`Color`, `Intensity`, `Enabled`), `Entity.Mesh` (`Visible`), `Entity.Camera` (`FieldOfView`), `Entity.Volume` (`Density`, `Color`, `Glow`) |
 | `Scene` | `Spawn("ball" / "box" / "sphere" / "smoke" / "glowing smoke" / "agent" / "empty" / a model file, position)`, `Find`, `Raycast(origin, direction, maxDistance, out hit, ignore)` (physics bodies and the ground), `GameCamera` |
 | `Physics`, `Layers` | Queries (`Raycast`, `RaycastAll`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `OverlapBox`, `OverlapCapsule`) with layer masks (`Layers.Mask`, `NameToLayer`); events: `OnCollisionEnter` / `Exit`, `OnTriggerEnter` / `Exit` (see *Physics*) |
-| `Input` | `GetKey` / `GetKeyDown` / `GetKeyUp` (`Key.W`, `Key.Space`, ...), `GetMouseButton...`, `MouseDelta`, `MousePosition` |
+| `Input` | Named input: `GetAction` / `GetActionDown` / `GetActionUp("Jump")`, `GetAxis("MoveX")`, `GetVector("MoveX", "MoveY")` (see below); the keys themselves: `GetKey` / `GetKeyDown` / `GetKeyUp` (`Key.W`, `Key.Space`, ...), `GetMouseButton...`, `MouseDelta`, `MousePosition` |
 | `Time` | `Delta`, `Elapsed`, `Scale`, `Frame` |
 | `Debug` | `Log`, `Warn`, `Error` (to the console) |
+
+**Input actions.** Scripts ask for what the player means rather than which key it is:
+
+* **Actions** are buttons: `Input.GetActionDown("Jump")`.
+* **Axes** run from -1 to 1 between a negative and a positive key: `Input.GetAxis("MoveX")`.
+  `Input.GetVector("MoveX", "MoveY")` gives a direction no longer than 1, so diagonals are not faster.
+
+The **Input Actions** window (Window menu) maps them to keys and mouse buttons:
+
+* **Add a key:** **+ key**, then press the key (Escape cancels).
+* **Add a mouse button:** **+ mouse**.
+* **Remove a binding:** click it.
+* **Rename:** edit the action's or axis's name.
+
+Several bindings per action are fine (Fire: the left mouse button or Return). The mapping is the project's, saved to
+`Settings/Input.json` as key names (`"Space"`, `"Left Shift"`, `"Mouse Left"`) whenever it changes.
+
+The defaults are:
+
+| | |
+| --- | --- |
+| Actions | Jump (Space), Fire (left mouse, Return), Interact (F), Sprint (Left Shift), Blast (Q), Drop (B) |
+| Axes | MoveX (D / A and the arrows), MoveY (W / S and the arrows) |
+
+**Reset to defaults** brings them back. A name the mapping does not have is reported once in the console.
 
 While the game plays, the keyboard belongs to it: the editor keeps only `E`, `Escape` and the F keys. Outside edit
 mode the mouse is captured and `Input.MouseDelta` is how it moves.

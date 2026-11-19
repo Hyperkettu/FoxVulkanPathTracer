@@ -89,6 +89,10 @@ namespace Fox {
 				uint64_t ignore, int32_t triggers, uint64_t* entities, int32_t capacity);
 			int32_t (*GetLayerName)(int32_t layer, char* buffer, int32_t capacity);
 			int32_t (*LayerFromName)(const char* name); // -1: none of that name
+
+			// Named input (Settings/Input.json): an action held / pressed / released (mode as GetKey), an axis -1..1
+			int32_t (*GetAction)(const char* name, int32_t mode);
+			float (*GetAxis)(const char* name);
 		};
 
 		// The scripting host's functions (Host.cs; Bootstrap fills them in)

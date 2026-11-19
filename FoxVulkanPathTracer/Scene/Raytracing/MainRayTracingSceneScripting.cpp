@@ -5,6 +5,7 @@
 #include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
 
 #include <algorithm>
+#include <set>
 
 namespace Fox {
 
@@ -456,6 +457,42 @@ namespace Fox {
 					return static_cast<int32_t>(name.size());
 				}
 
+				// --- Input actions ---
+
+				// Each unknown name once, so a typo is noticed without flooding the console
+				static void Unknown(const char* kind, const char* name) {
+					static std::set<std::string> told;
+					if (told.insert(std::string(kind) + name).second) {
+						std::cout << "Scripts: no input " << kind << " \"" << name << "\" (Window > Input Actions)\n";
+					}
+				}
+
+				static int32_t GetAction(const char* name, int32_t mode) {
+					if (!name) return 0;
+					const auto* action = scene->inputActions.FindAction(name);
+					if (!action) {
+						Unknown("action", name);
+						return 0;
+					}
+					const auto& input = scene->scriptInput;
+					const bool now = Fox::Input::InputActions::AnyHeld(action->bindings, input.keys, input.buttons);
+					const bool before = Fox::Input::InputActions::AnyHeld(action->bindings, input.previousKeys, input.previousButtons);
+					return Edge(now ? 1 : 0, before ? 1 : 0, mode);
+				}
+
+				static float GetAxis(const char* name) {
+					if (!name) return 0.0f;
+					const auto* axis = scene->inputActions.FindAxis(name);
+					if (!axis) {
+						Unknown("axis", name);
+						return 0.0f;
+					}
+					const auto& input = scene->scriptInput;
+					const float positive = Fox::Input::InputActions::AnyHeld(axis->positive, input.keys, input.buttons) ? 1.0f : 0.0f;
+					const float negative = Fox::Input::InputActions::AnyHeld(axis->negative, input.keys, input.buttons) ? 1.0f : 0.0f;
+					return positive - negative;
+				}
+
 				static int32_t LayerFromName(const char* name) {
 					if (!name) return -1;
 					for (int i = 0; i < PhysicsWorld::LAYER_COUNT; i++) {
@@ -514,6 +551,15 @@ namespace Fox {
 				api.Overlap = ScriptBindings::Overlap;
 				api.GetLayerName = ScriptBindings::GetLayerName;
 				api.LayerFromName = ScriptBindings::LayerFromName;
+				api.GetAction = ScriptBindings::GetAction;
+				api.GetAxis = ScriptBindings::GetAxis;
+
+				// The game's named input
+				std::string inputError;
+				if (!inputActions.Load(Fox::Input::InputActions::FILE, inputError)) {
+					std::cout << "Input: " << inputError << " (using the defaults)\n";
+					inputActions = Fox::Input::InputActions::Defaults();
+				}
 
 				scripts = std::make_unique<Fox::Scripting::ScriptHost>();
 				if (!scripts->Initialize("Scripts", api)) {

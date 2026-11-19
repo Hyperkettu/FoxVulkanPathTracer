@@ -533,6 +533,25 @@ namespace Fox
 
     public static unsafe class Input
     {
+        // --- Named input: what the player means, mapped to keys in Window > Input Actions (Settings/Input.json) ---
+
+        /// <summary>An action ("Jump", "Fire") is held</summary>
+        public static bool GetAction(string name) { fixed (byte* p = Native.Utf8(name)) return Native.Api->GetAction(p, 0) != 0; }
+        /// <summary>An action was pressed this frame</summary>
+        public static bool GetActionDown(string name) { fixed (byte* p = Native.Utf8(name)) return Native.Api->GetAction(p, 1) != 0; }
+        /// <summary>An action was released this frame</summary>
+        public static bool GetActionUp(string name) { fixed (byte* p = Native.Utf8(name)) return Native.Api->GetAction(p, 2) != 0; }
+        /// <summary>An axis ("MoveX"): +1 while a positive key is held, -1 while a negative one is, else 0</summary>
+        public static float GetAxis(string name) { fixed (byte* p = Native.Utf8(name)) return Native.Api->GetAxis(p); }
+        /// <summary>Two axes as a direction, no longer than 1 (diagonals are not faster)</summary>
+        public static Vector2 GetVector(string xAxis, string yAxis)
+        {
+            var v = new Vector2(GetAxis(xAxis), GetAxis(yAxis));
+            return v.LengthSquared() > 1.0f ? Vector2.Normalize(v) : v;
+        }
+
+        // --- Keys and buttons themselves ---
+
         public static bool GetKey(Key key) => Native.Api->GetKey((int)key, 0) != 0;
         /// <summary>Pressed this frame</summary>
         public static bool GetKeyDown(Key key) => Native.Api->GetKey((int)key, 1) != 0;

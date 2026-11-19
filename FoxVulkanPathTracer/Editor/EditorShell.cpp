@@ -43,6 +43,7 @@ namespace Fox {
 			case Window::MeshPaint: return "Mesh Paint";
 			case Window::Camera: return "Camera";
 			case Window::Controls: return "Controls";
+			case Window::Input: return "Input Actions";
 			default: return "";
 			}
 		}

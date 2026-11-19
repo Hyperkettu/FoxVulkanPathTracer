@@ -1,0 +1,65 @@
+{
+  "actions": [
+    {
+      "bindings": [
+        "Space"
+      ],
+      "name": "Jump"
+    },
+    {
+      "bindings": [
+        "Mouse Left",
+        "Return"
+      ],
+      "name": "Fire"
+    },
+    {
+      "bindings": [
+        "F"
+      ],
+      "name": "Interact"
+    },
+    {
+      "bindings": [
+        "Left Shift"
+      ],
+      "name": "Sprint"
+    },
+    {
+      "bindings": [
+        "Q"
+      ],
+      "name": "Blast"
+    },
+    {
+      "bindings": [
+        "B"
+      ],
+      "name": "Drop"
+    }
+  ],
+  "axes": [
+    {
+      "name": "MoveX",
+      "negative": [
+        "A",
+        "Left"
+      ],
+      "positive": [
+        "D",
+        "Right"
+      ]
+    },
+    {
+      "name": "MoveY",
+      "negative": [
+        "S",
+        "Down"
+      ],
+      "positive": [
+        "W",
+        "Up"
+      ]
+    }
+  ]
+}

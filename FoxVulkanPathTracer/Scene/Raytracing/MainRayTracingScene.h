@@ -215,6 +215,9 @@ namespace Fox {
                     glm::vec2 mousePosition{ 0.0f };
                 };
                 ScriptInput& GetScriptInput() { return scriptInput; }
+                // Named actions and axes for the scripts (Settings/Input.json; the Input Actions window edits them)
+                Fox::Input::InputActions& GetInputActions() { return inputActions; }
+                bool SaveInputActions(std::string& error) const { return inputActions.Save(Fox::Input::InputActions::FILE, error); }
 
                 // --- Physics (PhysicsComponent, Scene/Physics.h): Play (F5) ---
                 // Entities with a PhysicsComponent become rigid bodies on the ground or terrain; dynamic ones fall,
@@ -332,6 +335,7 @@ namespace Fox {
                 std::unique_ptr<Fox::Scripting::ScriptHost> scripts;
                 std::string scriptsError;
                 ScriptInput scriptInput;
+                Fox::Input::InputActions inputActions;
                 std::unordered_map<int64_t, Entity> runningScripts;
                 void InitializeScripts();
                 void UpdateScripts(float step); // Starts scripts added since, stops removed ones, runs them

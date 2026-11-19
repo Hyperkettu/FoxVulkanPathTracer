@@ -183,6 +183,11 @@ namespace Fox {
 				bool cameraEjected = false;
 				glm::vec2 scriptMouseDelta{ 0.0f }; // Mouse movement since the last frame, for scripts
 				void UpdateScriptInput();
+				// The Input Actions window, and the binding it is listening for a key for
+				void DrawInputActions();
+				struct InputCapture { int action = -1; int axis = -1; bool negative = false; };
+				InputCapture inputCapture;
+				bool CapturingInput() const { return inputCapture.action >= 0 || inputCapture.axis >= 0; }
 				Fox::Editor::CameraEditor cameraEditor;
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written

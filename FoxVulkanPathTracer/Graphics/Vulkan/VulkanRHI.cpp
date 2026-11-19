@@ -717,9 +717,24 @@ namespace Fox {
 					set->Update();
 				}
 
+				// A denoiser that cannot work at this size (DLSS: its feature is made here, and an old driver refuses it)
+				// leaves the list; the others carry on, so the renderer still starts
 				const RayTracing::OutputSettings output{ capabilities.currentExtent, upscalingMode };
-				for (auto& denoiser : denoisers) {
-					denoiser->Resize(*gbuffer, output);
+				for (size_t i = 0; i < denoisers.size();) {
+					try {
+						denoisers[i]->Resize(*gbuffer, output);
+						i++;
+					}
+					catch (const std::exception& e) {
+						std::cout << denoisers[i]->GetName() << " is not available: " << e.what() << "\n";
+						if (denoisers.size() == 1) {
+							throw; // Nothing left to show the image with
+						}
+						denoisers.erase(denoisers.begin() + static_cast<std::ptrdiff_t>(i));
+						if (activeDenoiser > i || activeDenoiser >= denoisers.size()) {
+							activeDenoiser = activeDenoiser > 0 ? activeDenoiser - 1 : 0;
+						}
+					}
 				}
 
 				SelectDenoiser(activeDenoiser);
@@ -1500,6 +1515,11 @@ namespace Fox {
 			void VulkanRHI::RunKeyCommand(SDL_Scancode key) {
 				using Managers::TextureManager;
 				using Mode = Fox::Editor::TransformGizmo::Mode;
+
+				// A key pressed for a binding (Input Actions window) is not a command
+				if (CapturingInput()) {
+					return;
+				}
 
 				// While the game plays the keyboard is the game's: only E (edit mode), Escape and the F keys stay the
 				// editor's

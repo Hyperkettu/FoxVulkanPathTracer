@@ -141,6 +141,13 @@ namespace Fox {
 					shell.Place(Window::Controls, uiScale);
 					DrawControls();
 				}
+				if (shell.IsOpen(Window::Input)) {
+					shell.Place(Window::Input, uiScale);
+					DrawInputActions();
+				}
+				else {
+					inputCapture = InputCapture{};
+				}
 				sceneEditor.DrawSaveAs(scene, pose, uiScale);
 
 				// --- Status bar ---
@@ -552,6 +559,7 @@ namespace Fox {
 				windowItem(Window::Terrain, "Terrain", "", "sculpt paint");
 				windowItem(Window::MeshPaint, "Mesh Paint", "", "scatter paint trees models density foliage");
 				windowItem(Window::Camera, "Camera Paths", "", "flight keys");
+				windowItem(Window::Input, "Input Actions", "", "keys bindings controls jump axis rebind");
 				shell.Separator("Window");
 				shell.Add("Window/Close All", [&shell] {
 					for (int i = 0; i < static_cast<int>(Window::Count); i++) {
@@ -600,6 +608,178 @@ namespace Fox {
 				shell.Add("Help/Find a Command", [&shell] { shell.FocusFind(); }, "F1", true, -1, "search menu");
 				shell.Add("Help/Controls", [&shell] { shell.Toggle(Window::Controls); }, "", true, shell.IsOpen(Window::Controls) ? 1 : 0,
 					"keys keyboard mouse shortcuts help");
+			}
+
+			void VulkanRHI::DrawInputActions() {
+				using Actions = Fox::Input::InputActions;
+				auto& scene = *raytracingScene;
+				Actions& input = scene.GetInputActions();
+				if (!ImGui::Begin("Input Actions", shell.OpenFlag(Window::Input))) {
+					ImGui::End();
+					return;
+				}
+				bool changed = false;
+
+				// Listening: the first key pressed becomes the binding (Escape: never mind)
+				if (CapturingInput()) {
+					const auto& keys = scene.GetScriptInput();
+					for (int code = 1; code < 512; code++) {
+						if (!keys.keys[code] || keys.previousKeys[code]) {
+							continue;
+						}
+						if (code != SDL_SCANCODE_ESCAPE) {
+							Actions::Binding binding;
+							binding.code = code;
+							std::vector<Actions::Binding>* list = nullptr;
+							if (inputCapture.action >= 0 && inputCapture.action < static_cast<int>(input.actions.size())) {
+								list = &input.actions[inputCapture.action].bindings;
+							}
+							else if (inputCapture.axis >= 0 && inputCapture.axis < static_cast<int>(input.axes.size())) {
+								auto& axis = input.axes[inputCapture.axis];
+								list = inputCapture.negative ? &axis.negative : &axis.positive;
+							}
+							if (list && std::find(list->begin(), list->end(), binding) == list->end()) {
+								list->push_back(binding);
+								changed = true;
+							}
+						}
+						inputCapture = InputCapture{};
+						break;
+					}
+				}
+
+				ImGui::TextWrapped("Scripts ask for these by name: Input.GetAction(\"Jump\"), Input.GetAxis(\"MoveX\"). Saved to %s.", Actions::FILE);
+
+				// A row of bindings: each a button that removes it, then + to listen for a key, and the mouse buttons
+				auto bindings = [&](std::vector<Actions::Binding>& list, bool listening, const std::function<void()>& startListening) {
+					int remove = -1;
+					for (size_t i = 0; i < list.size(); i++) {
+						ImGui::PushID(static_cast<int>(i));
+						if (ImGui::SmallButton(Actions::BindingName(list[i]).c_str())) {
+							remove = static_cast<int>(i);
+						}
+						ImGui::SetItemTooltip("Click to remove");
+						ImGui::PopID();
+						ImGui::SameLine();
+					}
+					if (remove >= 0) {
+						list.erase(list.begin() + remove);
+						changed = true;
+					}
+					if (listening) {
+						ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "press a key... (Esc: cancel)");
+					}
+					else {
+						if (ImGui::SmallButton("+ key")) {
+							startListening();
+						}
+						ImGui::SameLine();
+						if (ImGui::SmallButton("+ mouse")) {
+							ImGui::OpenPopup("mouse");
+						}
+						if (ImGui::BeginPopup("mouse")) {
+							for (int button = 0; button < 3; button++) {
+								Actions::Binding binding;
+								binding.kind = Actions::Binding::Kind::Mouse;
+								binding.code = button;
+								if (ImGui::Selectable(Actions::BindingName(binding).c_str())
+									&& std::find(list.begin(), list.end(), binding) == list.end()) {
+									list.push_back(binding);
+									changed = true;
+								}
+							}
+							ImGui::EndPopup();
+						}
+					}
+				};
+
+				auto nameField = [&](std::string& name) {
+					char text[64];
+					std::snprintf(text, sizeof(text), "%s", name.c_str());
+					ImGui::SetNextItemWidth(130.0f * uiScale);
+					if (ImGui::InputText("##name", text, sizeof(text), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)
+						|| (ImGui::IsItemDeactivatedAfterEdit())) {
+						name = text;
+						changed = true;
+					}
+				};
+
+				ImGui::SeparatorText("Actions (buttons)");
+				int removeAction = -1;
+				for (size_t i = 0; i < input.actions.size(); i++) {
+					auto& action = input.actions[i];
+					ImGui::PushID(static_cast<int>(i));
+					nameField(action.name);
+					ImGui::SameLine();
+					const bool listening = inputCapture.action == static_cast<int>(i);
+					bindings(action.bindings, listening, [&] { inputCapture = InputCapture{}; inputCapture.action = static_cast<int>(i); });
+					ImGui::SameLine();
+					if (ImGui::SmallButton("x")) {
+						removeAction = static_cast<int>(i);
+					}
+					ImGui::SetItemTooltip("Remove the action");
+					ImGui::PopID();
+				}
+				if (removeAction >= 0) {
+					input.actions.erase(input.actions.begin() + removeAction);
+					inputCapture = InputCapture{};
+					changed = true;
+				}
+				if (ImGui::Button("Add action")) {
+					input.actions.push_back({ "Action" + std::to_string(input.actions.size() + 1), {} });
+					changed = true;
+				}
+
+				ImGui::SeparatorText("Axes (-1..1)");
+				int removeAxis = -1;
+				for (size_t i = 0; i < input.axes.size(); i++) {
+					auto& axis = input.axes[i];
+					ImGui::PushID(1000 + static_cast<int>(i));
+					nameField(axis.name);
+					ImGui::SameLine();
+					if (ImGui::SmallButton("x")) {
+						removeAxis = static_cast<int>(i);
+					}
+					ImGui::SetItemTooltip("Remove the axis");
+					ImGui::Indent();
+					ImGui::PushID("positive");
+					ImGui::TextDisabled("+1");
+					ImGui::SameLine();
+					bindings(axis.positive, inputCapture.axis == static_cast<int>(i) && !inputCapture.negative,
+						[&] { inputCapture = InputCapture{}; inputCapture.axis = static_cast<int>(i); });
+					ImGui::PopID();
+					ImGui::PushID("negative");
+					ImGui::TextDisabled("-1");
+					ImGui::SameLine();
+					bindings(axis.negative, inputCapture.axis == static_cast<int>(i) && inputCapture.negative,
+						[&] { inputCapture = InputCapture{}; inputCapture.axis = static_cast<int>(i); inputCapture.negative = true; });
+					ImGui::PopID();
+					ImGui::Unindent();
+					ImGui::PopID();
+				}
+				if (removeAxis >= 0) {
+					input.axes.erase(input.axes.begin() + removeAxis);
+					inputCapture = InputCapture{};
+					changed = true;
+				}
+				if (ImGui::Button("Add axis")) {
+					input.axes.push_back({ "Axis" + std::to_string(input.axes.size() + 1), {}, {} });
+					changed = true;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Reset to defaults")) {
+					input = Actions::Defaults();
+					inputCapture = InputCapture{};
+					changed = true;
+				}
+
+				if (changed) {
+					std::string error;
+					if (!scene.SaveInputActions(error)) {
+						std::cout << "Input: " << error << "\n";
+					}
+				}
+				ImGui::End();
 			}
 
 			void VulkanRHI::DrawControls() {

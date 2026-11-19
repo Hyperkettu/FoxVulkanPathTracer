@@ -49,6 +49,9 @@ namespace Fox.Interop
         public delegate* unmanaged<int, float*, float*, float*, uint, ulong, int, ulong*, int, int> Overlap;
         public delegate* unmanaged<int, byte*, int, int> GetLayerName;
         public delegate* unmanaged<byte*, int> LayerFromName;
+
+        public delegate* unmanaged<byte*, int, int> GetAction;
+        public delegate* unmanaged<byte*, float> GetAxis;
     }
 
     [StructLayout(LayoutKind.Sequential)]
