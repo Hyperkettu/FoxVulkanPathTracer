@@ -103,6 +103,10 @@ namespace Fox {
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_JSON_SERIALIZE_ENUM(ParticleComponent::Effect, {
+			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" } })
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ParticleComponent, enabled, effect, maxParticles, rate, lifetime, size, speed, spread,
+			height, color, brightness, windSpeed, light, lightIntensity, texture)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClutterComponent, enabled, model, size, density, seed, minScale, maxScale,
 			randomTurn, alignToGround, maxSlope, sink, edgeFade, terrainLayer, faceCamera, sway, grassColor, grassHeight, blades)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
@@ -511,6 +515,20 @@ namespace Fox {
 								component.scripts.push_back(std::move(script));
 							}
 							graph.GetRegistry().Add<Fox::Scene::ScriptComponent>(entity, std::move(component));
+						},
+					},
+					{
+						"particles",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::ParticleComponent* particles = graph.GetRegistry().TryGet<Fox::Scene::ParticleComponent>(entity);
+							if (!particles) {
+								return false;
+							}
+							j = *particles;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::ParticleComponent>(entity, j.get<Fox::Scene::ParticleComponent>());
 						},
 					},
 					{
@@ -1004,6 +1022,9 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ParticleComponent>(graph,
+					[](const Fox::Scene::ParticleComponent&, const Fox::Scene::ParticleComponent&) { return true; },
+					[](const Fox::Scene::ParticleComponent&, Fox::Scene::ParticleComponent& value) { value.placed = false; value.particles.clear(); }));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ClutterComponent>(graph,
 					[](const Fox::Scene::ClutterComponent&, const Fox::Scene::ClutterComponent&) { return true; },
 					[](const Fox::Scene::ClutterComponent&, Fox::Scene::ClutterComponent& value) { value.placed = false; }));

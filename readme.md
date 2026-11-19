@@ -56,6 +56,17 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind. One wind direction for the whole scene: every tree sways the same way.
+* **Particle effects** **Create > Effects > Fire / Magic / Falling Leaves**, or a **Particles** component on any entity.
+  * **Simulation:** particles are simulated on the CPU. Each is a quad of real geometry in a simulated surface, with its structure rebuilt every frame and previous positions uploaded, so motion vectors and DLSS see them move.
+  * **Fire:** flame sprites (`Textures/particles/flame.png`) rise with buoyancy and turbulence and are carried by the wind. Each glows by its own heat, cooling from white-yellow through orange and red to soot (`FireColor` in `Shaders/common.slang`). A flickering point light lights what is around.
+  * **Magic:** sparks (`Textures/particles/spark.png`) swirl up around the entity in its colour and twinkle, with a point light in the colour.
+  * **Fire and magic** face the camera and cast no shadows (instance mask `INSTANCE_MASK_EFFECT`). Every ray still sees them, and bounce rays carry their glow.
+  * **Falling leaves:** each leaf is a rigid plate in the scene's wind (Environment > Wind towards, at the emitter's wind speed, gusting).
+    * **Force:** the air pushes the leaf along its normal with ½ ρ C<sub>N</sub> A<sub>projected</sub> \|u\|², where A<sub>projected</sub> = A \|n · û\| is its area facing the relative wind u. A little skin friction acts along it. Velocity follows F / m, with an areal density of 0.15 kg/m².
+    * **Torque:** that push acts at the centre of pressure, upwind of the middle by up to a quarter of the leaf the more the flow runs along it, and at the middle when it meets the leaf head on. So the torque is in proportion to the projected area too. It turns the leaf with a plate's moments of inertia (gyroscopic term included), damped by the air, which gives fluttering and tumbling.
+    * **Landing:** leaves land and lie on the ground, or float on water, until their life is over.
+    * **Textures:** the albedo is `Textures/vahtera/vahtera_leaf.png` by default (its alpha cuts the leaf out). Normal, roughness, metallic and ambient occlusion maps in the same folder are used when their file names say so, for example `vahtera_leaf_normal.png` or `vahtera_leaf_roughness.png`.
+  * **Settings:** max particles, rate, lifetime, size, speed, spread, start height, colour, brightness, wind and light.
 * **Clutter (instanced grass, flowers, stones)** **Create > Clutter (grass)**, or add a **Clutter** component to any entity.
   * **What is scattered:** copies of any glTF model, or a generated tuft of grass blades (colour, height, blades per tuft).
   * **Where:** over the ground around the entity, on a jittered grid: area, density per m², seed, scale range, random turn, alignment to the ground's slope, a maximum slope, and sink.

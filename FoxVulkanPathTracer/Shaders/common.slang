@@ -10,7 +10,23 @@ static const float PI = 3.14159265359f;
 static const uint INSTANCE_MASK_OPAQUE = 0x01;
 static const uint INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
 static const uint INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
+static const uint INSTANCE_MASK_EFFECT = 0x08;      // Glowing particles (fire, magic): seen and lit by, never in shadow rays
 static const uint INSTANCE_MASK_ALL = 0xFF;
+
+// Material.layerMaterial of particles (ParticleComponent): the vertices' padding scales the emission (x: brightness 0..1)
+// and, from 0 up, colours it as fire of that heat (y: 1 white hot .. 0 out; below 0: the material's own colour)
+static const int PARTICLE_MATERIAL = -3;
+
+// Fire's colour by heat: white-yellow, orange, deep red, then nothing (soot)
+float3 FireColor(float heat)
+{
+    heat = saturate(heat);
+    float3 red = float3(0.55f, 0.06f, 0.01f);
+    float3 orange = float3(1.0f, 0.38f, 0.07f);
+    float3 yellow = float3(1.0f, 0.82f, 0.45f);
+    float3 color = heat < 0.5f ? lerp(red * saturate(heat * 4.0f), orange, saturate((heat - 0.25f) * 4.0f)) : lerp(orange, yellow, (heat - 0.5f) * 2.0f);
+    return color * (0.4f + 1.6f * heat * heat);
+}
 
 // What the closest hit shader reports back to the path tracer in raygen.slang: a description
 // of the surface at the hit point. All shading happens in the ray generation shader, so rays

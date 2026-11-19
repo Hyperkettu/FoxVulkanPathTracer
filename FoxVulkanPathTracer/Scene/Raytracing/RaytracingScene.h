@@ -197,6 +197,9 @@ namespace Fox {
                 // RebuildSurface builds it anew instead, best once a stroke of edits is done.
                 void UpdateSurfaceVertices(size_t surface, uint32_t first, const Fox::Graphics::Vulkan::Vertex* data, uint32_t count);
                 void RebuildSurface(size_t surface);
+                // Simulated surfaces written on the CPU (particles): where its vertices were last frame (motion vectors),
+                // uploaded with the next RecordFrameUpdate
+                void UpdateSurfacePrevious(size_t surface, const glm::vec4* data, uint32_t count);
 
                 // The surface's material index (its extra materials follow it)
                 uint32_t GetSurfaceMaterial(size_t surface) const { return editableSurfaces[surface].material; }
@@ -246,6 +249,8 @@ namespace Fox {
                 bool IsObjectMovable(size_t object) const { return placements[object].movable; }
                 const ObjectTransform& GetObjectTransform(size_t object) const { return placements[object].transform; }
                 // Moves what is traced, not the object: applied after its transform (a tree swaying in the wind)
+                // Its instances' visibility mask instead of their surface kind's (INSTANCE_MASK_EFFECT: casts no shadow). Before Build.
+                void SetObjectMask(size_t object, uint32_t mask) { placements[object].maskOverride = mask; }
                 void SetObjectSway(size_t object, const glm::mat4& sway) {
                     placements[object].sway = sway;
                     tlasDirty = true;
@@ -324,6 +329,7 @@ namespace Fox {
                 static constexpr uint32_t INSTANCE_MASK_OPAQUE = 0x01;
                 static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
                 static constexpr uint32_t INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
+                static constexpr uint32_t INSTANCE_MASK_EFFECT = 0x08;      // Glowing particles: no shadows
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;
@@ -514,6 +520,7 @@ namespace Fox {
                     uint32_t vertexCount = 0;
                     uint32_t material = 0;
                     uint32_t dirtyBegin = UINT32_MAX, dirtyEnd = 0; // Vertices to upload, surface relative
+                    std::vector<glm::vec4> previousUpload;          // Previous positions to upload (UpdateSurfacePrevious)
                     bool refit = false;
                     bool rebuild = false;
                 };
@@ -597,6 +604,7 @@ namespace Fox {
                     // Instanced objects: each copy's matrix (before the transform) and, per top level instance, its copy
                     std::vector<glm::mat4> items;
                     std::vector<uint32_t> instanceItems;
+                    uint32_t maskOverride = 0; // Non-zero: its instances' mask (SetObjectMask)
 
                     glm::mat4 TracedMatrix() const { return sway * transform.Matrix(); }
                 };

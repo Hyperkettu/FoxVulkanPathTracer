@@ -5146,6 +5146,90 @@
       },
       "name": "Meadow grass",
       "parent": 153
+    },
+    {
+      "name": "Falling leaves",
+      "active": true,
+      "parent": 62,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "particles": {
+          "effect": "leaves",
+          "maxParticles": 300,
+          "rate": 10.0,
+          "lifetime": 25.0,
+          "size": 0.3,
+          "speed": 0.5,
+          "spread": 3.5,
+          "height": 5.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "brightness": 0.0,
+          "windSpeed": 4.0,
+          "light": false
+        }
+      }
+    },
+    {
+      "name": "Falling leaves",
+      "active": true,
+      "parent": 67,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "particles": {
+          "effect": "leaves",
+          "maxParticles": 300,
+          "rate": 10.0,
+          "lifetime": 25.0,
+          "size": 0.3,
+          "speed": 0.5,
+          "spread": 3.0,
+          "height": 4.5,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "brightness": 0.0,
+          "windSpeed": 4.0,
+          "light": false
+        }
+      }
     }
   ],
   "environment": {

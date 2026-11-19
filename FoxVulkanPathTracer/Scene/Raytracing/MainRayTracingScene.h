@@ -302,6 +302,8 @@ namespace Fox {
                 Entity AddSmoke(const glm::vec3& position, bool glowing = false);
                 // An entity scattering grass around position (ClutterComponent)
                 Entity AddClutter(const glm::vec3& position);
+                // An entity emitting an effect (ParticleComponent)
+                Entity AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect);
 
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
@@ -373,6 +375,14 @@ namespace Fox {
                 // Clutter (ClutterComponent): scattered with the rebuild; turned, swayed and followed every frame
                 void PlaceClutter(const std::vector<Entity>& entities, std::string& problems);
                 void UpdateClutter(float dt);
+                // Particles (ParticleComponent): their surfaces and lights made with the rebuild; simulated every frame
+                void PlaceParticles(const std::vector<Entity>& entities, std::string& problems);
+                void UpdateParticles(float dt);
+                void SimulateParticles(Entity entity, Fox::Scene::ParticleComponent& emitter, float dt);
+                // Water surfaces' rectangles and levels (leaves float on them, clutter keeps out of them)
+                struct Pond { glm::vec3 centre; glm::vec2 half; };
+                std::vector<Pond> ponds;
+                float particleTime = 0.0f;
                 static void MakeGrassTuft(const Fox::Scene::ClutterComponent& clutter, std::vector<Fox::Graphics::Vulkan::Vertex>& vertices,
                     std::vector<uint32_t>& indices);
                 bool windLevelOfDetail = true;

@@ -23,6 +23,7 @@ namespace Fox {
 			using Fox::Scene::PrefabComponent;
 			using Fox::Scene::SoundComponent;
 			using Fox::Scene::ClutterComponent;
+			using Fox::Scene::ParticleComponent;
 
 			// Prefab instances in the Hierarchy: the instance blue, what is under it a paler blue
 			const ImVec4 PREFAB_COLOR(0.45f, 0.72f, 1.0f, 1.0f);
@@ -709,6 +710,70 @@ namespace Fox {
 				}
 			}
 
+			void DrawParticles(Scene& scene, Entity entity, State&) {
+				ParticleComponent& particles = scene.GetSceneGraph().GetRegistry().Get<ParticleComponent>(entity);
+				using Effect = ParticleComponent::Effect;
+				ImGui::Checkbox("On", &particles.enabled);
+				int effect = static_cast<int>(particles.effect);
+				const char* effects[] = { "Fire", "Magic", "Leaves in the wind" };
+				if (ImGui::Combo("Effect", &effect, effects, IM_ARRAYSIZE(effects)) && effect != static_cast<int>(particles.effect)) {
+					particles = ParticleComponent::Preset(static_cast<Effect>(effect)); // Its defaults (the rebuild follows)
+				}
+				int most = static_cast<int>(particles.maxParticles);
+				if (ImGui::SliderInt("Max particles", &most, 1, 4096)) {
+					particles.maxParticles = static_cast<uint32_t>(most); // Room for them: with the rebuild once let go
+				}
+				ImGui::SliderFloat("Rate (per s)", &particles.rate, 0.0f, 500.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat("Lifetime (s)", &particles.lifetime, 0.1f, 60.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat("Size (m)", &particles.size, 0.01f, 3.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat(particles.effect == Effect::Magic ? "Swirl speed (m/s)" : particles.effect == Effect::Fire ? "Rise (m/s)" : "Thrown (m/s)",
+					&particles.speed, 0.0f, 10.0f, "%.2f");
+				ImGui::SliderFloat(particles.effect == Effect::Leaves ? "Area half size (m)" : "Radius (m)", &particles.spread, 0.0f, 50.0f, "%.2f",
+					ImGuiSliderFlags_Logarithmic);
+				if (particles.effect == Effect::Leaves) {
+					ImGui::SliderFloat("Start height (m)", &particles.height, 0.0f, 50.0f, "%.1f");
+					static std::vector<std::string> images;
+					static bool listed = false;
+					if (!listed) {
+						images = Fox::Scene::TextureLibrary::ListImages("Textures");
+						listed = true;
+					}
+					const std::string shown = particles.texture.empty() ? "Textures/vahtera/vahtera_leaf.png" : particles.texture;
+					if (ImGui::BeginCombo("Leaf texture", shown.c_str(), ImGuiComboFlags_HeightLarge)) {
+						for (const std::string& image : images) {
+							if (ImGui::Selectable(image.c_str(), image == shown)) {
+								particles.texture = image;
+							}
+						}
+						ImGui::EndCombo();
+					}
+					ImGui::SetItemTooltip("Its albedo with alpha. Normal, roughness, metallic and ambient occlusion maps beside it are used\n"
+						"when their names say so (e.g. leaf_normal.png, leaf_roughness.png)");
+					ImGui::ColorEdit3("Tint", &particles.color.x);
+				}
+				else {
+					ImGui::ColorEdit3(particles.effect == Effect::Fire ? "Light colour" : "Colour", &particles.color.x);
+					ImGui::SliderFloat("Brightness", &particles.brightness, 0.0f, 200.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+					ImGui::Checkbox("Light", &particles.light);
+					ImGui::SetItemTooltip("A point light at it, flickering with it: it lights what is around");
+					if (particles.light) {
+						ImGui::SliderFloat("Light intensity", &particles.lightIntensity, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+					}
+				}
+				ImGui::SliderFloat("Wind (m/s)", &particles.windSpeed, 0.0f, 30.0f, "%.1f");
+				ImGui::SetItemTooltip("How hard the scene's wind blows on them (its direction: Environment > Wind towards)");
+				uint32_t alive = 0;
+				for (const auto& p : particles.particles) alive += p.alive ? 1 : 0;
+				ImGui::TextDisabled("%u alive of %u", alive, static_cast<uint32_t>(particles.particles.size()));
+				if (!particles.problem.empty()) {
+					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", particles.problem.c_str());
+				}
+				// Brightness and colour of fire and magic are in the material: picked up with the rebuild
+				if (ImGui::IsItemDeactivatedAfterEdit()) {
+					particles.placed = false;
+				}
+			}
+
 			void DrawClutter(Scene& scene, Entity entity, State&) {
 				ClutterComponent& clutter = scene.GetSceneGraph().GetRegistry().Get<ClutterComponent>(entity);
 				bool changed = ImGui::Checkbox("On", &clutter.enabled);
@@ -1039,6 +1104,21 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<ScriptComponent>(entity); },
 					DrawScript,
+				},
+				{
+					"Particles", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<ParticleComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Particles (fire, magic, leaves)")) {
+							scene.GetSceneGraph().GetRegistry().Add<ParticleComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.GetSceneGraph().GetRegistry().Remove<ParticleComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawParticles,
 				},
 				{
 					"Clutter", true,

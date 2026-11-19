@@ -1832,11 +1832,12 @@ namespace Fox {
                     // An instanced object: an instance per copy
                     const size_t copies = placement.items.empty() ? 1 : placement.items.size();
                     for (size_t item = 0; item < copies; item++) {
+                        const uint32_t mask = placement.maskOverride ? placement.maskOverride : masks[kind];
                         placement.instances.push_back(static_cast<uint32_t>(instances.size()));
-                        placement.masks.push_back(masks[kind]);
+                        placement.masks.push_back(mask);
                         instancePlacements.push_back(static_cast<uint32_t>(p));
                         const glm::mat4 matrix = placement.items.empty() ? placement.previousMatrix : placement.previousMatrix * placement.items[item];
-                        AddInstance(static_cast<uint32_t>(record.blas[kind]), matrix, record.FirstOf(kind), placement.visible ? masks[kind] : 0u);
+                        AddInstance(static_cast<uint32_t>(record.blas[kind]), matrix, record.FirstOf(kind), placement.visible ? mask : 0u);
                         if (!placement.items.empty()) {
                             placement.instanceItems.push_back(static_cast<uint32_t>(item));
                         }
@@ -2235,6 +2236,14 @@ namespace Fox {
                 surface.refit = true;
             }
 
+            void RayTracingScene::UpdateSurfacePrevious(size_t surface, const glm::vec4* data, uint32_t count) {
+                EditableSurface& s = editableSurfaces[surface];
+                if (s.firstPrevious == 0 && submeshes[meshRecords[s.record].firstSubmesh].previousPositions == 0) {
+                    return; // Not simulated: no previous positions
+                }
+                s.previousUpload.assign(data, data + std::min(count, s.vertexCount));
+            }
+
             void RayTracingScene::RebuildSurface(size_t surface) {
                 editableSurfaces[surface].rebuild = true;
             }
@@ -2265,6 +2274,7 @@ namespace Fox {
                     if (surface.dirtyBegin < surface.dirtyEnd) {
                         stagingBytes += sizeof(Vertex) * (surface.dirtyEnd - surface.dirtyBegin);
                     }
+                    stagingBytes += sizeof(glm::vec4) * surface.previousUpload.size();
                     structures = structures || surface.refit || surface.rebuild;
                 }
                 for (const TextureUpdate& update : textureUpdates) {
@@ -2312,6 +2322,18 @@ namespace Fox {
                         at += size;
                         surface.dirtyBegin = UINT32_MAX;
                         surface.dirtyEnd = 0;
+                    }
+                    for (EditableSurface& surface : editableSurfaces) {
+                        if (surface.previousUpload.empty() || !previousPositionsSSBO) {
+                            surface.previousUpload.clear();
+                            continue;
+                        }
+                        const VkDeviceSize size = sizeof(glm::vec4) * surface.previousUpload.size();
+                        std::memcpy(mapped + at, surface.previousUpload.data(), size);
+                        const VkBufferCopy region{ at, sizeof(glm::vec4) * surface.firstPrevious, size };
+                        vkCmdCopyBuffer(cmd, editStaging[frameSlot]->Get(), previousPositionsSSBO->GetBuffer().Get(), 1, &region);
+                        at += size;
+                        surface.previousUpload.clear();
                     }
 
                     for (uint32_t index : dirtyMaterials) {

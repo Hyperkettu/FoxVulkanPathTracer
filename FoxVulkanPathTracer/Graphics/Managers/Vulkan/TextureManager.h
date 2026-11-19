@@ -82,7 +82,7 @@ namespace Fox {
 					uint32_t environmentTableWidth = 0;
 					uint32_t environmentTableHeight = 0;
 
-					VkDevice device = VK_NULL_HANDLE;
+					VkDevice device = VK_NULL_HANDLE; 
 					VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 					VkFormat depthFormat = VK_FORMAT_UNDEFINED;
 

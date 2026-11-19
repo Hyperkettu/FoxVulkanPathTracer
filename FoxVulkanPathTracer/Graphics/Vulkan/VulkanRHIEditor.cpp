@@ -501,6 +501,13 @@ namespace Fox {
 					}, "", true, -1, "ball mesh");
 				}
 				shell.Add("Create/Tree", [&] { gizmo.Select(scene.AddTree(spawn)); }, "", true, -1, "plant mesh");
+				using ParticleEffect = Fox::Scene::ParticleComponent::Effect;
+				shell.Add("Create/Effects/Fire", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Fire)); }, "", true, -1,
+					"particles flames campfire burning");
+				shell.Add("Create/Effects/Magic", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 0.2f, 0.0f), ParticleEffect::Magic)); }, "", true, -1,
+					"particles sparks glow spell swirl");
+				shell.Add("Create/Effects/Falling Leaves", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Leaves)); }, "", true, -1,
+					"particles leaves autumn wind flying");
 				shell.Add("Create/Clutter (grass)", [&] { gizmo.Select(scene.AddClutter(spawn)); }, "", true, -1,
 					"grass foliage scatter instanced instances billboard flowers stones rocks");
 				shell.Add("Create/Water", [&] { gizmo.Select(scene.AddWater(spawn + glm::vec3(0.0f, 0.8f, 0.0f))); }, "", true, -1,

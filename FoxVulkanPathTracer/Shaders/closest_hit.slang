@@ -144,6 +144,17 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
         {
             emission *= SampleTexture(material.emissiveTexture, uv).rgb;
         }
+
+        // Particles: each its own brightness and heat
+        if (material.layerMaterial == PARTICLE_MATERIAL)
+        {
+            float2 glow = v0.padding * barycentrics.x + v1.padding * barycentrics.y + v2.padding * barycentrics.z;
+            emission *= max(glow.x, 0.0f);
+            if (glow.y >= 0.0f)
+            {
+                emission *= FireColor(glow.y);
+            }
+        }
     }
 
     // --- Water: the wind's ripples, finer than its simulation, and foam ---

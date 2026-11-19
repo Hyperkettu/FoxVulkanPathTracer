@@ -24,6 +24,7 @@
 //   PrefabComponent     it is an instance of a prefab (Prefabs/*.prefab.json): what is under it comes from there
 //   SoundComponent      it plays a sound (in the world, from where it is) or background music (Audio/AudioEngine.h)
 //   ClutterComponent    it scatters copies of a mesh over the ground around it: grass, flowers, stones (instanced)
+//   ParticleComponent   it emits particles: fire, magic sparks or leaves flying in the wind
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -352,6 +353,76 @@ namespace Fox {
 			std::vector<glm::mat4> shapes;     // Tilt to the ground and size (no turn, no position)
 			std::vector<float> turns;          // Radians about the up axis
 			std::vector<float> phases;
+		};
+
+		// One particle of a ParticleComponent (simulated on the CPU, MainRayTracingScene::UpdateParticles)
+		struct Particle {
+			glm::vec3 position{ 0.0f }, previousPosition{ 0.0f };
+			glm::vec3 velocity{ 0.0f };
+			glm::quat orientation{ 1.0f, 0.0f, 0.0f, 0.0f }, previousOrientation{ 1.0f, 0.0f, 0.0f, 0.0f }; // Leaves
+			glm::vec3 spin{ 0.0f };      // Leaves: angular velocity (rad/s, world); sprites: x = turn in the image plane
+			float size = 0.1f;
+			float previousSize = 0.1f;
+			float age = 0.0f;
+			float life = 1.0f;
+			float phase = 0.0f;          // Decorrelates flicker and swirl
+			bool landed = false;         // Leaves: lying on the ground or the water
+			bool alive = false;
+		};
+
+		// The entity emits particles, simulated on the CPU and traced as real geometry (a quad each):
+		//   Fire    glowing flame sprites rising, cooling from white-yellow to red and soot; a flickering point light
+		//   Magic   glowing sparks swirling up around it in the colour; a point light in the colour
+		//   Leaves  leaves (a texture with alpha: its normal, roughness, metallic and ambient occlusion maps are found
+		//           beside it) flying in the scene's wind and fluttering down. Each is a rigid plate: the air pushes it
+		//           along its normal in proportion to its area facing the relative wind, at the centre of pressure
+		//           (off centre, upwind, unless the flow is head-on): that turns it, damped by the air. They land and
+		//           lie on the ground (or float on water) until their life is over.
+		// Fire and magic face the camera and cast no shadows; leaves cast them.
+		struct ParticleComponent {
+			enum class Effect { Fire, Magic, Leaves };
+			bool enabled = true;
+			Effect effect = Effect::Fire;
+			uint32_t maxParticles = 320;
+			float rate = 260.0f;         // Born per second
+			float lifetime = 0.75f;      // Seconds (leaves: flying and lying)
+			float size = 0.5f;           // Metres
+			float speed = 1.0f;          // Fire: rising (m/s); magic: around (m/s); leaves: thrown (m/s)
+			float spread = 0.35f;        // Metres: fire's base radius; magic's ring; leaves: half the area they start over
+			float height = 0.0f;         // Leaves: metres above the entity they start at
+			glm::vec3 color{ 1.0f, 0.55f, 0.2f }; // Fire: its light's colour; magic: the sparks' and light's colour
+			float brightness = 12.0f;    // Glow (emitted radiance)
+			float windSpeed = 4.0f;      // m/s of the scene's wind (Environment > Wind towards) it is carried by
+			bool light = true;           // Fire and magic: a point light that flickers with it
+			float lightIntensity = 4.0f; // Irradiance at 1 m
+			std::string texture;         // Leaves: the albedo image (empty: Textures/vahtera/vahtera_leaf.png)
+
+			// The defaults of an effect
+			static ParticleComponent Preset(Effect effect) {
+				ParticleComponent p;
+				p.effect = effect;
+				if (effect == Effect::Magic) {
+					p.maxParticles = 256; p.rate = 120.0f; p.lifetime = 1.6f; p.size = 0.09f; p.speed = 2.5f; p.spread = 0.6f;
+					p.color = glm::vec3(0.35f, 0.6f, 1.0f); p.brightness = 25.0f; p.windSpeed = 0.0f; p.lightIntensity = 2.0f;
+				}
+				else if (effect == Effect::Leaves) {
+					p.maxParticles = 300; p.rate = 10.0f; p.lifetime = 25.0f; p.size = 0.14f; p.speed = 0.5f; p.spread = 6.0f;
+					p.height = 8.0f; p.color = glm::vec3(1.0f); p.brightness = 0.0f; p.windSpeed = 5.0f; p.light = false;
+				}
+				return p;
+			}
+
+			// Set by the scene
+			bool placed = false;
+			Effect placedEffect = Effect::Fire;
+			uint32_t placedMax = 0;
+			std::string placedTexture;
+			size_t surface = SIZE_MAX;   // Its simulated surface
+			size_t lightIndex = SIZE_MAX;
+			std::vector<Particle> particles;
+			float spawnCarry = 0.0f;
+			uint32_t random = 1;
+			std::string problem;
 		};
 
 		// The entity is an instance of a prefab: an entity tree saved in a file (Prefabs/*.prefab.json), placed any

@@ -17,6 +17,13 @@ namespace Fox {
 			}
 		}
 
+		float WindSkeleton::GustSpeed(const Settings& settings, const glm::vec3& worldPosition, float time) {
+			glm::vec3 direction(settings.windDirection.x, 0.0f, settings.windDirection.z);
+			direction = glm::dot(direction, direction) > 1e-8f ? glm::normalize(direction) : glm::vec3(1.0f, 0.0f, 0.0f);
+			const float gustTime = time - glm::dot(worldPosition, direction) / std::max(settings.gustSpeed, 0.1f);
+			return settings.windSpeed * std::max(1.0f + settings.gustStrength * Gust(gustTime), 0.0f);
+		}
+
 		float WindSkeleton::LeanTarget(const Settings& settings, const glm::vec3& worldBase, float time) {
 			glm::vec3 direction(settings.windDirection.x, 0.0f, settings.windDirection.z);
 			direction = glm::dot(direction, direction) > 1e-8f ? glm::normalize(direction) : glm::vec3(1.0f, 0.0f, 0.0f);

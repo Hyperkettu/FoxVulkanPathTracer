@@ -146,8 +146,9 @@ namespace Fox {
 					AddGroundPlane(environment.groundHeight, 2000.0f, environment.groundMaterial.ToMaterial());
 				}
 
-				// Clutter: on the ground just placed
+				// Clutter: on the ground just placed; particle effects
 				PlaceClutter(entities, problems);
+				PlaceParticles(entities, problems);
 
 				// Lights: one per entity with a light, dark while it is off (so turning it on needs no rebuild)
 				for (Entity entity : entities) {
@@ -548,6 +549,7 @@ namespace Fox {
 				}
 				SyncMeshes();
 				UpdateClutter(dt);
+				UpdateParticles(step);
 				SyncLights();
 				UpdateAudio();
 				UpdateWater(step);
@@ -711,15 +713,14 @@ namespace Fox {
 				auto& registry = graph.GetRegistry();
 
 				// Bodies of water: no clutter on the ground under them (their rectangle, below their surface)
-				struct Pond { glm::vec3 centre; glm::vec2 half; };
-				std::vector<Pond> ponds;
+				ponds.clear();
 				for (Entity entity : entities) {
 					const Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(entity);
 					if (water && water->enabled && graph.IsActiveInHierarchy(entity)) {
 						ponds.push_back({ glm::vec3(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix[3]), 0.5f * water->size });
 					}
 				}
-				auto underWater = [&ponds](const glm::vec3& p) {
+				auto underWater = [this](const glm::vec3& p) {
 					for (const Pond& pond : ponds) {
 						if (std::abs(p.x - pond.centre.x) < pond.half.x && std::abs(p.z - pond.centre.z) < pond.half.y && p.y < pond.centre.y + 0.05f) {
 							return true;
@@ -924,6 +925,426 @@ namespace Fox {
 						items[i] = glm::translate(glm::mat4(1.0f), p) * matrix;
 					}
 				});
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect) {
+				using Effect = Fox::Scene::ParticleComponent::Effect;
+				const Entity entity = graph.CreateEntity(effect == Effect::Fire ? "Fire" : effect == Effect::Magic ? "Magic" : "Falling leaves");
+				Fox::Scene::Transform transform;
+				transform.position = position;
+				graph.SetWorldTransform(entity, transform);
+				graph.GetRegistry().Add<Fox::Scene::ParticleComponent>(entity, Fox::Scene::ParticleComponent::Preset(effect));
+				structureChanged = true;
+				return entity;
+			}
+
+			void MainRayTracingScene::PlaceParticles(const std::vector<Entity>& entities, std::string& problems) {
+				using Effect = Fox::Scene::ParticleComponent::Effect;
+				auto& registry = graph.GetRegistry();
+				Fox::Scene::TextureLibrary& library = *textureLibrary;
+				for (Entity entity : entities) {
+					Fox::Scene::ParticleComponent* emitter = registry.TryGet<Fox::Scene::ParticleComponent>(entity);
+					if (!emitter) {
+						continue;
+					}
+					emitter->placed = true;
+					emitter->placedEffect = emitter->effect;
+					emitter->placedMax = emitter->maxParticles;
+					emitter->placedTexture = emitter->texture;
+					emitter->surface = SIZE_MAX;
+					emitter->lightIndex = SIZE_MAX;
+					emitter->particles.assign(std::clamp<uint32_t>(emitter->maxParticles, 1, 16384), Fox::Scene::Particle{});
+					emitter->problem.clear();
+					if (!emitter->enabled) {
+						continue;
+					}
+
+					// --- Its look ---
+					Fox::Graphics::Vulkan::Material material;
+					material.layerMaterial = -3; // Particles: brightness and heat per vertex (Shaders/common.slang)
+					if (emitter->effect == Effect::Leaves) {
+						// The albedo, and whatever other maps lie beside it (by their names)
+						const std::string albedo = emitter->texture.empty() ? "Textures/vahtera/vahtera_leaf.png" : emitter->texture;
+						Fox::Scene::SurfaceTextures maps;
+						maps.albedo = albedo;
+						std::error_code ignored;
+						const std::filesystem::path folder = std::filesystem::path(albedo).parent_path();
+						for (const auto& entry : std::filesystem::directory_iterator(folder, ignored)) {
+							std::string name = entry.path().filename().string();
+							std::string ext = entry.path().extension().string();
+							std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+							std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+							if ((ext != ".png" && ext != ".jpg" && ext != ".jpeg") || entry.path().generic_string() == std::filesystem::path(albedo).generic_string()) {
+								continue;
+							}
+							const std::string path = entry.path().generic_string();
+							if (name.find("normal") != std::string::npos) maps.normal = path;
+							else if (name.find("rough") != std::string::npos) maps.roughness = path;
+							else if (name.find("metal") != std::string::npos) maps.metallic = path;
+							else if (name.find("occlusion") != std::string::npos || name.find("_ao") != std::string::npos || name.find("ao.") == 0
+								|| name.find("ambient") != std::string::npos) maps.occlusion = path;
+						}
+						material.baseColor[0] = emitter->color.r;
+						material.baseColor[1] = emitter->color.g;
+						material.baseColor[2] = emitter->color.b;
+						material.roughness = 0.8f; // Leaves are matt: a glossy one lying flat would mirror the sky at grazing angles
+						material.baseColorTexture = library.Texture(maps.albedo, true);
+						if (material.baseColorTexture < 0) {
+							emitter->problem = "cannot read " + maps.albedo;
+							problems += std::string(problems.empty() ? "" : "; ") + graph.GetName(entity) + ": " + emitter->problem;
+							continue;
+						}
+						material.normalTexture = library.Texture(maps.normal, false);
+						const bool packed = !(maps.occlusion.empty() && maps.roughness.empty() && maps.metallic.empty());
+						if (packed) {
+							const int texture = library.PackedOcclusionRoughnessMetallic(maps.occlusion, maps.roughness, maps.metallic);
+							material.metallicRoughnessTexture = texture;
+							material.occlusionTexture = maps.occlusion.empty() ? -1 : texture;
+							material.roughness = 1.0f;
+						}
+						material.metallic = packed ? 1.0f : 0.0f;
+						material.alphaCutoff = 0.5f;
+						material.specularWeight = 0.25f;
+					}
+					else {
+						const bool fire = emitter->effect == Effect::Fire;
+						const std::string sprite = fire ? "Textures/particles/flame.png" : "Textures/particles/spark.png";
+						const glm::vec3 glow = (fire ? glm::vec3(1.0f) : emitter->color) * std::max(emitter->brightness, 0.0f);
+						material.baseColor[0] = material.baseColor[1] = material.baseColor[2] = fire ? 0.04f : 0.1f; // Soot, as it cools
+						material.emissive[0] = glow.r;
+						material.emissive[1] = glow.g;
+						material.emissive[2] = glow.b;
+						material.baseColorTexture = library.Texture(sprite, true);
+						material.emissiveTexture = material.baseColorTexture;
+						material.alphaCutoff = fire ? 0.3f : 0.25f;
+						material.roughness = 1.0f;
+						material.specularWeight = 0.0f;
+					}
+
+					// --- A quad per particle, out of sight (NaN: no triangle) until it is born ---
+					const uint32_t count = static_cast<uint32_t>(emitter->particles.size());
+					const float hidden = std::numeric_limits<float>::quiet_NaN();
+					std::vector<Fox::Graphics::Vulkan::Vertex> quadVertices(count * 4);
+					for (Fox::Graphics::Vulkan::Vertex& v : quadVertices) {
+						v = Fox::Graphics::Vulkan::Vertex{};
+						v.position[0] = v.position[1] = v.position[2] = hidden;
+						v.position[3] = 1.0f;
+					}
+					std::vector<uint32_t> quadIndices;
+					quadIndices.reserve(count * 6);
+					for (uint32_t i = 0; i < count; i++) {
+						const uint32_t b = i * 4;
+						quadIndices.insert(quadIndices.end(), { b, b + 1, b + 2, b, b + 2, b + 3 });
+					}
+					emitter->surface = AddSimulatedSurface(quadVertices, quadIndices, material, graph.GetName(entity));
+					if (emitter->effect != Effect::Leaves) {
+						SetObjectMask(GetSurfaceObject(emitter->surface), INSTANCE_MASK_EFFECT); // Glows; casts no shadow
+					}
+					objectEntities.resize(GetObjectCount());
+					objectEntities[GetSurfaceObject(emitter->surface)] = entity;
+
+					// --- Its light ---
+					if (emitter->effect != Effect::Leaves && emitter->light) {
+						Fox::Graphics::Vulkan::Light light{};
+						light.type = 1; // Point
+						light.position = glm::vec3(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix[3]);
+						light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+						light.area = std::max(emitter->spread, 0.05f);
+						light.color = glm::vec3(0.0f); // Lit by UpdateParticles
+						emitter->lightIndex = RayTracingScene::AddLight(light);
+					}
+				}
+			}
+
+			void MainRayTracingScene::UpdateParticles(float dt) {
+				particleTime += dt;
+				graph.GetRegistry().Each<Fox::Scene::ParticleComponent>([&](Entity entity, Fox::Scene::ParticleComponent& emitter) {
+					// What needs the rebuild: on or off, another effect, room for more, another texture
+					if (!emitter.placed || emitter.effect != emitter.placedEffect || emitter.maxParticles != emitter.placedMax
+						|| emitter.texture != emitter.placedTexture
+						|| (emitter.enabled && emitter.surface == SIZE_MAX && emitter.problem.empty())
+						|| (!emitter.enabled && emitter.surface != SIZE_MAX)) {
+						structureChanged = true;
+						return;
+					}
+					if (emitter.surface == SIZE_MAX) {
+						return;
+					}
+					SimulateParticles(entity, emitter, dt);
+				});
+			}
+
+			void MainRayTracingScene::SimulateParticles(Entity entity, Fox::Scene::ParticleComponent& emitter, float dt) {
+				using Effect = Fox::Scene::ParticleComponent::Effect;
+				using Fox::Scene::Particle;
+				const glm::mat4& world = graph.GetRegistry().Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+				const glm::vec3 origin(world[3]);
+				const bool active = graph.IsActiveInHierarchy(entity);
+				dt = std::min(dt, 0.1f);
+
+				// A small fast random generator of its own (xorshift)
+				auto random = [&emitter]() {
+					uint32_t x = emitter.random ? emitter.random : 1u;
+					x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+					emitter.random = x;
+					return static_cast<float>(x & 0xFFFFFF) / static_cast<float>(0x1000000);
+				};
+
+				// The scene's wind, gusting
+				const float windAngle = glm::radians(environment.windDirection);
+				Fox::Animation::WindSkeleton::Settings wind;
+				wind.windDirection = glm::vec3(std::cos(windAngle), 0.0f, std::sin(windAngle));
+				wind.windSpeed = std::max(emitter.windSpeed, 0.0f);
+				auto windAt = [&](const glm::vec3& p) {
+					return wind.windDirection * Fox::Animation::WindSkeleton::GustSpeed(wind, p, particleTime);
+				};
+				auto floorAt = [this](const glm::vec3& p) {
+					float y = GetGroundHeightAt(p.x, p.z);
+					for (const Pond& pond : ponds) {
+						if (std::abs(p.x - pond.centre.x) < pond.half.x && std::abs(p.z - pond.centre.z) < pond.half.y) {
+							y = std::max(y, pond.centre.y); // Floats on the water
+						}
+					}
+					return y;
+				};
+
+				// --- Births ---
+				if (active && dt > 0.0f) {
+					emitter.spawnCarry += std::max(emitter.rate, 0.0f) * dt;
+				}
+				size_t next = 0;
+				while (emitter.spawnCarry >= 1.0f) {
+					emitter.spawnCarry -= 1.0f;
+					while (next < emitter.particles.size() && emitter.particles[next].alive) next++;
+					if (next == emitter.particles.size()) {
+						emitter.spawnCarry = 0.0f; // Full: born when there is room
+						break;
+					}
+					Particle& p = emitter.particles[next];
+					p = Particle{};
+					p.alive = true;
+					p.life = std::max(emitter.lifetime, 0.05f) * (0.7f + 0.6f * random());
+					p.phase = random() * glm::two_pi<float>();
+					p.size = emitter.size * (0.75f + 0.5f * random());
+					const float angle = random() * glm::two_pi<float>();
+					if (emitter.effect == Effect::Fire) {
+						const float r = std::sqrt(random()) * emitter.spread;
+						p.position = origin + glm::vec3(std::cos(angle) * r, 0.05f, std::sin(angle) * r);
+						p.velocity = glm::vec3((random() - 0.5f) * 0.3f, emitter.speed * (0.7f + 0.6f * random()), (random() - 0.5f) * 0.3f);
+						p.spin.x = (random() - 0.5f) * 2.0f;
+					}
+					else if (emitter.effect == Effect::Magic) {
+						p.position = origin + glm::vec3(std::cos(angle) * emitter.spread, 0.1f + random() * 0.3f, std::sin(angle) * emitter.spread);
+						p.spin.x = angle; // Its angle around the axis
+					}
+					else {
+						p.position = origin + glm::vec3((random() * 2.0f - 1.0f) * emitter.spread, emitter.height + random() * 1.5f,
+							(random() * 2.0f - 1.0f) * emitter.spread);
+						const glm::vec3 axis = glm::normalize(glm::vec3(random() - 0.5f, random() - 0.5f, random() - 0.5f) + glm::vec3(1e-4f));
+						p.orientation = glm::angleAxis(random() * glm::two_pi<float>(), axis);
+						p.velocity = windAt(p.position) * 0.5f + glm::vec3(random() - 0.5f, random() - 0.5f, random() - 0.5f) * emitter.speed;
+					}
+					p.previousPosition = p.position;
+					p.previousOrientation = p.orientation;
+					p.previousSize = p.size;
+				}
+
+				// --- Motion ---
+				float glowSum = 0.0f;
+				for (Particle& p : emitter.particles) {
+					if (!p.alive) continue;
+					p.previousPosition = p.position;
+					p.previousOrientation = p.orientation;
+					p.previousSize = p.size;
+					p.age += dt;
+					if (p.age >= p.life) {
+						p.alive = false;
+						continue;
+					}
+					const float t = p.age / p.life;
+
+					if (emitter.effect == Effect::Fire) {
+						// Buoyant and turbulent, carried off by the wind as it rises; swelling, then shrinking to soot
+						const glm::vec3 turbulence(std::sin(7.0f * particleTime + p.phase), 0.0f, std::cos(6.0f * particleTime + 1.7f * p.phase));
+						p.velocity += (glm::vec3(0.0f, 2.5f, 0.0f) + turbulence * 1.8f) * dt;
+						p.velocity += (windAt(p.position) * 0.35f - glm::vec3(p.velocity.x, 0.0f, p.velocity.z)) * std::min(1.5f * dt, 1.0f);
+						p.position += p.velocity * dt;
+						p.spin.x += 0.0f;
+						glowSum += 1.0f - t;
+					}
+					else if (emitter.effect == Effect::Magic) {
+						// Swirling up around the axis, the ring breathing in and out
+						const float radius = emitter.spread * (1.0f - 0.5f * t) * (1.0f + 0.15f * std::sin(3.0f * p.age + p.phase));
+						p.spin.x += emitter.speed / std::max(radius, 0.05f) * dt;
+						const glm::vec3 drift = windAt(origin) * (0.3f * p.age);
+						p.position = origin + drift + glm::vec3(std::cos(p.spin.x) * radius, 0.1f + 1.2f * t * emitter.speed * 0.6f, std::sin(p.spin.x) * radius);
+						glowSum += 1.0f - t;
+					}
+					else if (!p.landed) {
+						// --- A leaf: a rigid plate in the wind ---
+						const float RHO = 1.2f;            // Air, kg/m^3
+						const float AREA_FILL = 0.6f;      // The leaf covers this much of its quad
+						const float AREAL_DENSITY = 0.15f; // kg/m^2 of leaf
+						const float NORMAL_COEFFICIENT = 1.2f, FRICTION_COEFFICIENT = 0.05f;
+						const float area = AREA_FILL * p.size * p.size;
+						const float mass = AREAL_DENSITY * area;
+						// A square plate's moments of inertia about its centre (body axes: x and z in the plane, y its normal)
+						const glm::vec3 inertia(mass * p.size * p.size / 12.0f, mass * p.size * p.size / 6.0f, mass * p.size * p.size / 12.0f);
+
+						const int substeps = std::clamp(static_cast<int>(std::ceil(dt / (1.0f / 600.0f))), 1, 60);
+						const float h = dt / static_cast<float>(substeps);
+						const glm::vec3 air = windAt(p.position) + 0.4f * glm::vec3(std::sin(1.3f * particleTime + p.phase), 0.3f * std::sin(2.1f * particleTime + 2.0f * p.phase),
+							std::cos(1.1f * particleTime + 3.0f * p.phase)); // Gusts and eddies
+						for (int s = 0; s < substeps; s++) {
+							const glm::vec3 normal = p.orientation * glm::vec3(0.0f, 1.0f, 0.0f);
+							const glm::vec3 relative = air - p.velocity; // The air as the leaf feels it
+							const float speed = glm::length(relative);
+							glm::vec3 force(0.0f, -9.81f * mass, 0.0f);
+							glm::vec3 torque(0.0f);
+							if (speed > 1e-4f) {
+								const glm::vec3 flow = relative / speed;
+								const float facing = glm::dot(normal, flow); // cos of the angle between the normal and the flow
+								// The area facing the flow (projected): the pressure on it pushes along the normal
+								const float projectedArea = area * std::abs(facing);
+								const glm::vec3 pressure = (0.5f * RHO * NORMAL_COEFFICIENT * projectedArea * speed * speed * (facing >= 0.0f ? 1.0f : -1.0f)) * normal;
+								const glm::vec3 inPlane = relative - normal * glm::dot(normal, relative);
+								const glm::vec3 friction = 0.5f * RHO * FRICTION_COEFFICIENT * area * speed * inPlane;
+								force += pressure + friction;
+								// The centre of pressure: upwind of the middle by up to a quarter of the leaf, the more the flow
+								// runs along it; at the middle when it meets the leaf head-on. The pressure there turns the leaf.
+								const float inPlaneLength = glm::length(inPlane);
+								if (inPlaneLength > 1e-5f) {
+									const glm::vec3 upwind = -inPlane / inPlaneLength;
+									const glm::vec3 lever = upwind * (0.25f * p.size * (1.0f - std::abs(facing)));
+									torque += glm::cross(lever, pressure);
+								}
+							}
+							// The air resists turning, as it resists moving (in proportion to the area)
+							const float spinSpeed = glm::length(p.spin);
+							torque -= p.spin * (0.02f * RHO * area * p.size * p.size * (speed + 0.5f * p.size * spinSpeed));
+
+							p.velocity += force / mass * h;
+							p.position += p.velocity * h;
+
+							// Rigid body rotation in the leaf's own frame (with the gyroscopic term)
+							const glm::quat toBody = glm::conjugate(p.orientation);
+							const glm::vec3 spinBody = toBody * p.spin;
+							const glm::vec3 torqueBody = toBody * torque;
+							const glm::vec3 angular = (torqueBody - glm::cross(spinBody, inertia * spinBody)) / inertia;
+							p.spin = p.orientation * (spinBody + angular * h);
+							const float maxSpin = 40.0f;
+							if (glm::length(p.spin) > maxSpin) p.spin *= maxSpin / glm::length(p.spin);
+							p.orientation = glm::normalize(p.orientation + (glm::quat(0.0f, p.spin) * p.orientation) * (0.5f * h));
+						}
+
+						// Landing: lies flat (turned as it was about the up axis) on the ground or the water
+						const float floor = floorAt(p.position);
+						if (p.position.y < floor + 0.01f) {
+							p.position.y = floor + 0.01f;
+							p.landed = true;
+							p.velocity = glm::vec3(0.0f);
+							p.spin = glm::vec3(0.0f);
+							const glm::vec3 forward = p.orientation * glm::vec3(0.0f, 0.0f, 1.0f);
+							const float yaw = std::atan2(forward.x, forward.z);
+							p.orientation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+							p.previousOrientation = p.orientation;
+						}
+					}
+				}
+
+				// --- The light: flickering with the flames (or the sparks) ---
+				if (emitter.lightIndex != SIZE_MAX) {
+					Fox::Graphics::Vulkan::Light light{};
+					light.type = 1;
+					light.position = origin + glm::vec3(0.0f, emitter.effect == Effect::Fire ? 0.5f : 0.7f, 0.0f);
+					light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+					light.area = std::max(emitter.spread, 0.05f);
+					const float flicker = emitter.effect == Effect::Fire
+						? 0.75f + 0.15f * std::sin(17.0f * particleTime) + 0.1f * std::sin(41.0f * particleTime + 1.3f)
+						: 0.9f + 0.1f * std::sin(9.0f * particleTime);
+					const float amount = emitter.particles.empty() ? 0.0f : std::min(glowSum / (0.5f * std::max(emitter.rate, 1.0f) * emitter.lifetime), 1.0f);
+					light.color = (active && emitter.light) ? emitter.color * (emitter.lightIntensity * flicker * amount) : glm::vec3(0.0f);
+					SetLight(emitter.lightIndex, light);
+				}
+
+				// --- The quads ---
+				const glm::vec3 camera = GetClusterLodView().cameraPosition;
+				const float hidden = std::numeric_limits<float>::quiet_NaN();
+				const size_t count = emitter.particles.size();
+				std::vector<Fox::Graphics::Vulkan::Vertex> quads(count * 4);
+				std::vector<glm::vec4> previous(count * 4);
+				const glm::vec2 corners[4] = { { -0.5f, -0.5f }, { 0.5f, -0.5f }, { 0.5f, 0.5f }, { -0.5f, 0.5f } };
+				for (size_t i = 0; i < count; i++) {
+					const Particle& p = emitter.particles[i];
+					Fox::Graphics::Vulkan::Vertex* v = &quads[i * 4];
+					if (!p.alive || !active) {
+						for (int c = 0; c < 4; c++) {
+							v[c] = Fox::Graphics::Vulkan::Vertex{};
+							v[c].position[0] = v[c].position[1] = v[c].position[2] = hidden;
+							previous[i * 4 + c] = glm::vec4(hidden, hidden, hidden, 1.0f);
+						}
+						continue;
+					}
+					const float t = p.age / p.life;
+					glm::vec3 right, up, normal, prevRight, prevUp;
+					float size = p.size, previousSize = p.previousSize;
+					float brightness = 1.0f, heat = -1.0f;
+					if (emitter.effect == Effect::Leaves) {
+						right = p.orientation * glm::vec3(1.0f, 0.0f, 0.0f);
+						up = p.orientation * glm::vec3(0.0f, 0.0f, -1.0f);
+						normal = p.orientation * glm::vec3(0.0f, 1.0f, 0.0f);
+						prevRight = p.previousOrientation * glm::vec3(1.0f, 0.0f, 0.0f);
+						prevUp = p.previousOrientation * glm::vec3(0.0f, 0.0f, -1.0f);
+						const float fade = glm::clamp((p.life - p.age) / 0.6f, 0.0f, 1.0f); // Shrinks away at the end
+						size *= fade;
+						previousSize *= glm::clamp((p.life - p.age + dt) / 0.6f, 0.0f, 1.0f);
+						brightness = 0.0f;
+					}
+					else {
+						// Facing the camera, turned in its plane
+						normal = camera - p.position;
+						normal = glm::dot(normal, normal) > 1e-8f ? glm::normalize(normal) : glm::vec3(0.0f, 0.0f, 1.0f);
+						glm::vec3 side = glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), normal);
+						side = glm::dot(side, side) > 1e-8f ? glm::normalize(side) : glm::vec3(1.0f, 0.0f, 0.0f);
+						const glm::vec3 top = glm::cross(normal, side);
+						const float turn = emitter.effect == Effect::Fire ? 0.3f * std::sin(p.phase + 2.0f * p.age) : p.phase + 3.0f * p.age;
+						right = side * std::cos(turn) + top * std::sin(turn);
+						up = top * std::cos(turn) - side * std::sin(turn);
+						prevRight = right;
+						prevUp = up;
+						if (emitter.effect == Effect::Fire) {
+							// Swells as it rises, then shrinks; cools from white-yellow through orange to red, then soot
+							const float swell = 0.6f + 0.9f * std::sin(glm::pi<float>() * std::min(t * 1.1f, 1.0f));
+							size *= swell;
+							previousSize *= swell;
+							heat = glm::clamp(1.0f - 1.15f * t, 0.0f, 1.0f);
+							brightness = glm::clamp(1.0f - t, 0.0f, 1.0f) * (0.85f + 0.15f * std::sin(23.0f * particleTime + p.phase));
+						}
+						else {
+							const float twinkle = 0.7f + 0.3f * std::sin(13.0f * particleTime + 5.0f * p.phase);
+							brightness = glm::clamp(std::min(t * 6.0f, (1.0f - t) * 2.0f), 0.0f, 1.0f) * twinkle;
+							size *= 0.5f + 0.5f * (1.0f - t);
+							previousSize = size;
+						}
+					}
+					for (int c = 0; c < 4; c++) {
+						const glm::vec3 at = p.position + (right * corners[c].x + up * corners[c].y) * size;
+						const glm::vec3 was = p.previousPosition + (prevRight * corners[c].x + prevUp * corners[c].y) * previousSize;
+						Fox::Graphics::Vulkan::Vertex& vertex = v[c];
+						vertex = Fox::Graphics::Vulkan::Vertex{};
+						vertex.position[0] = at.x; vertex.position[1] = at.y; vertex.position[2] = at.z; vertex.position[3] = 1.0f;
+						vertex.normal[0] = normal.x; vertex.normal[1] = normal.y; vertex.normal[2] = normal.z;
+						vertex.uv[0] = corners[c].x + 0.5f;
+						vertex.uv[1] = 0.5f - corners[c].y; // Top of the image up
+						vertex.tangent[0] = right.x; vertex.tangent[1] = right.y; vertex.tangent[2] = right.z; vertex.tangent[3] = 1.0f;
+						vertex.pad[0] = brightness;
+						vertex.pad[1] = heat;
+						previous[i * 4 + c] = glm::vec4(was, 1.0f);
+					}
+				}
+				UpdateSurfaceVertices(emitter.surface, 0, quads.data(), static_cast<uint32_t>(quads.size()));
+				UpdateSurfacePrevious(emitter.surface, previous.data(), static_cast<uint32_t>(previous.size()));
+				MarkSurfaceDeformed(emitter.surface, true); // They fly far: built anew every frame
 			}
 
 			float MainRayTracingScene::GetGroundHeight() const {
