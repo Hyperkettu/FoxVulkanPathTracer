@@ -1,4 +1,5 @@
 #include "FoxRenderer.h"
+#include "FoxVulkanPathTracer/Scene/Cloth.h"
 #include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
 
 #include <cstring>
@@ -24,6 +25,7 @@ namespace Fox {
 			using Fox::Scene::SoundComponent;
 			using Fox::Scene::ClutterComponent;
 			using Fox::Scene::ParticleComponent;
+			using Fox::Scene::ClothComponent;
 			using Fox::Scene::TextComponent;
 			using Fox::Scene::SpriteComponent;
 
@@ -118,6 +120,11 @@ namespace Fox {
 				if (ImGui::InputText("Play on click", buffer, sizeof(buffer))) button.playOnClick = buffer;
 				ImGui::SetItemTooltip("Names of entities whose UI animations play from the start on a click (comma separated)");
 				ImGui::Checkbox("And their children's", &button.withChildren);
+				std::snprintf(buffer, sizeof(buffer), "%s", button.activateOnClick.c_str());
+				if (ImGui::InputText("Switch on click", buffer, sizeof(buffer))) button.activateOnClick = buffer;
+				ImGui::SetItemTooltip("Names of entities made active on a click (comma separated), e.g. an inactive Rain emitter");
+				ImGui::DragFloat("For (s)", &button.activeSeconds, 0.1f, 0.0f, 3600.0f, "%.1f");
+				ImGui::SetItemTooltip("Then inactive again (a click meanwhile starts the time over). 0: they stay on");
 				ImGui::ColorEdit3("Hover tint", &button.hoverTint.x);
 				ImGui::SliderFloat("Hover scale", &button.hoverScale, 0.5f, 2.0f, "%.2f");
 				ImGui::SliderFloat("Pressed scale", &button.pressedScale, 0.5f, 2.0f, "%.2f");
@@ -1033,7 +1040,7 @@ namespace Fox {
 				using Effect = ParticleComponent::Effect;
 				ImGui::Checkbox("On", &particles.enabled);
 				int effect = static_cast<int>(particles.effect);
-				const char* effects[] = { "Fire", "Magic", "Leaves in the wind", "Orbs (enchanted)", "Sparks (bursts)" };
+				const char* effects[] = { "Fire", "Magic", "Leaves in the wind", "Orbs (enchanted)", "Sparks (bursts)", "Rain" };
 				if (ImGui::Combo("Effect", &effect, effects, IM_ARRAYSIZE(effects)) && effect != static_cast<int>(particles.effect)) {
 					particles = ParticleComponent::Preset(static_cast<Effect>(effect)); // Its defaults (the rebuild follows)
 				}
@@ -1085,6 +1092,13 @@ namespace Fox {
 						ImGui::SliderFloat("Light intensity", &particles.lightIntensity, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 					}
 				}
+				ImGui::SliderFloat("Ramp (s)", &particles.ramp, 0.0f, 10.0f, "%.1f");
+				ImGui::SetItemTooltip("Seconds it takes to start when switched on (its entity made active) and to stop when off");
+				ImGui::Checkbox("Around the camera", &particles.followCamera);
+				ImGui::SetItemTooltip("Born around the camera instead of the entity (rain over wherever you are)");
+				if (particles.effect == Effect::Rain) {
+					ImGui::TextDisabled("Rain wets the scene and ripples water while it falls");
+				}
 				if (particles.effect == Effect::Sparks || particles.burst > 0) {
 					ImGui::SliderInt("Burst", &particles.burst, 0, 400);
 					ImGui::SetItemTooltip("Particles born at once; the rate is then bursts per second (at random times). 0: steady");
@@ -1110,6 +1124,94 @@ namespace Fox {
 				// Brightness and colour of fire and magic are in the material: picked up with the rebuild
 				if (ImGui::IsItemDeactivatedAfterEdit()) {
 					particles.placed = false;
+				}
+			}
+
+			void DrawCloth(Scene& scene, Entity entity, State&) {
+				ClothComponent& cloth = scene.GetSceneGraph().GetRegistry().Get<ClothComponent>(entity);
+				ImGui::Checkbox("On", &cloth.enabled);
+				int kind = -1;
+				const char* kinds[] = { "Curtain", "Flag", "Sheet", "Net (tearable)" };
+				if (ImGui::Combo("Preset", &kind, kinds, IM_ARRAYSIZE(kinds)) && kind >= 0) {
+					cloth = ClothComponent::Preset(static_cast<ClothComponent::Kind>(kind)); // Its defaults (the rebuild follows)
+				}
+				if (ImGui::Button("Reset")) {
+					cloth.reset = true;
+				}
+				ImGui::SetItemTooltip("Back to its rest shape, whole again");
+				ImGui::SameLine();
+				ImGui::TextDisabled("Alt + drag pulls it, Alt + Shift + drag cuts it");
+
+				// Its shape: made anew with the rebuild, once let go of
+				static glm::vec2 size;
+				static int resolution;
+				static Entity editing{};
+				if (editing != entity || !ImGui::IsAnyItemActive()) {
+					size = cloth.size;
+					resolution = cloth.resolution;
+					editing = entity;
+				}
+				ImGui::SeparatorText("Shape");
+				ImGui::DragFloat2("Size (m)", &size.x, 0.01f, 0.1f, 20.0f, "%.2f");
+				if (ImGui::IsItemDeactivatedAfterEdit()) cloth.size = glm::max(size, glm::vec2(0.1f));
+				ImGui::SetItemTooltip("Width and height (down when hanging, along z when flat)");
+				ImGui::SliderInt("Resolution", &resolution, 4, 128);
+				if (ImGui::IsItemDeactivatedAfterEdit()) cloth.resolution = resolution;
+				ImGui::SetItemTooltip("Segments across its width: more makes finer folds and tears, and costs more");
+				bool flat = cloth.flat;
+				if (ImGui::Checkbox("Lying flat", &flat)) cloth.flat = flat;
+				ImGui::SetItemTooltip("In the entity's x-z plane, centred (else hanging down from it in its x-y plane)");
+				int pins = static_cast<int>(cloth.pins);
+				const char* pinNames[] = { "None (falls)", "Top edge", "Top corners", "Left edge (flag)", "Four corners" };
+				if (ImGui::Combo("Pinned", &pins, pinNames, IM_ARRAYSIZE(pinNames))) cloth.pins = static_cast<ClothComponent::Pins>(pins);
+				ImGui::SetItemTooltip("Held where the entity puts them: move the entity and they follow");
+
+				ImGui::SeparatorText("Fabric");
+				ImGui::SliderFloat("Weight (kg/m2)", &cloth.density, 0.02f, 2.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Silk 0.05, cotton 0.15, canvas 0.4");
+				ImGui::SliderFloat("Stretch", &cloth.stretch, 0.0f, 0.01f, "%.5f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Compliance: 0 as stiff as it gets, higher stretches like knit");
+				ImGui::SliderFloat("Softness", &cloth.bend, 0.001f, 20.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Bending compliance: low is stiff canvas, high is silk");
+				ImGui::SliderFloat("Damping", &cloth.damping, 0.0f, 5.0f, "%.2f");
+				ImGui::SliderFloat("Friction", &cloth.friction, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat("Thickness (m)", &cloth.thickness, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Kept from the ground and the shapes it lies on");
+				ImGui::Checkbox("Self collision", &cloth.selfCollision);
+				ImGui::SetItemTooltip("Folds keep apart instead of passing through each other");
+				ImGui::SliderInt("Substeps", &cloth.substeps, 1, 64);
+				ImGui::SetItemTooltip("Steps a frame: more is stiffer and steadier, and slower");
+				ImGui::SliderFloat("Wind (m/s)", &cloth.windSpeed, 0.0f, 30.0f, "%.1f");
+				ImGui::SetItemTooltip("How hard the scene's wind blows on it (its direction: Environment > Wind towards)");
+				ImGui::SliderFloat("Air drag", &cloth.drag, 0.0f, 4.0f, "%.2f");
+				ImGui::Checkbox("Tearable", &cloth.tearable);
+				ImGui::SetItemTooltip("Tears where it is stretched too far: by a pull, a weight, a hard hit");
+				if (cloth.tearable) {
+					ImGui::SliderFloat("Tears at", &cloth.tearStrain, 1.05f, 4.0f, "%.2f x");
+					ImGui::SetItemTooltip("An edge stretched to this many times its length breaks: lower tears sooner");
+				}
+
+				ImGui::SeparatorText("Look");
+				ImageCombo("Texture", cloth.texture);
+				ImGui::SetItemTooltip("The albedo; normal, roughness, metallic and occlusion maps beside it, named alike, are used too.\n(none): plain, its colour");
+				ImGui::ColorEdit3(cloth.texture.empty() ? "Colour" : "Tint", &cloth.color.x);
+				ImGui::SliderFloat("Roughness", &cloth.roughness, 0.0f, 1.0f, "%.2f");
+				if (!cloth.texture.empty()) {
+					ImGui::DragFloat2("Tiling", &cloth.tiling.x, 0.05f, 0.05f, 100.0f, "%.2f");
+					ImGui::SetItemTooltip("The image repeated across and down");
+					ImGui::SliderFloat("Alpha cutoff", &cloth.alphaCutoff, 0.0f, 1.0f, "%.2f");
+					ImGui::SetItemTooltip("> 0: the image's transparent parts are holes (lace, mesh)");
+				}
+				if (cloth.simulation) {
+					const auto& stats = cloth.simulation->GetStats();
+					ImGui::TextDisabled("Simulation %.2f ms a frame", stats.milliseconds);
+					ImGui::TextDisabled("%u particles, %u triangles, %u constraints", stats.particles, stats.triangles, stats.constraints);
+					if (stats.torn > 0 || stats.cut > 0) {
+						ImGui::TextDisabled("Torn %u times, %u triangles cut", stats.torn, stats.cut);
+					}
+				}
+				if (!cloth.problem.empty()) {
+					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", cloth.problem.c_str());
 				}
 			}
 
@@ -1521,6 +1623,21 @@ namespace Fox {
 						scene.MarkStructureChanged();
 					},
 					DrawParticles,
+				},
+				{
+					"Cloth", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<ClothComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Cloth (curtain, flag, sheet)")) {
+							scene.GetSceneGraph().GetRegistry().Add<ClothComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.GetSceneGraph().GetRegistry().Remove<ClothComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawCloth,
 				},
 				{
 					"Clutter", true,

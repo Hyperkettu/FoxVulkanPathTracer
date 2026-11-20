@@ -215,7 +215,7 @@ struct Camera
     uint volumeCount;       // Smoke volumes in use
     uint cloudShadows;      // 1: the clouds shade surfaces
     uint maxBounces;        // Diffuse and glossy bounces after the first hit (the render preset: 1..4)
-    uint _constantsPad;
+    float wetness;          // Rain: 0 dry .. 1 soaked (surfaces darken and turn glossy)
     VolumeData volumes[MAX_VOLUMES];
 };
 

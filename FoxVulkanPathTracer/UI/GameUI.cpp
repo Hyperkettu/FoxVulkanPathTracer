@@ -512,7 +512,17 @@ namespace Fox {
 
 			// --- Buttons: last frame's hover and press shape this one; clicks are the frame's ---
 			struct Hit { Entity entity; glm::mat3 toLocal; glm::vec2 rectMin, rectSize; };
-			registry.Each<Fox::Scene::UIButtonComponent>([](Entity, Fox::Scene::UIButtonComponent& button) { button.clicked = false; });
+			registry.Each<Fox::Scene::UIButtonComponent>([&](Entity, Fox::Scene::UIButtonComponent& button) {
+				button.clicked = false;
+				// What its clicks switched on: off again when their time is up (play starting or stopping ends them too:
+				// stopping restores the scene as it was)
+				for (auto& [target, left] : button.activated) {
+					left -= switched ? 1e9f : std::clamp(deltaTime, 0.0f, 0.25f);
+					if (left <= 0.0f && graph.IsValid(target) && !switched) graph.SetActive(target, false);
+				}
+				button.activated.erase(std::remove_if(button.activated.begin(), button.activated.end(),
+					[](const auto& entry) { return entry.second <= 0.0f; }), button.activated.end());
+			});
 
 			// --- Drawn parents first, each placed in its parent's rectangle ---
 			std::function<void(size_t, const Placed&, ImDrawList*, float, const std::function<ImTextureID(int)>&, std::vector<Hit>&)> draw =
@@ -652,6 +662,28 @@ namespace Fox {
 					if (button.pressed && hovered) {
 						button.clicked = true;
 						button.clicks++;
+						// Switch the named entities on (for a while)
+						auto forEachNamed = [&](const std::string& list, const std::function<void(Entity)>& action) {
+							size_t from = 0;
+							while (from <= list.size()) {
+								size_t to = list.find(',', from);
+								if (to == std::string::npos) to = list.size();
+								std::string name = list.substr(from, to - from);
+								name.erase(0, name.find_first_not_of(" \t"));
+								name.erase(name.find_last_not_of(" \t") + 1);
+								from = to + 1;
+								if (name.empty()) continue;
+								for (Entity e : order) if (graph.GetName(e) == name) action(e);
+							}
+						};
+						forEachNamed(button.activateOnClick, [&](Entity e) {
+							graph.SetActive(e, true);
+							if (button.activeSeconds > 0.0f) {
+								auto it = std::find_if(button.activated.begin(), button.activated.end(), [&](const auto& entry) { return entry.first == e; });
+								if (it != button.activated.end()) it->second = button.activeSeconds; // Again: its time starts over
+								else button.activated.push_back({ e, button.activeSeconds });
+							}
+						});
 						// Play the named entities' animations (and their children's) from the start
 						std::string names = button.playOnClick;
 						size_t start = 0;

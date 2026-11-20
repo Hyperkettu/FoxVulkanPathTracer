@@ -1,0 +1,307 @@
+{
+  "version": 2,
+  "camera": {
+    "position": [
+      0.5,
+      2.6,
+      -8.5
+    ],
+    "target": [
+      0.5,
+      1.4,
+      1.5
+    ]
+  },
+  "environment": {
+    "ground": true,
+    "groundHeight": 0.0,
+    "groundMaterial": {
+      "color": [
+        0.32,
+        0.3,
+        0.27
+      ],
+      "roughness": 0.8,
+      "metallic": 0.0
+    },
+    "sun": true,
+    "sunDirection": [
+      0.5,
+      0.65,
+      -0.55
+    ],
+    "sunColor": [
+      1.0,
+      0.85,
+      0.7
+    ],
+    "sunIntensity": 12.0,
+    "sunAngularRadius": 0.8
+  },
+  "entities": [
+    {
+      "name": "Curtain",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            -2.2,
+            3.2,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "cloth": {
+          "size": [
+            2.0,
+            2.6
+          ],
+          "resolution": 40,
+          "pins": "topEdge",
+          "density": 0.3,
+          "bend": 0.8,
+          "windSpeed": 1.5,
+          "texture": "Textures/fabric/fabric_albedo.png",
+          "tiling": [
+            2.0,
+            2.6
+          ],
+          "color": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Flag",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            4.2,
+            3.6,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "cloth": {
+          "size": [
+            1.8,
+            1.2
+          ],
+          "resolution": 36,
+          "pins": "leftEdge",
+          "density": 0.15,
+          "bend": 2.0,
+          "windSpeed": 7.0,
+          "color": [
+            0.75,
+            0.08,
+            0.06
+          ],
+          "roughness": 0.7
+        }
+      }
+    },
+    {
+      "name": "Sheet",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            -6.0,
+            1.9,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "cloth": {
+          "size": [
+            2.2,
+            2.2
+          ],
+          "resolution": 48,
+          "flat": true,
+          "pins": "none",
+          "density": 0.2,
+          "bend": 1.0,
+          "windSpeed": 0.0,
+          "friction": 0.8,
+          "drag": 0.4,
+          "color": [
+            0.86,
+            0.85,
+            0.82
+          ]
+        }
+      }
+    },
+    {
+      "name": "Sheet ball",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            -6.0,
+            0.8,
+            2.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "type": "sphere",
+          "enabled": true,
+          "radius": 0.8,
+          "material": {
+            "color": [
+              0.2,
+              0.35,
+              0.6
+            ],
+            "roughness": 0.4,
+            "metallic": 0.0
+          }
+        },
+        "physics": {
+          "enabled": true,
+          "motion": 0,
+          "shape": 0
+        }
+      }
+    },
+    {
+      "name": "Net",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            1.2,
+            1.4,
+            1.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "cloth": {
+          "size": [
+            2.4,
+            2.4
+          ],
+          "resolution": 40,
+          "flat": true,
+          "pins": "corners",
+          "density": 0.35,
+          "bend": 0.3,
+          "windSpeed": 1.0,
+          "tearable": true,
+          "tearStrain": 1.5,
+          "texture": "Textures/fabric/fabric_albedo.png",
+          "tiling": [
+            2.4,
+            2.4
+          ],
+          "color": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "Heavy ball",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            1.2,
+            4.5,
+            1.0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "mesh": {
+          "type": "sphere",
+          "enabled": true,
+          "radius": 0.35,
+          "material": {
+            "color": [
+              0.75,
+              0.7,
+              0.62
+            ],
+            "roughness": 0.3,
+            "metallic": 0.0
+          }
+        },
+        "physics": {
+          "enabled": true,
+          "motion": 1,
+          "shape": 0,
+          "density": 3000.0
+        }
+      }
+    }
+  ]
+}

@@ -25,6 +25,7 @@
 //   SoundComponent      it plays a sound (in the world, from where it is) or background music (Audio/AudioEngine.h)
 //   ClutterComponent    it scatters copies of a mesh over the ground around it: grass, flowers, stones (instanced)
 //   ParticleComponent   it emits particles: fire, magic sparks or leaves flying in the wind
+//   ClothComponent      it is a piece of cloth: simulated, blown by the wind, colliding, and tearing if it may
 //   TextComponent       vector text: on the screen (the game's UI) or in the world, flat, facing the camera or 3D
 //   SpriteComponent     an image on the screen (the game's UI)
 //   UIAnimationComponent animates the entity's UI element (sprite or screen text): steps in sequence, with easings
@@ -41,6 +42,7 @@ namespace Fox {
 	namespace Scene {
 
 		class WaterSimulation;
+		class ClothSimulation;
 		class NavigationGrid;
 
 		using Transform = Fox::Scene::RayTracing::RayTracingScene::ObjectTransform;
@@ -504,6 +506,10 @@ namespace Fox {
 			bool enabled = true;
 			std::string playOnClick;      // Entity names, e.g. "Inventory panel"
 			bool withChildren = true;     // Their children's animations too
+			// Entities switched on by a click (comma separated names), for activeSeconds (then off again; 0: they stay
+			// on). In edit mode and play mode alike, no script needed: e.g. a "Rain" emitter, inactive in the scene.
+			std::string activateOnClick;
+			float activeSeconds = 10.0f;
 			glm::vec3 hoverTint{ 1.0f, 0.85f, 0.6f };
 			float hoverScale = 1.06f;
 			float pressedScale = 0.94f;
@@ -513,6 +519,7 @@ namespace Fox {
 			bool pressed = false;
 			bool clicked = false;         // In the frame it was clicked (until the next UI frame)
 			uint32_t clicks = 0;
+			std::vector<std::pair<Fox::ECS::Entity, float>> activated; // What it switched on, and the seconds left
 		};
 
 		// One particle of a ParticleComponent (simulated on the CPU, MainRayTracingScene::UpdateParticles)
@@ -540,6 +547,10 @@ namespace Fox {
 		//           glittering motes twinkling around them; the first dozen orbs light what is under them (enchanted)
 		//   Sparks  bursts of glowing sparks flying out (away from the entity's -Z: off a wall it faces with its +Z), white
 		//           hot fading to the colour, falling and bouncing off the ground
+		//   Rain    raindrops falling over an area around the camera (it follows), carried by the scene's wind, each a
+		//           streak along its fall (as an eye or a camera smears it); they splash where they land, on the ground
+		//           and on water. While it rains the scene gets wet: surfaces darken and turn glossy (tops most), and
+		//           water ripples with the drops; afterwards it dries.
 		//   Leaves  leaves (a texture with alpha: its normal, roughness, metallic and ambient occlusion maps are found
 		//           beside it) flying in the scene's wind and fluttering down. Each is a rigid plate: the air pushes it
 		//           along its normal in proportion to its area facing the relative wind, at the centre of pressure
@@ -547,7 +558,7 @@ namespace Fox {
 		//           lie on the ground (or float on water) until their life is over.
 		// Fire, magic and orbs face the camera and cast no shadows; leaves cast them.
 		struct ParticleComponent {
-			enum class Effect { Fire, Magic, Leaves, Orbs, Sparks };
+			enum class Effect { Fire, Magic, Leaves, Orbs, Sparks, Rain };
 			bool enabled = true;
 			Effect effect = Effect::Fire;
 			uint32_t maxParticles = 320;
@@ -568,6 +579,8 @@ namespace Fox {
 			int litParticles = 8;
 			float particleLightIntensity = 1.0f; // Irradiance at 1 m of a particle at full brightness
 			int burst = 0;               // Particles born at once; rate is then bursts per second (at random times). 0: steady
+			float ramp = 0.0f;           // Seconds to start and stop (its rate eases in when it is switched on, out when off)
+			bool followCamera = false;   // Born around the camera, not the entity (rain)
 			float lightIntensity = 4.0f; // Irradiance at 1 m
 			std::string texture;         // Leaves: the albedo image (empty: Textures/vahtera/vahtera_leaf.png)
 
@@ -589,6 +602,11 @@ namespace Fox {
 					p.color = glm::vec3(0.45f, 0.75f, 1.0f); p.brightness = 14.0f; p.windSpeed = 0.5f; p.light = false;
 					p.particleLights = true; p.litParticles = 8; p.particleLightIntensity = 1.2f;
 				}
+				else if (effect == Effect::Rain) {
+					p.maxParticles = 9000; p.rate = 7000.0f; p.lifetime = 4.0f; p.size = 0.012f; p.speed = 9.0f; p.spread = 22.0f;
+					p.height = 14.0f; p.color = glm::vec3(0.72f, 0.77f, 0.82f); p.brightness = 0.35f; p.windSpeed = 3.0f; p.light = false;
+					p.ramp = 1.5f; p.followCamera = true;
+				}
 				else if (effect == Effect::Leaves) {
 					p.maxParticles = 300; p.rate = 10.0f; p.lifetime = 25.0f; p.size = 0.14f; p.speed = 0.5f; p.spread = 6.0f;
 					p.height = 8.0f; p.color = glm::vec3(1.0f); p.brightness = 0.0f; p.windSpeed = 5.0f; p.light = false;
@@ -606,7 +624,86 @@ namespace Fox {
 			std::vector<size_t> particleLightIndices; // Light emitting particles: litParticles of them
 			std::vector<Particle> particles;
 			float spawnCarry = 0.0f;
+			float strength = 0.0f;       // Its rate's share now (ramp)
 			uint32_t random = 1;
+			std::string problem;
+		};
+
+		// The entity is a piece of cloth (Scene/Cloth.h), simulated in edit mode and play mode alike: a sheet of
+		// size metres, hanging down from the entity (in its x-y plane, the top edge's middle at its origin) or lying
+		// flat (in its x-z plane, centred), held by its pins where the entity puts them (move the entity: the pins
+		// follow). It falls, drapes and flutters in the scene's wind; collides with the ground, with itself, and with
+		// physics shapes that are spheres, capsules and boxes (a dynamic body is pushed back: a net catches a ball);
+		// and, tearable, tears where it is stretched too far. Alt + drag in the view pulls it; Alt + Shift + drag
+		// cuts it. Plain (its colour) or textured: an albedo image, with the normal, roughness, metallic and
+		// occlusion maps beside it found by their names.
+		struct ClothComponent {
+			enum class Pins { None, TopEdge, TopCorners, LeftEdge, Corners };
+			enum class Kind { Curtain, Flag, Sheet, Net };
+
+			bool enabled = true;
+			glm::vec2 size{ 2.0f, 2.0f };  // Metres: width (x), height (down, or z when flat)
+			int resolution = 40;           // Segments across its width (more: finer folds, slower)
+			bool flat = false;             // Lying in the x-z plane (else hanging)
+			Pins pins = Pins::TopEdge;
+			float density = 0.25f;         // kg/m^2: silk 0.05, cotton 0.15, canvas 0.4
+			float stretch = 0.0f;          // Compliance (m/N): 0 as stiff as it gets; e.g. 1e-4 a little stretchy
+			float bend = 0.5f;             // Bending compliance (m/N): 0.01 stiff canvas, 1+ soft silk
+			float damping = 0.3f;          // Velocity lost per second (fraction)
+			float thickness = 0.012f;      // Metres kept from what it lies on
+			float friction = 0.5f;
+			bool selfCollision = true;
+			int substeps = 16;             // More: stiffer and steadier, slower
+			float windSpeed = 4.0f;        // m/s of the scene's wind (Environment > Wind towards) blowing on it
+			float drag = 1.0f;             // How hard the air pushes on it
+			bool tearable = false;
+			float tearStrain = 1.6f;       // An edge stretched to this many times its length breaks
+
+			glm::vec3 color{ 0.8f };
+			float roughness = 0.85f;
+			std::string texture;           // Albedo image (empty: plain)
+			glm::vec2 tiling{ 1.0f };      // The image repeated across and down
+			float alphaCutoff = 0.0f;      // > 0: transparent parts of the image are holes (lace, a net)
+
+			static ClothComponent Preset(Kind kind) {
+				ClothComponent c;
+				if (kind == Kind::Curtain) {
+					c.size = glm::vec2(2.0f, 2.4f); c.resolution = 40; c.pins = Pins::TopEdge; c.density = 0.3f; c.bend = 0.8f;
+					c.texture = "Textures/fabric/fabric_albedo.png"; c.tiling = glm::vec2(2.0f, 2.4f); c.color = glm::vec3(1.0f);
+					c.windSpeed = 1.5f;
+				}
+				else if (kind == Kind::Flag) {
+					c.size = glm::vec2(1.8f, 1.2f); c.resolution = 36; c.pins = Pins::LeftEdge; c.density = 0.15f; c.bend = 2.0f;
+					c.windSpeed = 7.0f; c.color = glm::vec3(0.75f, 0.08f, 0.06f); c.roughness = 0.7f;
+				}
+				else if (kind == Kind::Sheet) {
+					c.size = glm::vec2(2.2f, 2.2f); c.resolution = 48; c.flat = true; c.pins = Pins::None; c.density = 0.2f; c.bend = 1.0f;
+					c.windSpeed = 0.0f; c.friction = 0.8f; c.drag = 0.4f; c.color = glm::vec3(0.86f, 0.85f, 0.82f);
+				}
+				else {
+					c.size = glm::vec2(2.4f, 2.4f); c.resolution = 40; c.flat = true; c.pins = Pins::Corners; c.density = 0.35f; c.bend = 0.3f;
+					c.windSpeed = 1.0f; c.tearable = true; c.tearStrain = 1.5f; c.texture = "Textures/fabric/fabric_albedo.png";
+					c.tiling = glm::vec2(2.4f); c.color = glm::vec3(1.0f);
+				}
+				return c;
+			}
+			static const char* KindName(Kind kind) {
+				switch (kind) {
+				case Kind::Curtain: return "Curtain";
+				case Kind::Flag: return "Flag";
+				case Kind::Sheet: return "Sheet";
+				default: return "Net";
+				}
+			}
+
+			// Set by the scene
+			bool placed = false;
+			std::string placedKey;        // What its surface was made for (a change rebuilds the scene)
+			std::string placedLook;       // Its material's values (a change updates the material)
+			size_t surface = SIZE_MAX;
+			std::shared_ptr<ClothSimulation> simulation;
+			bool reset = false;           // Back to its rest shape (and whole again) with the next update
+			bool hidden = false;          // Its vertices are hidden (the entity is inactive)
 			std::string problem;
 		};
 

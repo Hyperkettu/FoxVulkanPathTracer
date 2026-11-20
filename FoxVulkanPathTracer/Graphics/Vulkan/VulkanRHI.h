@@ -238,6 +238,7 @@ namespace Fox {
 				// frame in flight), read back once that frame has finished
 				std::unique_ptr<Buffer> pickBuffer;
 				bool pickRequested = false;
+				bool clothCutting = false;               // Alt + Shift + drag: cutting cloth under the mouse
 				glm::vec2 pickMouse{ 0.0f };            // Display pixels
 				std::vector<bool> pickPending;          // Per frame in flight
 				bool sceneChanged = false;              // An object moved this frame (restarts accumulation)

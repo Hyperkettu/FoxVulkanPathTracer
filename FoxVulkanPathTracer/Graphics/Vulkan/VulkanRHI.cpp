@@ -1132,6 +1132,7 @@ namespace Fox {
 				shaderTime += deltaTime;
 				cam.time = raytracingScene->GetAnimationTime();
 				cam.maxBounces = maxBounces;
+				cam.wetness = raytracingScene->GetWetness();
 				raytracingScene->FillVolumeConstants(cam);
 				if (pickRequested) {
 					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
@@ -1374,6 +1375,12 @@ namespace Fox {
 				if (raytracingScene) {
 					glm::vec3 rayOrigin, rayDirection;
 					Fox::Editor::TransformGizmo::MouseRay(GizmoView(), MouseInDisplayPixels(), rayOrigin, rayDirection);
+					if (clothCutting) {
+						raytracingScene->CutCloth(rayOrigin, rayDirection);
+					}
+					else if (raytracingScene->IsHoldingCloth()) {
+						raytracingScene->DragCloth(rayOrigin, rayDirection);
+					}
 					Fox::UI::DrawGameUI(*raytracingScene, ImGui::GetBackgroundDrawList(), ImGui::GetIO().DisplaySize, ImGui::GetIO().DeltaTime,
 						[this](int index) { return ImGuiTexture(index); }, rayOrigin, rayDirection);
 				}
@@ -1627,6 +1634,23 @@ namespace Fox {
 				});
 
 				mouseButtonPressBind = input.OnMouseButtonPressed.Connect([this](Uint8 button) {
+					// Alt + drag pulls cloth, Alt + Shift + drag cuts it (edit mode and play mode)
+					const bool alt = inputManager && (inputManager->IsKeyDown(SDL_SCANCODE_LALT) || inputManager->IsKeyDown(SDL_SCANCODE_RALT));
+					if (button == SDL_BUTTON_LEFT && alt && raytracingScene && !(userInterface && editMode && ImGui::GetIO().WantCaptureMouse)) {
+						glm::vec3 origin, direction;
+						Fox::Editor::TransformGizmo::MouseRay(GizmoView(), MouseInDisplayPixels(), origin, direction);
+						const bool shift = inputManager->IsKeyDown(SDL_SCANCODE_LSHIFT) || inputManager->IsKeyDown(SDL_SCANCODE_RSHIFT);
+						raytracingScene->EndClothCut();
+						if (shift) {
+							// A knife stroke, wherever it starts (a slash usually starts beside the cloth)
+							raytracingScene->CutCloth(origin, direction);
+							clothCutting = true;
+							return;
+						}
+						if (raytracingScene->GrabCloth(origin, direction)) {
+							return;
+						}
+					}
 					if (!editMode || button != SDL_BUTTON_LEFT) {
 						return;
 					}
@@ -1669,6 +1693,11 @@ namespace Fox {
 
 				mouseButtonReleaseBind = input.OnMouseButtonReleased.Connect([this](Uint8 button) {
 					if (button == SDL_BUTTON_LEFT) {
+						if (raytracingScene) {
+							raytracingScene->ReleaseCloth();
+							raytracingScene->EndClothCut();
+						}
+						clothCutting = false;
 						gizmo.MouseUp();
 						terrainEditor.MouseUp();
 						meshPainter.MouseUp(*raytracingScene);

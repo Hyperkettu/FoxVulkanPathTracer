@@ -7548,7 +7548,9 @@
             0.6
           ],
           "hoverScale": 1.07,
-          "pressedScale": 0.93
+          "pressedScale": 0.93,
+          "activateOnClick": "Rain",
+          "activeSeconds": 10.0
         }
       }
     },
@@ -8056,6 +8058,50 @@
           "particleLights": true,
           "litParticles": 10,
           "particleLightIntensity": 8.0
+        }
+      }
+    },
+    {
+      "name": "Rain",
+      "active": false,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "particles": {
+          "effect": "rain",
+          "maxParticles": 9000,
+          "rate": 7000.0,
+          "lifetime": 4.0,
+          "size": 0.012,
+          "speed": 9.0,
+          "spread": 22.0,
+          "height": 14.0,
+          "color": [
+            0.72,
+            0.77,
+            0.82
+          ],
+          "brightness": 0.35,
+          "windSpeed": 3.0,
+          "light": false,
+          "ramp": 1.5,
+          "followCamera": true
         }
       }
     }

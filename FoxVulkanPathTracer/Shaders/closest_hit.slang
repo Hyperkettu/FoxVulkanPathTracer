@@ -182,6 +182,16 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
         transmission *= 1.0f - coverage;
     }
 
+    // --- Wet (rain): water in the pores darkens a surface, a film of it on top makes it glossy. Tops get wettest,
+    // walls some, undersides little. Not water itself, glass or particles.
+    if (camera.wetness > 0.0f && material.layerMaterial != WATER_MATERIAL && material.layerMaterial != PARTICLE_MATERIAL && transmission < 0.5f)
+    {
+        float exposure = saturate(N.y * 0.75f + 0.35f);
+        float wet = camera.wetness * exposure;
+        baseColor *= lerp(1.0f, 0.55f, wet);
+        roughness = lerp(roughness, 0.06f, wet * 0.85f);
+    }
+
     payload.hitT = RayTCurrent();
     payload.geometricNormal = geometricNormal;
     payload.shadingNormal = N;

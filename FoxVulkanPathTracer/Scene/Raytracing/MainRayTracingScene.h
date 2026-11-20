@@ -318,6 +318,17 @@ namespace Fox {
                 Entity AddClutter(const glm::vec3& position);
                 // An entity emitting an effect (ParticleComponent)
                 Entity AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect);
+                // An entity of cloth (ClothComponent): a curtain, a flag, a sheet or a net
+                Entity AddCloth(const glm::vec3& position, Fox::Scene::ClothComponent::Kind kind);
+                // The mouse and cloth (edit mode and play mode): take hold of the cloth under the ray and pull it (Drag
+                // with each new ray, Release to let go), or cut it there. True when the ray met a cloth.
+                bool GrabCloth(const glm::vec3& origin, const glm::vec3& direction);
+                void DragCloth(const glm::vec3& origin, const glm::vec3& direction);
+                void ReleaseCloth();
+                bool IsHoldingCloth() const { return !clothHeld.IsNull(); }
+                // A stroke: each call cuts along from where the last one of the stroke did (none yet: just there)
+                bool CutCloth(const glm::vec3& origin, const glm::vec3& direction);
+                void EndClothCut() { clothCutStroke = false; }
                 // Text (TextComponent) and the UI's sprites (SpriteComponent)
                 Entity AddText(const glm::vec3& position, Fox::Scene::TextComponent::Space space, Fox::Scene::TextComponent::Style style,
                     bool billboard = false, const std::string& font = "", Entity parent = {});
@@ -404,6 +415,15 @@ namespace Fox {
                 void PlaceParticles(const std::vector<Entity>& entities, std::string& problems);
                 void UpdateParticles(float dt);
                 void SimulateParticles(Entity entity, Fox::Scene::ParticleComponent& emitter, float dt);
+                // Cloth (ClothComponent): its surface made with the rebuild; simulated every frame
+                void PlaceCloths(const std::vector<Entity>& entities, std::string& problems);
+                void UpdateCloths(float dt);
+                Fox::Graphics::Vulkan::Material ClothMaterial(const Fox::Scene::ClothComponent& cloth, std::string& problem);
+                static std::string ClothKey(const Fox::Scene::ClothComponent& cloth);
+                Entity clothHeld{};
+                bool clothCutStroke = false;
+                glm::vec3 clothCutOrigin{ 0.0f }, clothCutDirection{ 0.0f, 0.0f, -1.0f };
+                std::unordered_map<uint64_t, glm::vec3> clothColliderPositions; // Where each collider was the last frame
                 // Orbs: the slots kept for orbs (the rest are motes)
                 static size_t OrbSlots(const Fox::Scene::ParticleComponent& emitter) {
                     return std::max<size_t>(1, emitter.particles.size() / 4);
@@ -412,6 +432,12 @@ namespace Fox {
                 struct Pond { glm::vec3 centre; glm::vec2 half; };
                 std::vector<Pond> ponds;
                 float particleTime = 0.0f;
+                float wetness = 0.0f;  // Rain soaking the scene: 0..1, rising while it rains, drying after
+                float rainNow = 0.0f;  // How hard it rains now: 0..1 (of a full rain emitter)
+            public:
+                // How wet the scene is (the shaders darken and gloss surfaces by it)
+                float GetWetness() const { return wetness; }
+            private:
                 // Text: its geometry made with the rebuild; its object following its entity (or the camera)
                 void PlaceTexts(const std::vector<Entity>& entities, std::string& problems);
                 void PlaceCanvases(const std::vector<Entity>& entities);

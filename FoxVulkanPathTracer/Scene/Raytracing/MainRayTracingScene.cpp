@@ -149,6 +149,7 @@ namespace Fox {
 				// Clutter: on the ground just placed; particle effects
 				PlaceClutter(entities, problems);
 				PlaceParticles(entities, problems);
+				PlaceCloths(entities, problems);
 				PlaceTexts(entities, problems);
 				PlaceCanvases(entities);
 
@@ -552,6 +553,7 @@ namespace Fox {
 				SyncMeshes();
 				UpdateClutter(dt);
 				UpdateParticles(step);
+				UpdateCloths(step);
 				UpdateTexts();
 				SyncLights();
 				UpdateAudio();
@@ -933,7 +935,7 @@ namespace Fox {
 			MainRayTracingScene::Entity MainRayTracingScene::AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect) {
 				using Effect = Fox::Scene::ParticleComponent::Effect;
 				const Entity entity = graph.CreateEntity(effect == Effect::Fire ? "Fire" : effect == Effect::Magic ? "Magic"
-					: effect == Effect::Orbs ? "Magic orbs" : effect == Effect::Sparks ? "Sparks" : "Falling leaves");
+					: effect == Effect::Orbs ? "Magic orbs" : effect == Effect::Sparks ? "Sparks" : effect == Effect::Rain ? "Rain" : "Falling leaves");
 				Fox::Scene::Transform transform;
 				transform.position = position;
 				graph.SetWorldTransform(entity, transform);
@@ -1011,6 +1013,21 @@ namespace Fox {
 						material.alphaCutoff = 0.5f;
 						material.specularWeight = 0.25f;
 					}
+					else if (emitter->effect == Effect::Rain) {
+						// Water streaks: pale and glossy, faintly glowing so they read in dim light; no shadows
+						material.baseColor[0] = emitter->color.r;
+						material.baseColor[1] = emitter->color.g;
+						material.baseColor[2] = emitter->color.b;
+						const float glow = std::max(emitter->brightness, 0.0f);
+						material.emissive[0] = emitter->color.r * glow;
+						material.emissive[1] = emitter->color.g * glow;
+						material.emissive[2] = emitter->color.b * glow;
+						material.baseColorTexture = library.Texture("Textures/particles/streak.png", true);
+						material.emissiveTexture = material.baseColorTexture;
+						material.alphaCutoff = 0.35f;
+						material.roughness = 0.08f;
+						material.specularWeight = 1.0f;
+					}
 					else {
 						const bool fire = emitter->effect == Effect::Fire;
 						const bool orbs = emitter->effect == Effect::Orbs;
@@ -1087,6 +1104,16 @@ namespace Fox {
 
 			void MainRayTracingScene::UpdateParticles(float dt) {
 				particleTime += dt;
+				// How hard it rains (the strongest rain emitter), and the scene soaking up or drying
+				rainNow = 0.0f;
+				graph.GetRegistry().Each<Fox::Scene::ParticleComponent>([&](Entity, Fox::Scene::ParticleComponent& emitter) {
+					if (emitter.effect == Fox::Scene::ParticleComponent::Effect::Rain && emitter.enabled) {
+						rainNow = std::max(rainNow, emitter.strength * std::min(emitter.rate / 7000.0f, 1.5f));
+					}
+				});
+				const float target = std::min(rainNow, 1.0f);
+				const float rate = target > wetness ? 1.0f / 3.0f : 1.0f / 25.0f; // Soaks in seconds, dries in tens of them
+				wetness += (target - wetness) * std::min(dt * rate * 3.0f, 1.0f);
 				graph.GetRegistry().Each<Fox::Scene::ParticleComponent>([&](Entity entity, Fox::Scene::ParticleComponent& emitter) {
 					// What needs the rebuild: on or off, another effect, room for more, another texture
 					if (!emitter.placed || emitter.effect != emitter.placedEffect || emitter.maxParticles != emitter.placedMax
@@ -1137,10 +1164,13 @@ namespace Fox {
 					return y;
 				};
 
-				// --- Births ---
-				if (active && dt > 0.0f) {
-					emitter.spawnCarry += std::max(emitter.rate, 0.0f) * dt;
+				// --- Births: at its rate, eased in and out over its ramp when it is switched on and off ---
+				const float want = active ? 1.0f : 0.0f;
+				emitter.strength = emitter.ramp > 0.0f ? emitter.strength + glm::clamp(want - emitter.strength, -dt / emitter.ramp, dt / emitter.ramp) : want;
+				if (emitter.strength > 0.0f && dt > 0.0f) {
+					emitter.spawnCarry += std::max(emitter.rate, 0.0f) * emitter.strength * dt;
 				}
+				const glm::vec3 center = emitter.followCamera ? GetClusterLodView().cameraPosition : origin;
 				size_t next = 0;
 				const size_t orbSlots = OrbSlots(emitter);
 				size_t nextOrb = 0, nextMote = orbSlots;
@@ -1188,6 +1218,7 @@ namespace Fox {
 					const float angle = random() * glm::two_pi<float>();
 					if (emitter.effect == Effect::Fire) {
 						const float r = std::sqrt(random()) * emitter.spread;
+						(void)center;
 						p.position = origin + glm::vec3(std::cos(angle) * r, 0.05f, std::sin(angle) * r);
 						p.velocity = glm::vec3((random() - 0.5f) * 0.3f, emitter.speed * (0.7f + 0.6f * random()), (random() - 0.5f) * 0.3f);
 						p.spin.x = (random() - 0.5f) * 2.0f;
@@ -1195,6 +1226,18 @@ namespace Fox {
 					else if (emitter.effect == Effect::Magic) {
 						p.position = origin + glm::vec3(std::cos(angle) * emitter.spread, 0.1f + random() * 0.3f, std::sin(angle) * emitter.spread);
 						p.spin.x = angle; // Its angle around the axis
+					}
+					else if (emitter.effect == Effect::Rain) {
+						// Over the area around the camera, high up, falling at its speed with the wind; drifted upwind so
+						// the wind carries it over the area
+						const glm::vec3 blow = windAt(center) * 0.6f;
+						const float fall = emitter.speed * (0.9f + 0.2f * random());
+						const float height = std::max(emitter.height, 1.0f) * (0.25f + 0.75f * random());
+						p.position = center + glm::vec3((random() * 2.0f - 1.0f) * emitter.spread, height, (random() * 2.0f - 1.0f) * emitter.spread)
+							- blow * (height / fall);
+						p.velocity = glm::vec3(0.0f, -fall, 0.0f) + blow;
+						p.size = emitter.size * (0.7f + 0.6f * random());
+						p.life = emitter.lifetime;
 					}
 					else if (emitter.effect == Effect::Sparks) {
 						// Out from the entity (away from a wall it is on), every way a little, somewhat upwards
@@ -1257,6 +1300,20 @@ namespace Fox {
 						const glm::vec3 drift = windAt(origin) * (0.3f * p.age);
 						p.position = origin + drift + glm::vec3(std::cos(p.spin.x) * radius, 0.1f + 1.2f * t * emitter.speed * 0.6f, std::sin(p.spin.x) * radius);
 						glowSum += 1.0f - t;
+					}
+					else if (emitter.effect == Effect::Rain) {
+						if (!p.landed) {
+							p.position += p.velocity * dt;
+							const float floor = floorAt(p.position);
+							if (p.position.y <= floor) {
+								// A splash where it lands: a short-lived crown of spray
+								p.landed = true;
+								p.position.y = floor + 0.01f;
+								p.age = 0.0f;
+								p.life = 0.14f + 0.08f * (0.5f + 0.5f * std::sin(p.phase * 7.0f));
+								p.previousPosition = p.position;
+							}
+						}
 					}
 					else if (emitter.effect == Effect::Sparks) {
 						// Falling, slowed by the air, bouncing off the ground (losing most of their speed)
@@ -1406,7 +1463,7 @@ namespace Fox {
 				for (size_t i = 0; i < count; i++) {
 					const Particle& p = emitter.particles[i];
 					Fox::Graphics::Vulkan::Vertex* v = &quads[i * 4];
-					if (!p.alive || !active) {
+					if (!p.alive) {
 						for (int c = 0; c < 4; c++) {
 							v[c] = Fox::Graphics::Vulkan::Vertex{};
 							v[c].position[0] = v[c].position[1] = v[c].position[2] = hidden;
@@ -1428,6 +1485,33 @@ namespace Fox {
 						size *= fade;
 						previousSize *= glm::clamp((p.life - p.age + dt) / 0.6f, 0.0f, 1.0f);
 						brightness = 0.0f;
+					}
+					else if (emitter.effect == Effect::Rain) {
+						// A streak along its fall, as wide as a drop and as long as its fall in a 1/30 s exposure, turned
+						// about its own length to face the camera; landed, a splash: a short burst up from where it fell
+						glm::vec3 axis = p.landed ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::normalize(p.velocity);
+						glm::vec3 toCamera = camera - p.position;
+						glm::vec3 side = glm::cross(axis, toCamera);
+						side = glm::dot(side, side) > 1e-10f ? glm::normalize(side) : glm::vec3(1.0f, 0.0f, 0.0f);
+						normal = glm::normalize(glm::cross(side, axis));
+						float length;
+						if (p.landed) {
+							const float grow = std::sqrt(t);
+							length = 0.03f + 0.09f * grow;
+							size = p.size * (1.5f + 4.0f * grow);
+							brightness = 1.0f - t;
+						}
+						else {
+							length = glm::length(p.velocity) / 30.0f;
+							brightness = 1.0f;
+						}
+						// The quad's corners are (+-0.5 size across, +-0.5 length along)
+						right = side;
+						up = axis * (length / std::max(size, 1e-4f));
+						prevRight = right;
+						prevUp = up;
+						previousSize = size;
+						heat = -1.0f;
 					}
 					else {
 						// Facing the camera, turned in its plane
@@ -1507,7 +1591,7 @@ namespace Fox {
 				if (!emitter.particleLightIndices.empty()) {
 					std::vector<size_t> brightest;
 					for (size_t i = 0; i < count; i++) {
-						if (emitter.particles[i].alive && active && glows[i] > 0.01f) brightest.push_back(i);
+						if (emitter.particles[i].alive && glows[i] > 0.01f) brightest.push_back(i);
 					}
 					const size_t lit = std::min(brightest.size(), emitter.particleLightIndices.size());
 					std::partial_sort(brightest.begin(), brightest.begin() + lit, brightest.end(), [&](size_t a, size_t b) { return glows[a] > glows[b]; });
@@ -2363,7 +2447,7 @@ namespace Fox {
 							expected -= 1.0f;
 						}
 					};
-					scatter(water.rain, water.dropSize, water.dropStrength);
+					scatter(water.rain + 2.0f * rainNow, water.dropSize, water.dropStrength); // Its own rain, and the scene's
 					// Wind ruffles the water in proportion to the square of its speed (its pressure on the surface)
 					const float wind = water.windSpeed;
 					scatter(0.004f * wind * wind * water.gust, std::max(1.5f, 6.0f * grid.cellSize), 0.0004f * wind * wind);

@@ -509,12 +509,23 @@ namespace Fox {
 					"particles flames campfire burning");
 				shell.Add("Create/Effects/Magic", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 0.2f, 0.0f), ParticleEffect::Magic)); }, "", true, -1,
 					"particles sparks glow spell swirl");
+				shell.Add("Create/Effects/Rain", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Rain)); }, "", true, -1,
+					"weather rain storm drops wet shower");
 				shell.Add("Create/Effects/Sparks", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 1.5f, 0.0f), ParticleEffect::Sparks)); }, "", true, -1,
 					"particles sparks bursts electric welding flashes light emitting");
 				shell.Add("Create/Effects/Magic Orbs", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Orbs)); }, "", true, -1,
 					"particles orbs wisps fairy lights fireflies enchanted glow");
 				shell.Add("Create/Effects/Falling Leaves", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Leaves)); }, "", true, -1,
 					"particles leaves autumn wind flying");
+				using ClothKind = Fox::Scene::ClothComponent::Kind;
+				shell.Add("Create/Cloth/Curtain (textured)", [&] { gizmo.Select(scene.AddCloth(spawn + glm::vec3(0.0f, 2.8f, 0.0f), ClothKind::Curtain)); }, "", true, -1,
+					"cloth fabric curtain drape hanging textured simulation");
+				shell.Add("Create/Cloth/Flag", [&] { gizmo.Select(scene.AddCloth(spawn + glm::vec3(0.0f, 3.0f, 0.0f), ClothKind::Flag)); }, "", true, -1,
+					"cloth fabric flag banner wind plain simulation");
+				shell.Add("Create/Cloth/Sheet (falls and drapes)", [&] { gizmo.Select(scene.AddCloth(spawn + glm::vec3(0.0f, 2.5f, 0.0f), ClothKind::Sheet)); }, "", true, -1,
+					"cloth fabric sheet blanket tablecloth plain drape simulation");
+				shell.Add("Create/Cloth/Net (tearable)", [&] { gizmo.Select(scene.AddCloth(spawn + glm::vec3(0.0f, 1.5f, 0.0f), ClothKind::Net)); }, "", true, -1,
+					"cloth fabric net hammock trampoline tear break rip simulation");
 				using TextSpace = Fox::Scene::TextComponent::Space;
 				using TextStyle = Fox::Scene::TextComponent::Style;
 				// UI elements go under the selected one when it is a UI element itself (they follow it)

@@ -52,7 +52,7 @@ namespace Fox {
 				alignas(4)  uint32_t volumeCount = 0;     // Offset 272
 				alignas(4)  uint32_t cloudShadows = 0;    // Offset 276
 				alignas(4)  uint32_t maxBounces = 4;      // Offset 280 - diffuse / glossy bounces (render preset)
-				alignas(4)  uint32_t constantsPad = 0;    // Offset 284
+				alignas(4)  float wetness = 0.0f;         // Offset 284 - rain: 0 dry .. 1 soaked (MainRayTracingScene::GetWetness)
 				alignas(16) VolumeGPU volumes[MAX_VOLUMES]; // Offset 288
 			};
 

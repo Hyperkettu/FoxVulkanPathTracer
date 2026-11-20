@@ -79,6 +79,7 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
   * **UI button component:** makes a sprite or screen text clickable, in play mode and in edit mode.
     * **Feedback:** a hover tint and scale, and a pressed scale.
     * **Action:** a click plays the UI animations of the entities named in **Play on click** from the start, with their children's if wanted. A clicked button doesn't also select what is behind it in the editor.
+    * **Switch on click:** a click also makes the entities named in **Switch on click** active, for **For (s)** seconds, and then inactive again; a click meanwhile starts the time over, and 0 seconds leaves them on. This works in edit mode and play mode alike, without a script.
     * **Pointer:** outside edit mode the mouse normally looks around. While any UI button is on the screen the pointer is freed to click, and the right mouse button looks around. When the buttons are gone, the mouse looks around again.
     * **Scripts:** `UI.Clicked(entity)` tells whether the button was clicked this frame.
   * **World UI canvas** (Create > UI > World Canvas, or World Canvas (billboard)): a UI in the 3D world.
@@ -106,8 +107,28 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
     * **Bursts:** **Burst** particles at once, at random times, **Rate** times a second on average.
     * **Direction:** they fly out away from the entity (its +Z points away from a wall it is on), white hot fading to their colour.
     * **Motion:** they fall, are slowed by the air, and bounce off the ground.
+  * **Rain** (Create > Effects > Rain): raindrops over an area around the camera, which the rain follows.
+    * **Drops:** carried by the scene's wind, each drawn as a streak along its fall, as long as its fall in a 1/30 s exposure and turned to face the camera.
+    * **Splashes:** drops splash where they land, on the ground or on the water.
+    * **Wet scene:** while it rains, the scene gets wet (`camera.wetness`, `Shaders/closest_hit.slang`). Surfaces darken and turn glossy, tops most, walls some, undersides little, and the lake ripples with the drops. Afterwards it dries over tens of seconds.
+    * **Ramp:** rain eases in and out when its entity is switched on and off. Particles in flight live on when an emitter is switched off, for any effect.
+    * **Not handled:** rain is not stopped by roofs, so it falls through them, and covered surfaces get wet too.
+  * **In my_yard:** a "Rain" entity, inactive. The cabin sign's REST HERE button switches it on for 10 seconds (**Switch on click**), in edit mode and play mode alike; another click while it rains starts the 10 seconds again.
+  * **From a script:** `Scripts/RainOnClick.cs` shows the same done in C# (`UI.Clicked`, `Entity.Active`); scripts run in play mode only.
   * **Light emitting particles** (any effect; orbs have their own lights): each frame the **Lit particles** brightest particles each carry a point light in their colour and current brightness, at **Particle light** irradiance at 1 m. Sparks thus flash on the walls around them as each burst flares and dies.
   * **In my_yard:** "Wall sparks", parented to the Cabin by its front wall, bursts blue-white sparks whose lights flash on the logs, the door and the porch. It shows best at dusk; the 9 key dims the sky.
+* **Cloth** (Create > Cloth, or the Cloth component): sheets of fabric simulated on the CPU (`Scene/Cloth.h`), in edit mode and play mode alike.
+  * **Presets:** a textured **Curtain** (pinned along its top edge), a plain **Flag** (pinned along one side, fluttering in the wind), a plain **Sheet** (pinned nowhere: it falls and drapes over what is under it) and a textured, tearable **Net** (held at its four corners, lying flat).
+  * **Look:** plain (its colour), or textured: an albedo image, with the normal, roughness, metallic and occlusion maps beside it found by their names (as `fabric_normal.png` beside `fabric_albedo.png`). **Tiling** repeats the image; **Alpha cutoff** makes its transparent parts holes (lace, mesh). `Textures/fabric/` holds a woven tartan set (albedo, normal, roughness). Colour, roughness and tiling change live; size, resolution and texture rebuild the scene once let go of.
+  * **Shape:** **Size** in metres, **Resolution** segments across. It hangs down from its entity (the top edge's middle at the origin, in the entity's x-y plane), or lies **flat** (x-z, centred). **Pinned:** none, top edge, top corners, left edge or four corners; the pins follow the entity, so moving it drags the cloth.
+  * **Simulation:** XPBD in fixed small steps (**Substeps** per 1/60 s). Stretch and shear come from the triangles' edges, bending from springs across each pair of triangles (**Softness**). **Weight** is in kg/m². Long range attachments keep a hanging cloth from sagging and stretching, however fine it is.
+  * **Air and wind:** the air pushes on each particle by the way the cloth faces there (**Air drag**), so cloth falls softly and flutters, and the scene's wind (Environment > Wind towards, with its gusts) blows on it at **Wind** m/s.
+  * **Collisions:** with the ground (terrain or ground plane), with **itself** (folds keep apart), and with physics shapes that are spheres, capsules or boxes (a sphere mesh's own sphere, a tree's trunk). A model's hull or triangle mesh is not used: give it a box. **Friction** holds it where it lies, on a slope gentler than its friction. In play mode the cloth pushes back on dynamic bodies, so a net slows the ball it catches.
+  * **Tearing** (**Tearable**): an edge stretched past **Tears at** times its length splits the cloth there, across the pull, as woven cloth tears, so a tear runs on as the pull goes on. A heavy hit, a weight or a hard pull tears it; a piece torn free falls. A cloth settles for a second after it is made before it can tear.
+  * **Mouse** (edit mode and play mode): **Alt + drag** takes hold of the cloth and pulls it (pull a tearable one hard and it tears); **Alt + Shift + drag** cuts it like a knife, along the way the mouse goes. **Reset** in the Inspector, and stopping play, make it whole again.
+  * **Rendering:** each triangle has its own three vertices, so tearing changes only which particle each reads, and the buffers keep their size. Its acceleration structure is rebuilt every frame. Cloth is two sided, and casts shadows.
+  * **Cost:** each cloth steps on a thread of its own; the Inspector shows its time. A 40 × 40 net with self collision takes about 6 ms a frame in Release (the Debug build is several times slower).
+  * **Test scene:** `Scenes/cloth.json` (File > Open Scene..., or the content browser) has the curtain, the flag, a sheet that drapes a ball, and the net. Play (F5) drops a heavy ball into the net, which tears.
   * **Fire, magic and orbs** face the camera and cast no shadows (instance mask `INSTANCE_MASK_EFFECT`). Every ray still sees them, and bounce rays carry their glow.
   * **Falling leaves:** each leaf is a rigid plate in the scene's wind (Environment > Wind towards, at the emitter's wind speed, gusting).
     * **Force:** the air pushes the leaf along its normal with ½ ρ C<sub>N</sub> A<sub>projected</sub> \|u\|², where A<sub>projected</sub> = A \|n · û\| is its area facing the relative wind u. A little skin friction acts along it. Velocity follows F / m, with an areal density of 0.15 kg/m².
@@ -1194,6 +1215,8 @@ specular albedo, normal, roughness, depth, motion vectors and specular hit dista
 | `F7` | Step one frame (playing; pauses) |
 | `F8` | Free camera, or back to the game's camera (playing) |
 | `Shift` + click (edit mode) | Send the selected agent there (see *Navigation*) |
+| `Alt` + drag | Pull cloth (edit mode and play mode; a hard pull tears a tearable one) |
+| `Alt` + `Shift` + drag | Cut cloth along the way the mouse goes |
 | `E` | Edit mode: select, move, rotate and scale objects, the Scene, Trees and Camera windows (see *Editing the scene*, *Scene files*, *Camera paths*, *Tree editor*) |
 | `Esc` | Quit |
 
@@ -1232,6 +1255,7 @@ Below is the active development checklist for the renderer.
 - [x] GPU skinning (procedural tree in the wind, angular springs)
 - [ ] Skeletal animation support
 - [x] Integration of a physics engine (Jolt Physics: rigid bodies, terrain, buoyancy in the simulated water)
+- [x] Cloth: XPBD with self collision, wind, collisions, two way coupling with rigid bodies, tearing and cutting
 
 ### 🐛 Bug Fixes & Refinement
 - [ ] Improved glTF binary format compliance (roughness, metallic parameter checks)

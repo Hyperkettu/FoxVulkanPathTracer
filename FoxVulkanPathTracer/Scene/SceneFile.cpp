@@ -132,7 +132,7 @@ namespace Fox {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIAnimationComponent::Step, property, to, useFrom, from, duration, delay, easing, withPrevious)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIAnimationComponent, enabled, steps, repeat, speed, playOnStart, previewInEditor)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UICanvasComponent, enabled, resolution, width, billboard, glow, interactDistance)
-		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIButtonComponent, enabled, playOnClick, withChildren, hoverTint, hoverScale, pressedScale)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIButtonComponent, enabled, playOnClick, withChildren, activateOnClick, activeSeconds, hoverTint, hoverScale, pressedScale)
 		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Space, { { TextComponent::Space::World, "world" }, { TextComponent::Space::Screen, "screen" } })
 		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Style, { { TextComponent::Style::Flat, "flat" }, { TextComponent::Style::Extruded, "extruded" } })
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TextComponent, enabled, text, font, space, style, billboard, size, align, lineSpacing,
@@ -141,9 +141,15 @@ namespace Fox {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpriteComponent, enabled, image, mask, color, layout, keepAspect)
 		NLOHMANN_JSON_SERIALIZE_ENUM(ParticleComponent::Effect, {
 			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" },
-			{ ParticleComponent::Effect::Orbs, "orbs" }, { ParticleComponent::Effect::Sparks, "sparks" } })
+			{ ParticleComponent::Effect::Orbs, "orbs" }, { ParticleComponent::Effect::Sparks, "sparks" },
+			{ ParticleComponent::Effect::Rain, "rain" } })
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ParticleComponent, enabled, effect, maxParticles, rate, lifetime, size, speed, spread,
-			height, color, color2, brightness, windSpeed, light, lightIntensity, particleLights, litParticles, particleLightIntensity, burst, texture)
+			height, color, color2, brightness, windSpeed, light, lightIntensity, particleLights, litParticles, particleLightIntensity, burst, ramp, followCamera, texture)
+		NLOHMANN_JSON_SERIALIZE_ENUM(ClothComponent::Pins, {
+			{ ClothComponent::Pins::None, "none" }, { ClothComponent::Pins::TopEdge, "topEdge" }, { ClothComponent::Pins::TopCorners, "topCorners" },
+			{ ClothComponent::Pins::LeftEdge, "leftEdge" }, { ClothComponent::Pins::Corners, "corners" } })
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClothComponent, enabled, size, resolution, flat, pins, density, stretch, bend, damping,
+			thickness, friction, selfCollision, substeps, windSpeed, drag, tearable, tearStrain, color, roughness, texture, tiling, alphaCutoff)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClutterComponent, enabled, model, size, density, seed, minScale, maxScale,
 			randomTurn, alignToGround, maxSlope, sink, edgeFade, terrainLayer, faceCamera, sway, grassColor, grassHeight, blades)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
@@ -627,6 +633,20 @@ namespace Fox {
 						},
 						[](SceneGraph& graph, Entity entity, const json& j) {
 							graph.GetRegistry().Add<Fox::Scene::ParticleComponent>(entity, j.get<Fox::Scene::ParticleComponent>());
+						},
+					},
+					{
+						"cloth",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::ClothComponent* cloth = graph.GetRegistry().TryGet<Fox::Scene::ClothComponent>(entity);
+							if (!cloth) {
+								return false;
+							}
+							j = *cloth;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::ClothComponent>(entity, j.get<Fox::Scene::ClothComponent>());
 						},
 					},
 					{
@@ -1132,6 +1152,13 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ParticleComponent>(graph,
 					[](const Fox::Scene::ParticleComponent&, const Fox::Scene::ParticleComponent&) { return true; },
 					[](const Fox::Scene::ParticleComponent&, Fox::Scene::ParticleComponent& value) { value.placed = false; value.particles.clear(); }));
+				// Cloth: back to its rest shape, whole again (same surface: no rebuild)
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ClothComponent>(graph,
+					[](const Fox::Scene::ClothComponent&, const Fox::Scene::ClothComponent&) { return true; },
+					[](const Fox::Scene::ClothComponent& now, Fox::Scene::ClothComponent& value) {
+						value.placed = now.placed; value.placedKey = now.placedKey; value.surface = now.surface;
+						value.simulation = now.simulation; value.hidden = now.hidden; value.problem = now.problem; value.reset = true;
+					}));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ClutterComponent>(graph,
 					[](const Fox::Scene::ClutterComponent&, const Fox::Scene::ClutterComponent&) { return true; },
 					[](const Fox::Scene::ClutterComponent&, Fox::Scene::ClutterComponent& value) { value.placed = false; }));
