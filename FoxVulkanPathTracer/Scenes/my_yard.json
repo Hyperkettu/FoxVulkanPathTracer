@@ -8013,6 +8013,51 @@
           }
         }
       }
+    },
+    {
+      "name": "Wall sparks",
+      "active": true,
+      "parent": 1,
+      "components": {
+        "transform": {
+          "position": [
+            7.0,
+            1.152,
+            4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "particles": {
+          "effect": "sparks",
+          "maxParticles": 220,
+          "rate": 1.2,
+          "burst": 40,
+          "lifetime": 0.8,
+          "size": 0.1,
+          "speed": 5.0,
+          "spread": 0.05,
+          "color": [
+            0.45,
+            0.75,
+            1.0
+          ],
+          "brightness": 14.0,
+          "windSpeed": 0.5,
+          "light": false,
+          "particleLights": true,
+          "litParticles": 10,
+          "particleLightIntensity": 8.0
+        }
+      }
     }
   ],
   "environment": {

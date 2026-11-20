@@ -538,6 +538,8 @@ namespace Fox {
 		//   Magic   glowing sparks swirling up around it in the colour; a point light in the colour
 		//   Orbs    glowing orbs drifting and hovering over the area, each its own shade between two colours, with
 		//           glittering motes twinkling around them; the first dozen orbs light what is under them (enchanted)
+		//   Sparks  bursts of glowing sparks flying out (away from the entity's -Z: off a wall it faces with its +Z), white
+		//           hot fading to the colour, falling and bouncing off the ground
 		//   Leaves  leaves (a texture with alpha: its normal, roughness, metallic and ambient occlusion maps are found
 		//           beside it) flying in the scene's wind and fluttering down. Each is a rigid plate: the air pushes it
 		//           along its normal in proportion to its area facing the relative wind, at the centre of pressure
@@ -545,7 +547,7 @@ namespace Fox {
 		//           lie on the ground (or float on water) until their life is over.
 		// Fire, magic and orbs face the camera and cast no shadows; leaves cast them.
 		struct ParticleComponent {
-			enum class Effect { Fire, Magic, Leaves, Orbs };
+			enum class Effect { Fire, Magic, Leaves, Orbs, Sparks };
 			bool enabled = true;
 			Effect effect = Effect::Fire;
 			uint32_t maxParticles = 320;
@@ -560,6 +562,12 @@ namespace Fox {
 			float brightness = 12.0f;    // Glow (emitted radiance)
 			float windSpeed = 4.0f;      // m/s of the scene's wind (Environment > Wind towards) it is carried by
 			bool light = true;           // Fire and magic: a point light that flickers with it; orbs: one each (the first dozen)
+			// Light emitting particles: each frame the litParticles brightest particles are point lights of their own colour
+			// and brightness, lighting what is around them (flashes of sparks on a wall). Any effect but orbs (which have theirs)
+			bool particleLights = false;
+			int litParticles = 8;
+			float particleLightIntensity = 1.0f; // Irradiance at 1 m of a particle at full brightness
+			int burst = 0;               // Particles born at once; rate is then bursts per second (at random times). 0: steady
 			float lightIntensity = 4.0f; // Irradiance at 1 m
 			std::string texture;         // Leaves: the albedo image (empty: Textures/vahtera/vahtera_leaf.png)
 
@@ -576,6 +584,11 @@ namespace Fox {
 					p.height = 1.2f; p.color = glm::vec3(0.55f, 0.85f, 1.0f); p.color2 = glm::vec3(0.85f, 0.45f, 1.0f);
 					p.brightness = 4.0f; p.windSpeed = 0.6f; p.lightIntensity = 1.2f; // Not too bright: the tone curve bleaches very bright colours white
 				}
+				else if (effect == Effect::Sparks) {
+					p.maxParticles = 220; p.rate = 1.2f; p.burst = 40; p.lifetime = 0.8f; p.size = 0.07f; p.speed = 5.0f; p.spread = 0.05f;
+					p.color = glm::vec3(0.45f, 0.75f, 1.0f); p.brightness = 14.0f; p.windSpeed = 0.5f; p.light = false;
+					p.particleLights = true; p.litParticles = 8; p.particleLightIntensity = 1.2f;
+				}
 				else if (effect == Effect::Leaves) {
 					p.maxParticles = 300; p.rate = 10.0f; p.lifetime = 25.0f; p.size = 0.14f; p.speed = 0.5f; p.spread = 6.0f;
 					p.height = 8.0f; p.color = glm::vec3(1.0f); p.brightness = 0.0f; p.windSpeed = 5.0f; p.light = false;
@@ -590,6 +603,7 @@ namespace Fox {
 			std::string placedTexture;
 			size_t surface = SIZE_MAX;   // Its simulated surface
 			std::vector<size_t> lights;  // Fire and magic: one; orbs: one per orb slot of the first dozen
+			std::vector<size_t> particleLightIndices; // Light emitting particles: litParticles of them
 			std::vector<Particle> particles;
 			float spawnCarry = 0.0f;
 			uint32_t random = 1;

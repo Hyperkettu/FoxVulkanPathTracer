@@ -1033,7 +1033,7 @@ namespace Fox {
 				using Effect = ParticleComponent::Effect;
 				ImGui::Checkbox("On", &particles.enabled);
 				int effect = static_cast<int>(particles.effect);
-				const char* effects[] = { "Fire", "Magic", "Leaves in the wind", "Orbs (enchanted)" };
+				const char* effects[] = { "Fire", "Magic", "Leaves in the wind", "Orbs (enchanted)", "Sparks (bursts)" };
 				if (ImGui::Combo("Effect", &effect, effects, IM_ARRAYSIZE(effects)) && effect != static_cast<int>(particles.effect)) {
 					particles = ParticleComponent::Preset(static_cast<Effect>(effect)); // Its defaults (the rebuild follows)
 				}
@@ -1083,6 +1083,20 @@ namespace Fox {
 						: "A point light at it, flickering with it: it lights what is around");
 					if (particles.light) {
 						ImGui::SliderFloat("Light intensity", &particles.lightIntensity, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+					}
+				}
+				if (particles.effect == Effect::Sparks || particles.burst > 0) {
+					ImGui::SliderInt("Burst", &particles.burst, 0, 400);
+					ImGui::SetItemTooltip("Particles born at once; the rate is then bursts per second (at random times). 0: steady");
+				}
+				if (particles.effect != Effect::Orbs) {
+					bool lights = particles.particleLights;
+					if (ImGui::Checkbox("Light emitting particles", &lights)) particles.particleLights = lights;
+					ImGui::SetItemTooltip("The brightest particles are point lights of their own colour: they light what is around them");
+					if (particles.particleLights) {
+						ImGui::SliderInt("Lit particles", &particles.litParticles, 1, 64);
+						ImGui::SetItemTooltip("How many of the brightest particles give light each frame (each one a light: more is noisier)");
+						ImGui::SliderFloat("Particle light", &particles.particleLightIntensity, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 					}
 				}
 				ImGui::SliderFloat("Wind (m/s)", &particles.windSpeed, 0.0f, 30.0f, "%.1f");

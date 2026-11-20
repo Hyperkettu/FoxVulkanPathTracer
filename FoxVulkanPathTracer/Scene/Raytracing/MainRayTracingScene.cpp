@@ -933,7 +933,7 @@ namespace Fox {
 			MainRayTracingScene::Entity MainRayTracingScene::AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect) {
 				using Effect = Fox::Scene::ParticleComponent::Effect;
 				const Entity entity = graph.CreateEntity(effect == Effect::Fire ? "Fire" : effect == Effect::Magic ? "Magic"
-					: effect == Effect::Orbs ? "Magic orbs" : "Falling leaves");
+					: effect == Effect::Orbs ? "Magic orbs" : effect == Effect::Sparks ? "Sparks" : "Falling leaves");
 				Fox::Scene::Transform transform;
 				transform.position = position;
 				graph.SetWorldTransform(entity, transform);
@@ -957,6 +957,7 @@ namespace Fox {
 					emitter->placedTexture = emitter->texture;
 					emitter->surface = SIZE_MAX;
 					emitter->lights.clear();
+					emitter->particleLightIndices.clear();
 					emitter->particles.assign(std::clamp<uint32_t>(emitter->maxParticles, 1, 16384), Fox::Scene::Particle{});
 					emitter->problem.clear();
 					if (!emitter->enabled) {
@@ -1013,14 +1014,17 @@ namespace Fox {
 					else {
 						const bool fire = emitter->effect == Effect::Fire;
 						const bool orbs = emitter->effect == Effect::Orbs;
+						const bool sparks = emitter->effect == Effect::Sparks;
 						const std::string sprite = fire ? "Textures/particles/flame.png" : orbs ? "Textures/particles/orb.png" : "Textures/particles/spark.png";
-						const glm::vec3 glow = (fire ? glm::vec3(1.0f) : emitter->color) * std::max(emitter->brightness, 0.0f);
+						// Sparks: white hot first (the emissive colour), their own colour as they die (the second, baseColor)
+						const glm::vec3 glow = (fire || sparks ? glm::vec3(1.0f) : emitter->color) * std::max(emitter->brightness, 0.0f);
 						material.baseColor[0] = material.baseColor[1] = material.baseColor[2] = fire ? 0.04f : 0.1f; // Soot, as it cools
-						if (orbs) {
+						if (orbs || sparks) {
 							// The second colour (Shaders/common.slang, PARTICLE_MATERIAL)
-							material.baseColor[0] = emitter->color2.r;
-							material.baseColor[1] = emitter->color2.g;
-							material.baseColor[2] = emitter->color2.b;
+							const glm::vec3 second = orbs ? emitter->color2 : emitter->color;
+							material.baseColor[0] = second.r;
+							material.baseColor[1] = second.g;
+							material.baseColor[2] = second.b;
 						}
 						material.emissive[0] = glow.r;
 						material.emissive[1] = glow.g;
@@ -1065,6 +1069,17 @@ namespace Fox {
 							light.area = emitter->effect == Effect::Orbs ? 0.5f * emitter->size : std::max(emitter->spread, 0.05f);
 							light.color = glm::vec3(0.0f); // Lit by UpdateParticles
 							emitter->lights.push_back(RayTracingScene::AddLight(light));
+						}
+					}
+					// Light emitting particles: lights handed to the brightest each frame
+					if (emitter->particleLights && emitter->effect != Effect::Orbs) {
+						const int lit = std::clamp(emitter->litParticles, 0, std::min(64, static_cast<int>(emitter->particles.size())));
+						for (int i = 0; i < lit; i++) {
+							Fox::Graphics::Vulkan::Light light{};
+							light.type = 1; // Point
+							light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+							light.area = 0.5f * emitter->size;
+							emitter->particleLightIndices.push_back(RayTracingScene::AddLight(light));
 						}
 					}
 				}
@@ -1129,8 +1144,20 @@ namespace Fox {
 				size_t next = 0;
 				const size_t orbSlots = OrbSlots(emitter);
 				size_t nextOrb = 0, nextMote = orbSlots;
-				while (emitter.spawnCarry >= 1.0f) {
-					emitter.spawnCarry -= 1.0f;
+				// Steady: one at a time; in bursts: a whole burst whenever one is due (at random times, rate a second on average)
+				int pending = 0;
+				if (emitter.burst > 0) {
+					while (emitter.spawnCarry >= 1.0f) {
+						emitter.spawnCarry -= 0.4f + 1.2f * random();
+						pending += emitter.burst;
+					}
+				}
+				else {
+					pending = static_cast<int>(emitter.spawnCarry);
+					emitter.spawnCarry -= static_cast<float>(pending);
+				}
+				const glm::vec3 away = glm::dot(glm::vec3(world[2]), glm::vec3(world[2])) > 1e-8f ? glm::normalize(glm::vec3(world[2])) : glm::vec3(0.0f, 1.0f, 0.0f);
+				while (pending-- > 0) {
 					size_t slot;
 					bool mote = false;
 					if (emitter.effect == Effect::Orbs) {
@@ -1168,6 +1195,14 @@ namespace Fox {
 					else if (emitter.effect == Effect::Magic) {
 						p.position = origin + glm::vec3(std::cos(angle) * emitter.spread, 0.1f + random() * 0.3f, std::sin(angle) * emitter.spread);
 						p.spin.x = angle; // Its angle around the axis
+					}
+					else if (emitter.effect == Effect::Sparks) {
+						// Out from the entity (away from a wall it is on), every way a little, somewhat upwards
+						const glm::vec3 scatter = glm::normalize(glm::vec3(random() - 0.5f, random() - 0.5f, random() - 0.5f) + glm::vec3(1e-4f));
+						const glm::vec3 direction = glm::normalize(scatter * 1.1f + away + glm::vec3(0.0f, 0.35f, 0.0f));
+						p.position = origin + scatter * (emitter.spread * random());
+						p.velocity = direction * (emitter.speed * (0.35f + 0.9f * random()));
+						p.size = emitter.size * (0.6f + 0.8f * random());
 					}
 					else if (emitter.effect == Effect::Orbs) {
 						p.mote = mote;
@@ -1221,6 +1256,21 @@ namespace Fox {
 						p.spin.x += emitter.speed / std::max(radius, 0.05f) * dt;
 						const glm::vec3 drift = windAt(origin) * (0.3f * p.age);
 						p.position = origin + drift + glm::vec3(std::cos(p.spin.x) * radius, 0.1f + 1.2f * t * emitter.speed * 0.6f, std::sin(p.spin.x) * radius);
+						glowSum += 1.0f - t;
+					}
+					else if (emitter.effect == Effect::Sparks) {
+						// Falling, slowed by the air, bouncing off the ground (losing most of their speed)
+						p.velocity.y -= 9.81f * dt;
+						p.velocity *= 1.0f - std::min(1.2f * dt, 1.0f);
+						p.velocity += (windAt(p.position) - glm::vec3(p.velocity.x, 0.0f, p.velocity.z)) * std::min(0.2f * dt, 1.0f);
+						p.position += p.velocity * dt;
+						const float floor = floorAt(p.position) + 0.02f;
+						if (p.position.y < floor && p.velocity.y < 0.0f) {
+							p.position.y = floor;
+							p.velocity.y = -p.velocity.y * 0.35f;
+							p.velocity.x *= 0.6f;
+							p.velocity.z *= 0.6f;
+						}
 						glowSum += 1.0f - t;
 					}
 					else if (emitter.effect == Effect::Orbs) {
@@ -1350,6 +1400,8 @@ namespace Fox {
 				const size_t count = emitter.particles.size();
 				std::vector<Fox::Graphics::Vulkan::Vertex> quads(count * 4);
 				std::vector<glm::vec4> previous(count * 4);
+				std::vector<float> glows(count, 0.0f);          // Each particle's brightness now (light emitting particles)
+				std::vector<glm::vec3> glowColors(count, glm::vec3(0.0f));
 				const glm::vec2 corners[4] = { { -0.5f, -0.5f }, { 0.5f, -0.5f }, { 0.5f, 0.5f }, { -0.5f, 0.5f } };
 				for (size_t i = 0; i < count; i++) {
 					const Particle& p = emitter.particles[i];
@@ -1405,12 +1457,36 @@ namespace Fox {
 							previousSize = size;
 							heat = -1.0f - p.shade;
 						}
+						else if (emitter.effect == Effect::Sparks) {
+							// White hot, cooling to its colour; dimming fast, flickering
+							brightness = std::pow(1.0f - t, 1.5f) * (0.7f + 0.3f * std::sin(37.0f * particleTime + 5.0f * p.phase));
+							size *= 1.0f - 0.5f * t;
+							previousSize = size;
+							heat = -1.0f - std::min(t * 1.6f, 1.0f);
+						}
 						else {
 							const float twinkle = 0.7f + 0.3f * std::sin(13.0f * particleTime + 5.0f * p.phase);
 							brightness = glm::clamp(std::min(t * 6.0f, (1.0f - t) * 2.0f), 0.0f, 1.0f) * twinkle;
 							size *= 0.5f + 0.5f * (1.0f - t);
 							previousSize = size;
 						}
+					}
+					// What it gives off now: its brightness in its colour (as the shader colours it)
+					glows[i] = brightness;
+					if (emitter.effect == Effect::Fire) {
+						const float h = glm::clamp(heat, 0.0f, 1.0f);
+						const glm::vec3 red(0.55f, 0.06f, 0.01f), orange(1.0f, 0.38f, 0.07f), yellow(1.0f, 0.82f, 0.45f);
+						glowColors[i] = (h < 0.5f ? glm::mix(red * glm::clamp(h * 4.0f, 0.0f, 1.0f), orange, glm::clamp((h - 0.25f) * 4.0f, 0.0f, 1.0f))
+							: glm::mix(orange, yellow, (h - 0.5f) * 2.0f)) * (0.4f + 1.6f * h * h);
+					}
+					else if (emitter.effect == Effect::Sparks) {
+						glowColors[i] = glm::mix(glm::vec3(1.0f), emitter.color, glm::clamp(-1.0f - heat, 0.0f, 1.0f));
+					}
+					else if (emitter.effect == Effect::Orbs) {
+						glowColors[i] = glm::mix(emitter.color, emitter.color2, p.shade);
+					}
+					else {
+						glowColors[i] = emitter.color;
 					}
 					for (int c = 0; c < 4; c++) {
 						const glm::vec3 at = p.position + (right * corners[c].x + up * corners[c].y) * size;
@@ -1427,6 +1503,32 @@ namespace Fox {
 						previous[i * 4 + c] = glm::vec4(was, 1.0f);
 					}
 				}
+				// --- Light emitting particles: the brightest ones light what is around them ---
+				if (!emitter.particleLightIndices.empty()) {
+					std::vector<size_t> brightest;
+					for (size_t i = 0; i < count; i++) {
+						if (emitter.particles[i].alive && active && glows[i] > 0.01f) brightest.push_back(i);
+					}
+					const size_t lit = std::min(brightest.size(), emitter.particleLightIndices.size());
+					std::partial_sort(brightest.begin(), brightest.begin() + lit, brightest.end(), [&](size_t a, size_t b) { return glows[a] > glows[b]; });
+					for (size_t l = 0; l < emitter.particleLightIndices.size(); l++) {
+						Fox::Graphics::Vulkan::Light light{};
+						light.type = 1;
+						light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+						light.area = 0.5f * emitter.size;
+						if (l < lit) {
+							const size_t i = brightest[l];
+							light.position = emitter.particles[i].position;
+							light.color = glowColors[i] * (glows[i] * std::max(emitter.particleLightIntensity, 0.0f));
+						}
+						else {
+							light.position = origin;
+							light.color = glm::vec3(0.0f); // Dark (no particle bright enough)
+						}
+						SetLight(emitter.particleLightIndices[l], light);
+					}
+				}
+
 				UpdateSurfaceVertices(emitter.surface, 0, quads.data(), static_cast<uint32_t>(quads.size()));
 				UpdateSurfacePrevious(emitter.surface, previous.data(), static_cast<uint32_t>(previous.size()));
 				MarkSurfaceDeformed(emitter.surface, true); // They fly far: built anew every frame

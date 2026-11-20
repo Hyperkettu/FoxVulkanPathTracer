@@ -509,6 +509,8 @@ namespace Fox {
 					"particles flames campfire burning");
 				shell.Add("Create/Effects/Magic", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 0.2f, 0.0f), ParticleEffect::Magic)); }, "", true, -1,
 					"particles sparks glow spell swirl");
+				shell.Add("Create/Effects/Sparks", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 1.5f, 0.0f), ParticleEffect::Sparks)); }, "", true, -1,
+					"particles sparks bursts electric welding flashes light emitting");
 				shell.Add("Create/Effects/Magic Orbs", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Orbs)); }, "", true, -1,
 					"particles orbs wisps fairy lights fireflies enchanted glow");
 				shell.Add("Create/Effects/Falling Leaves", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Leaves)); }, "", true, -1,

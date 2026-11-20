@@ -102,6 +102,12 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
     * **Lights:** the first dozen orbs each carry a point light in their shade, so the ground and trees under them glow.
     * **Fading:** orbs fade in and out over 1.5 s and pulse gently.
     * **Brightness:** keep it low, about 2–6. Very bright colours are bleached toward white by the tone curve.
+  * **Sparks** (Create > Effects > Sparks): bursts of glowing sparks.
+    * **Bursts:** **Burst** particles at once, at random times, **Rate** times a second on average.
+    * **Direction:** they fly out away from the entity (its +Z points away from a wall it is on), white hot fading to their colour.
+    * **Motion:** they fall, are slowed by the air, and bounce off the ground.
+  * **Light emitting particles** (any effect; orbs have their own lights): each frame the **Lit particles** brightest particles each carry a point light in their colour and current brightness, at **Particle light** irradiance at 1 m. Sparks thus flash on the walls around them as each burst flares and dies.
+  * **In my_yard:** "Wall sparks", parented to the Cabin by its front wall, bursts blue-white sparks whose lights flash on the logs, the door and the porch. It shows best at dusk; the 9 key dims the sky.
   * **Fire, magic and orbs** face the camera and cast no shadows (instance mask `INSTANCE_MASK_EFFECT`). Every ray still sees them, and bounce rays carry their glow.
   * **Falling leaves:** each leaf is a rigid plate in the scene's wind (Environment > Wind towards, at the emitter's wind speed, gusting).
     * **Force:** the air pushes the leaf along its normal with ½ ρ C<sub>N</sub> A<sub>projected</sub> \|u\|², where A<sub>projected</sub> = A \|n · û\| is its area facing the relative wind u. A little skin friction acts along it. Velocity follows F / m, with an areal density of 0.15 kg/m².

@@ -141,9 +141,9 @@ namespace Fox {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpriteComponent, enabled, image, mask, color, layout, keepAspect)
 		NLOHMANN_JSON_SERIALIZE_ENUM(ParticleComponent::Effect, {
 			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" },
-			{ ParticleComponent::Effect::Orbs, "orbs" } })
+			{ ParticleComponent::Effect::Orbs, "orbs" }, { ParticleComponent::Effect::Sparks, "sparks" } })
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ParticleComponent, enabled, effect, maxParticles, rate, lifetime, size, speed, spread,
-			height, color, color2, brightness, windSpeed, light, lightIntensity, texture)
+			height, color, color2, brightness, windSpeed, light, lightIntensity, particleLights, litParticles, particleLightIntensity, burst, texture)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClutterComponent, enabled, model, size, density, seed, minScale, maxScale,
 			randomTurn, alignToGround, maxSlope, sink, edgeFade, terrainLayer, faceCamera, sway, grassColor, grassHeight, blades)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
