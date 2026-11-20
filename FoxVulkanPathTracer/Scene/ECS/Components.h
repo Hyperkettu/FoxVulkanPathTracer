@@ -27,6 +27,9 @@
 //   ParticleComponent   it emits particles: fire, magic sparks or leaves flying in the wind
 //   TextComponent       vector text: on the screen (the game's UI) or in the world, flat, facing the camera or 3D
 //   SpriteComponent     an image on the screen (the game's UI)
+//   UIAnimationComponent animates the entity's UI element (sprite or screen text): steps in sequence, with easings
+//   UIButtonComponent   makes the entity's UI element a button: hover and press feedback, plays animations on a click
+//   UICanvasComponent   a UI in the world: the UI elements under it drawn onto a panel in the scene (fixed or billboard)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -359,6 +362,23 @@ namespace Fox {
 
 		struct UITextCache; // UI/GameUI.cpp
 
+		// Where a UI element (sprite, screen text) is, in its parent's rectangle: the screen's, or that of the nearest
+		// entity above it in the hierarchy that is a UI element (whose position, rotation, scale, alpha and tint it then
+		// follows). Pixels are of the reference resolution (UICanvas): the whole UI scales with the window.
+		//   anchorMin = anchorMax: a point of the parent's rectangle (0, 0 its top left, 1, 1 its bottom right); the element
+		//     is size big, its pivot offset pixels from that point
+		//   apart (on an axis): the element stretches between the two points, size added to that (negative: smaller)
+		struct UILayout {
+			glm::vec2 anchorMin{ 0.5f, 0.5f };
+			glm::vec2 anchorMax{ 0.5f, 0.5f };
+			glm::vec2 offset{ 0.0f };    // Pixels from the anchor (point), or of the pivot within the stretched rectangle
+			glm::vec2 size{ 128.0f, 128.0f }; // Pixels (sprites; a text's size is its text's)
+			glm::vec2 pivot{ 0.5f, 0.5f }; // The element's own point there, 0..1 (also the world text's origin)
+			float rotation = 0.0f;       // Degrees, clockwise, about the pivot
+			glm::vec2 scale{ 1.0f };
+			int layer = 0;               // Among its siblings: higher in front
+		};
+
 		// Vector text in a TrueType / OpenType font (Fonts/, Text/VectorText.h): the glyphs' outlines, sharp at any size.
 		//   Screen + Flat      the game's UI: drawn over the image at a fraction of the screen (GameUI)
 		//   World  + Flat      a flat sign of real geometry in the world, lit like everything else; or a billboard,
@@ -391,9 +411,7 @@ namespace Fox {
 			int subdivisions = 0;        // Extruded: every triangle split in four this many times (for displacement)
 			std::string displacement;    // Extruded: a height map over its bounds (0.5 grey: none)
 			float displacementScale = 0.03f; // Ems from black to white
-			glm::vec2 screenPosition{ 0.5f, 0.1f }; // Screen: 0..1, (0, 0) the top left corner
-			glm::vec2 pivot{ 0.5f, 0.5f };          // The point of its bounds there (and the world's origin of it)
-			int layer = 0;               // Screen: higher in front
+			UILayout layout{ { 0.5f, 0.1f }, { 0.5f, 0.1f } }; // Screen: where (UILayout); its pivot is the world text's origin too
 
 			// Set by the scene
 			bool placed = false;
@@ -412,17 +430,89 @@ namespace Fox {
 			std::string image;           // Empty: a plain rectangle of the colour
 			std::string mask;            // Alpha (or brightness) cutting it out
 			glm::vec4 color{ 1.0f };     // Multiplies the image
-			glm::vec2 screenPosition{ 0.5f, 0.5f }; // 0..1, (0, 0) the top left corner
-			glm::vec2 size{ 128.0f, 128.0f };       // Pixels at 1080 lines
-			glm::vec2 pivot{ 0.5f, 0.5f };
-			float rotation = 0.0f;       // Degrees, clockwise
-			int layer = 0;
-			bool keepAspect = true;      // Width from the height and the image's proportions
+			UILayout layout;
+			bool keepAspect = true;      // Width from the height and the image's proportions (not when stretched across)
 
 			// Set by the UI
 			std::string textureKey;
 			int texture = -1;
 			std::string problem;
+		};
+
+		// Animates its entity's UI element (sprite or screen text): steps played in order, each moving one property from
+		// where the steps before left it (or from its own start) to a value, over a time, with an easing. A step "with the
+		// previous" starts with the step before it instead of after. Values are on top of the layout: position an offset
+		// in pixels, scale a factor, rotation degrees added, alpha and tint factors. Children follow (alpha and tint too).
+		struct UIAnimationComponent {
+			enum class Property { Position, Scale, Rotation, Alpha, Tint };
+			enum class Easing {
+				Linear, SineIn, SineOut, SineInOut, QuadIn, QuadOut, QuadInOut, CubicIn, CubicOut, CubicInOut,
+				ExpoIn, ExpoOut, ExpoInOut, BackIn, BackOut, BackInOut, ElasticIn, ElasticOut, ElasticInOut, BounceIn, BounceOut, BounceInOut
+			};
+			enum class Repeat { Once, Loop, PingPong };
+			struct Step {
+				Property property = Property::Position;
+				glm::vec4 to{ 0.0f };     // Position: x, y; scale: x, y; rotation, alpha: x; tint: r, g, b
+				bool useFrom = false;     // From this value, not from where the steps before left it
+				glm::vec4 from{ 0.0f };
+				float duration = 0.5f;    // Seconds
+				float delay = 0.0f;       // Before it starts
+				Easing easing = Easing::QuadOut;
+				bool withPrevious = false; // Starts with the step before (in parallel), not after it
+			};
+			bool enabled = true;
+			std::vector<Step> steps;
+			Repeat repeat = Repeat::Once;
+			float speed = 1.0f;
+			bool playOnStart = true;      // When the game starts playing (UI.Play starts it from a script)
+			bool previewInEditor = true;  // Plays (on repeat) in edit mode
+
+			// Set by the UI
+			float time = 0.0f;
+			bool playing = false;
+			bool triggered = false;      // Played by a button or script: to its end, also in edit mode
+		};
+
+		// A UI in the 3D world: the UI elements (sprites, screen texts, with their layouts, animations and buttons) under
+		// this entity in the hierarchy are drawn into its own picture instead of onto the screen, and that picture is a
+		// panel in the scene: lit like everything else (and glowing, if wanted), hidden behind what is in front of it,
+		// seen in reflections. It keeps the entity's orientation (its front is +Z), or turns to face the camera
+		// (billboard). Its buttons are clicked where the mouse ray meets it; within interactDistance of the camera they
+		// free the pointer outside edit mode.
+		struct UICanvasComponent {
+			bool enabled = true;
+			glm::vec2 resolution{ 1024.0f, 512.0f }; // Its pixels: its UI's rectangle (and the picture's size)
+			float width = 2.0f;           // Metres (the height from the resolution's proportions)
+			bool billboard = false;       // Turns to face the camera
+			float glow = 1.0f;            // Emitted light of the picture (0: lit only, like paint)
+			float interactDistance = 12.0f; // Metres: closer, its buttons take the pointer
+
+			// Set by the scene and the UI
+			bool placed = false;
+			std::string placedKey;
+			size_t object = SIZE_MAX;
+			int texture = -1;
+			uint64_t drawnHash = 0;
+			std::vector<uint8_t> pixels;
+		};
+
+		// The entity's UI element (sprite or screen text) is a button: under the mouse it takes the hover tint and scale,
+		// pressed the pressed scale. A click (in play or edit mode) plays the UI animations of the entities named in
+		// playOnClick (comma separated) from the start, and those of everything under them if withChildren. Scripts can
+		// ask UI.Clicked(entity).
+		struct UIButtonComponent {
+			bool enabled = true;
+			std::string playOnClick;      // Entity names, e.g. "Inventory panel"
+			bool withChildren = true;     // Their children's animations too
+			glm::vec3 hoverTint{ 1.0f, 0.85f, 0.6f };
+			float hoverScale = 1.06f;
+			float pressedScale = 0.94f;
+
+			// Set by the UI
+			bool hovered = false;
+			bool pressed = false;
+			bool clicked = false;         // In the frame it was clicked (until the next UI frame)
+			uint32_t clicks = 0;
 		};
 
 		// One particle of a ParticleComponent (simulated on the CPU, MainRayTracingScene::UpdateParticles)

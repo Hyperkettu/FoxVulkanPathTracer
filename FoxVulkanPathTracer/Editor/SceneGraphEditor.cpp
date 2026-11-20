@@ -46,13 +46,189 @@ namespace Fox {
 				return changed;
 			}
 
-			void ScreenPlacement(glm::vec2& position, glm::vec2& pivot, int& layer) {
-				ImGui::SliderFloat2("Screen position", &position.x, 0.0f, 1.0f, "%.3f");
-				ImGui::SetItemTooltip("Fractions of the screen: (0, 0) the top left corner, (1, 1) the bottom right");
-				ImGui::SliderFloat2("Pivot", &pivot.x, 0.0f, 1.0f, "%.2f");
-				ImGui::SetItemTooltip("The point of it at the screen position: (0, 0) its top left, (0.5, 0.5) its middle");
-				ImGui::InputInt("Layer", &layer);
-				ImGui::SetItemTooltip("Higher layers are drawn in front");
+			// Where a UI element is in its parent's rectangle (the screen's, or its UI parent's): anchors, offset, size,
+			// pivot, rotation, scale, layer. sized: false for text (its size is its text's).
+			void LayoutEditor(Fox::Scene::UILayout& layout, bool sized) {
+				// Anchor presets: a point at a corner, edge or the middle (pivot there too), or stretched
+				struct Preset { const char* name; glm::vec2 min, max; };
+				static const Preset presets[] = {
+					{ "Top left", { 0, 0 }, { 0, 0 } }, { "Top", { 0.5f, 0 }, { 0.5f, 0 } }, { "Top right", { 1, 0 }, { 1, 0 } },
+					{ "Left", { 0, 0.5f }, { 0, 0.5f } }, { "Centre", { 0.5f, 0.5f }, { 0.5f, 0.5f } }, { "Right", { 1, 0.5f }, { 1, 0.5f } },
+					{ "Bottom left", { 0, 1 }, { 0, 1 } }, { "Bottom", { 0.5f, 1 }, { 0.5f, 1 } }, { "Bottom right", { 1, 1 }, { 1, 1 } },
+					{ "Stretch across, top", { 0, 0 }, { 1, 0 } }, { "Stretch across, middle", { 0, 0.5f }, { 1, 0.5f } },
+					{ "Stretch across, bottom", { 0, 1 }, { 1, 1 } }, { "Stretch down, left", { 0, 0 }, { 0, 1 } },
+					{ "Stretch down, right", { 1, 0 }, { 1, 1 } }, { "Fill", { 0, 0 }, { 1, 1 } },
+				};
+				const char* current = "Custom";
+				for (const Preset& preset : presets) {
+					if (layout.anchorMin == preset.min && layout.anchorMax == preset.max) current = preset.name;
+				}
+				if (ImGui::BeginCombo("Anchor", current)) {
+					for (const Preset& preset : presets) {
+						if (!sized && preset.min != preset.max) continue; // Text does not stretch
+						if (ImGui::Selectable(preset.name, current == preset.name)) {
+							layout.anchorMin = preset.min;
+							layout.anchorMax = preset.max;
+							// The pivot at the anchor (the middle where stretched); in place: no offset; stretched: no extra size
+							layout.pivot = glm::vec2(preset.min.x == preset.max.x ? preset.min.x : 0.5f, preset.min.y == preset.max.y ? preset.min.y : 0.5f);
+							layout.offset = glm::vec2(0.0f);
+							if (preset.min.x != preset.max.x) layout.size.x = 0.0f;
+							if (preset.min.y != preset.max.y) layout.size.y = 0.0f;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SetItemTooltip("Where in its parent (the screen, or the UI element above it in the hierarchy) it holds on to:\n"
+					"a point keeps its place from that corner or edge as the window changes; stretched, it spans the parent");
+				ImGui::SliderFloat2("Anchor min", &layout.anchorMin.x, 0.0f, 1.0f, "%.2f");
+				ImGui::SliderFloat2("Anchor max", &layout.anchorMax.x, 0.0f, 1.0f, "%.2f");
+				ImGui::DragFloat2("Offset (px)", &layout.offset.x, 0.5f, -10000.0f, 10000.0f, "%.1f");
+				if (sized) {
+					const bool stretched = layout.anchorMin != layout.anchorMax;
+					ImGui::DragFloat2(stretched ? "Size (px, added to the stretch)" : "Size (px)", &layout.size.x, 0.5f, -10000.0f, 10000.0f, "%.1f");
+				}
+				ImGui::SliderFloat2("Pivot", &layout.pivot.x, 0.0f, 1.0f, "%.2f");
+				ImGui::SetItemTooltip("Its own point placed at the anchor (plus offset), and turned and scaled about: (0, 0) its top left");
+				ImGui::SliderFloat("Rotation", &layout.rotation, -180.0f, 180.0f, "%.1f deg");
+				ImGui::DragFloat2("Scale", &layout.scale.x, 0.01f, -10.0f, 10.0f, "%.2f");
+				ImGui::InputInt("Layer", &layout.layer);
+				ImGui::SetItemTooltip("Among its siblings: higher in front (children are always in front of their parent)");
+				ImGui::TextDisabled("Pixels of the reference resolution (Environment > UI canvas)");
+			}
+
+			void DrawUICanvasInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
+				auto& canvas = scene.GetSceneGraph().GetRegistry().Get<Fox::Scene::UICanvasComponent>(entity);
+				ImGui::Checkbox("On", &canvas.enabled);
+				ImGui::DragFloat2("Resolution (px)", &canvas.resolution.x, 1.0f, 16.0f, 4096.0f, "%.0f");
+				ImGui::SetItemTooltip("Its UI's pixels: the rectangle the UI elements under it are laid out in");
+				ImGui::DragFloat("Width (m)", &canvas.width, 0.01f, 0.01f, 100.0f, "%.2f");
+				ImGui::Checkbox("Billboard (faces the camera)", &canvas.billboard);
+				ImGui::SliderFloat("Glow", &canvas.glow, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				ImGui::SetItemTooltip("Light it gives off (a screen); 0: lit by the scene only (paint)");
+				ImGui::DragFloat("Interact distance (m)", &canvas.interactDistance, 0.1f, 0.0f, 1000.0f, "%.1f");
+				ImGui::SetItemTooltip("Within this of the camera its buttons free the pointer to click them (outside edit mode)");
+				ImGui::TextDisabled("The UI elements under it (Create > UI with it selected) are drawn on it");
+			}
+
+			void DrawUIButtonInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
+				auto& button = scene.GetSceneGraph().GetRegistry().Get<Fox::Scene::UIButtonComponent>(entity);
+				ImGui::Checkbox("On", &button.enabled);
+				char buffer[512];
+				std::snprintf(buffer, sizeof(buffer), "%s", button.playOnClick.c_str());
+				if (ImGui::InputText("Play on click", buffer, sizeof(buffer))) button.playOnClick = buffer;
+				ImGui::SetItemTooltip("Names of entities whose UI animations play from the start on a click (comma separated)");
+				ImGui::Checkbox("And their children's", &button.withChildren);
+				ImGui::ColorEdit3("Hover tint", &button.hoverTint.x);
+				ImGui::SliderFloat("Hover scale", &button.hoverScale, 0.5f, 2.0f, "%.2f");
+				ImGui::SliderFloat("Pressed scale", &button.pressedScale, 0.5f, 2.0f, "%.2f");
+				ImGui::TextDisabled("Clicked %u times (works in edit mode too)", button.clicks);
+				if (!scene.GetSceneGraph().GetRegistry().Has<SpriteComponent>(entity) && !scene.GetSceneGraph().GetRegistry().Has<TextComponent>(entity)) {
+					ImGui::TextDisabled("Needs the entity's sprite or screen text to click");
+				}
+			}
+
+			void DrawUIAnimationInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
+				using Animation = Fox::Scene::UIAnimationComponent;
+				Animation& animation = scene.GetSceneGraph().GetRegistry().Get<Animation>(entity);
+				ImGui::Checkbox("On", &animation.enabled);
+				int repeat = static_cast<int>(animation.repeat);
+				const char* repeats[] = { "Once", "Loop", "Ping-pong" };
+				if (ImGui::Combo("Repeat", &repeat, repeats, IM_ARRAYSIZE(repeats))) animation.repeat = static_cast<Animation::Repeat>(repeat);
+				ImGui::SliderFloat("Speed", &animation.speed, 0.05f, 5.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
+				ImGui::Checkbox("Play when the game starts", &animation.playOnStart);
+				ImGui::SetItemTooltip("Or from a script: UI.Play(entity)");
+				ImGui::Checkbox("Preview in edit mode", &animation.previewInEditor);
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Play")) { animation.time = 0.0f; animation.playing = true; animation.triggered = true; }
+
+				const char* properties[] = { "Position", "Scale", "Rotation", "Alpha", "Tint" };
+				int remove = -1, moveUp = -1;
+				for (int i = 0; i < static_cast<int>(animation.steps.size()); i++) {
+					Animation::Step& step = animation.steps[i];
+					ImGui::PushID(i);
+					ImGui::SeparatorText(("Step " + std::to_string(i + 1) + (step.withPrevious && i > 0 ? " (with the previous)" : "")).c_str());
+					int property = static_cast<int>(step.property);
+					if (ImGui::Combo("Property", &property, properties, IM_ARRAYSIZE(properties)) && property != static_cast<int>(step.property)) {
+						step.property = static_cast<Animation::Property>(property);
+						// A sensible target for the new property
+						step.to = step.property == Animation::Property::Scale || step.property == Animation::Property::Alpha
+							|| step.property == Animation::Property::Tint ? glm::vec4(1.0f) : glm::vec4(0.0f);
+						step.from = step.to;
+					}
+					auto value = [&](const char* label, glm::vec4& v) {
+						switch (step.property) {
+						case Animation::Property::Position: ImGui::DragFloat2(label, &v.x, 1.0f, -10000.0f, 10000.0f, "%.0f px"); break;
+						case Animation::Property::Scale: ImGui::DragFloat2(label, &v.x, 0.01f, -10.0f, 10.0f, "%.2f"); break;
+						case Animation::Property::Rotation: ImGui::DragFloat(label, &v.x, 1.0f, -3600.0f, 3600.0f, "%.0f deg"); break;
+						case Animation::Property::Alpha: ImGui::SliderFloat(label, &v.x, 0.0f, 1.0f, "%.2f"); break;
+						case Animation::Property::Tint: ImGui::ColorEdit3(label, &v.x); break;
+						}
+					};
+					value("To", step.to);
+					ImGui::Checkbox("From", &step.useFrom);
+					ImGui::SetItemTooltip("Start from this value (else from where the steps before left it: neutral at first)");
+					if (step.useFrom) { ImGui::SameLine(); value("##from", step.from); }
+					ImGui::DragFloat("Duration (s)", &step.duration, 0.01f, 0.0f, 60.0f, "%.2f");
+					ImGui::DragFloat("Delay (s)", &step.delay, 0.01f, 0.0f, 60.0f, "%.2f");
+					if (ImGui::BeginCombo("Easing", Fox::UI::EasingName(step.easing))) {
+						for (int e = 0; e <= static_cast<int>(Animation::Easing::BounceInOut); e++) {
+							const auto easing = static_cast<Animation::Easing>(e);
+							if (ImGui::Selectable(Fox::UI::EasingName(easing), easing == step.easing)) step.easing = easing;
+						}
+						ImGui::EndCombo();
+					}
+					if (i > 0) ImGui::Checkbox("With the previous step", &step.withPrevious);
+					ImGui::SetItemTooltip("Starts at the same time as the step before (both play at once) instead of after it");
+					if (i > 0) { if (ImGui::SmallButton("Up")) moveUp = i; ImGui::SameLine(); }
+					if (ImGui::SmallButton("Remove")) remove = i;
+					ImGui::PopID();
+				}
+				if (moveUp > 0) std::swap(animation.steps[moveUp], animation.steps[moveUp - 1]);
+				if (remove >= 0) animation.steps.erase(animation.steps.begin() + remove);
+				if (ImGui::Button("Add step")) {
+					Animation::Step step;
+					step.property = Animation::Property::Position;
+					step.to = glm::vec4(0.0f, -40.0f, 0.0f, 0.0f);
+					animation.steps.push_back(step);
+				}
+				ImGui::SameLine();
+				if (ImGui::BeginCombo("##examples", "Add an example...", ImGuiComboFlags_NoArrowButton)) {
+					auto step = [](Animation::Property p, glm::vec4 to, float duration, Animation::Easing e, bool with = false, bool useFrom = false, glm::vec4 from = {}) {
+						Animation::Step s; s.property = p; s.to = to; s.duration = duration; s.easing = e; s.withPrevious = with; s.useFrom = useFrom; s.from = from; return s;
+					};
+					using P = Animation::Property;
+					using E = Animation::Easing;
+					if (ImGui::Selectable("Pop in (scale and fade)")) {
+						animation.steps = { step(P::Scale, glm::vec4(1.0f), 0.6f, E::BackOut, false, true, glm::vec4(0.2f)),
+							step(P::Alpha, glm::vec4(1.0f), 0.4f, E::QuadOut, true, true, glm::vec4(0.0f)) };
+						animation.repeat = Animation::Repeat::Once;
+					}
+					if (ImGui::Selectable("Slide in from the left")) {
+						animation.steps = { step(P::Position, glm::vec4(0.0f), 0.8f, E::CubicOut, false, true, glm::vec4(-600.0f, 0.0f, 0.0f, 0.0f)),
+							step(P::Alpha, glm::vec4(1.0f), 0.5f, E::Linear, true, true, glm::vec4(0.0f)) };
+						animation.repeat = Animation::Repeat::Once;
+					}
+					if (ImGui::Selectable("Bounce down")) {
+						animation.steps = { step(P::Position, glm::vec4(0.0f), 1.0f, E::BounceOut, false, true, glm::vec4(0.0f, -300.0f, 0.0f, 0.0f)) };
+						animation.repeat = Animation::Repeat::Once;
+					}
+					if (ImGui::Selectable("Pulse (scale and tint)")) {
+						animation.steps = { step(P::Scale, glm::vec4(1.15f), 0.5f, E::SineInOut), step(P::Tint, glm::vec4(1.0f, 0.8f, 0.4f, 1.0f), 0.5f, E::SineInOut, true) };
+						animation.repeat = Animation::Repeat::PingPong;
+					}
+					if (ImGui::Selectable("Spin")) {
+						animation.steps = { step(P::Rotation, glm::vec4(360.0f), 2.0f, E::Linear) };
+						animation.repeat = Animation::Repeat::Loop;
+					}
+					if (ImGui::Selectable("Wobble (elastic)")) {
+						animation.steps = { step(P::Rotation, glm::vec4(0.0f), 1.2f, E::ElasticOut, false, true, glm::vec4(25.0f)) };
+						animation.repeat = Animation::Repeat::Once;
+					}
+					ImGui::EndCombo();
+				}
+				if (!scene.GetSceneGraph().GetRegistry().Has<SpriteComponent>(entity) && !scene.GetSceneGraph().GetRegistry().Has<TextComponent>(entity)) {
+					ImGui::TextDisabled("Animates the entity's sprite or screen text (add one)");
+				}
 			}
 
 			void DrawTextInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
@@ -124,11 +300,20 @@ namespace Fox {
 					}
 				}
 				if (screen) {
-					ImGui::SeparatorText("Screen");
-					ScreenPlacement(text.screenPosition, text.pivot, text.layer);
+					ImGui::SeparatorText("Layout");
+					if (text.style == TextComponent::Style::Flat) {
+						LayoutEditor(text.layout, false);
+					}
+					else {
+						// 3D text in the UI: placed on the screen by its anchor and offset (not in a UI parent)
+						ImGui::SliderFloat2("Anchor", &text.layout.anchorMin.x, 0.0f, 1.0f, "%.2f");
+						text.layout.anchorMax = text.layout.anchorMin;
+						ImGui::DragFloat2("Offset (px)", &text.layout.offset.x, 0.5f, -10000.0f, 10000.0f, "%.1f");
+						ImGui::SliderFloat2("Pivot", &text.layout.pivot.x, 0.0f, 1.0f, "%.2f");
+					}
 				}
 				else {
-					ImGui::SliderFloat2("Pivot", &text.pivot.x, 0.0f, 1.0f, "%.2f");
+					ImGui::SliderFloat2("Pivot", &text.layout.pivot.x, 0.0f, 1.0f, "%.2f");
 					ImGui::SetItemTooltip("The point of the text at the entity: (0.5, 0.5) its middle, (0.5, 0) its bottom");
 				}
 				if (geometry && text.triangles > 0) {
@@ -149,10 +334,10 @@ namespace Fox {
 				ImageCombo("Mask", sprite.mask);
 				ImGui::SetItemTooltip("Cuts the image out where this is transparent (or dark, if it has no alpha)");
 				ImGui::ColorEdit4("Colour", &sprite.color.x);
-				ImGui::DragFloat2("Size (px at 1080 lines)", &sprite.size.x, 0.5f, 1.0f, 4000.0f, "%.0f");
 				ImGui::Checkbox("Keep the image's proportions", &sprite.keepAspect);
-				ImGui::SliderFloat("Rotation", &sprite.rotation, -180.0f, 180.0f, "%.0f deg");
-				ScreenPlacement(sprite.screenPosition, sprite.pivot, sprite.layer);
+				ImGui::SetItemTooltip("Its width from its height and the image (when not stretched)");
+				ImGui::SeparatorText("Layout");
+				LayoutEditor(sprite.layout, true);
 				if (!sprite.problem.empty()) {
 					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", sprite.problem.c_str());
 				}
@@ -1259,6 +1444,43 @@ namespace Fox {
 						scene.MarkStructureChanged();
 					},
 					DrawTextInspector,
+				},
+				{
+					"World UI canvas", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<Fox::Scene::UICanvasComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("World UI canvas")) {
+							scene.GetSceneGraph().GetRegistry().Add<Fox::Scene::UICanvasComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.GetSceneGraph().GetRegistry().Remove<Fox::Scene::UICanvasComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawUICanvasInspector,
+				},
+				{
+					"UI button", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<Fox::Scene::UIButtonComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("UI button")) {
+							scene.GetSceneGraph().GetRegistry().Add<Fox::Scene::UIButtonComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<Fox::Scene::UIButtonComponent>(entity); },
+					DrawUIButtonInspector,
+				},
+				{
+					"UI animation", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<Fox::Scene::UIAnimationComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("UI animation")) {
+							scene.GetSceneGraph().GetRegistry().Add<Fox::Scene::UIAnimationComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<Fox::Scene::UIAnimationComponent>(entity); },
+					DrawUIAnimationInspector,
 				},
 				{
 					"Sprite", true,

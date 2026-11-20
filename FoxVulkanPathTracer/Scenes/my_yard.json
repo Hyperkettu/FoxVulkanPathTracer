@@ -5480,6 +5480,2539 @@
       },
       "name": "Empty",
       "parent": -1
+    },
+    {
+      "name": "Game UI",
+      "active": true,
+      "parent": -1,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "Inventory panel",
+      "active": true,
+      "parent": 163,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.04,
+            0.05,
+            0.07,
+            0.78
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0.5,
+              1
+            ],
+            "anchorMax": [
+              0.5,
+              1
+            ],
+            "offset": [
+              0,
+              -36
+            ],
+            "size": [
+              1060,
+              250
+            ],
+            "pivot": [
+              0.5,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.5,
+              "delay": 1.15,
+              "easing": "quadIn",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            },
+            {
+              "property": "position",
+              "to": [
+                0,
+                140,
+                0,
+                0
+              ],
+              "duration": 0.5,
+              "delay": 1.15,
+              "easing": "backIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Inventory title",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "INVENTORY",
+          "size": 46,
+          "color": [
+            0.95,
+            0.9,
+            0.75,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              34,
+              18
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0,
+              0
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Maple leaf slot",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.16,
+            0.17,
+            0.22,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              100,
+              150
+            ],
+            "size": [
+              124,
+              124
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.18,
+                1.18,
+                0,
+                0
+              ],
+              "duration": 0.12,
+              "delay": 0.0,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "backIn",
+              "withPrevious": false
+            },
+            {
+              "property": "rotation",
+              "to": [
+                90,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Maple leaf",
+      "active": true,
+      "parent": 166,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/vahtera/vahtera_leaf.png",
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              92,
+              92
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Maple leaf count",
+      "active": true,
+      "parent": 166,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "x12",
+          "size": 28,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              1,
+              1
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              -8,
+              -6
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              1,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Wisp orb slot",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.16,
+            0.17,
+            0.22,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              250,
+              150
+            ],
+            "size": [
+              124,
+              124
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.18,
+                1.18,
+                0,
+                0
+              ],
+              "duration": 0.12,
+              "delay": 0.12,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "backIn",
+              "withPrevious": false
+            },
+            {
+              "property": "rotation",
+              "to": [
+                90,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Wisp orb",
+      "active": true,
+      "parent": 169,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/particles/orb.png",
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              92,
+              92
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Wisp orb count",
+      "active": true,
+      "parent": 169,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "x3",
+          "size": 28,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              1,
+              1
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              -8,
+              -6
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              1,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Spark slot",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.16,
+            0.17,
+            0.22,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              400,
+              150
+            ],
+            "size": [
+              124,
+              124
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.18,
+                1.18,
+                0,
+                0
+              ],
+              "duration": 0.12,
+              "delay": 0.24,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "backIn",
+              "withPrevious": false
+            },
+            {
+              "property": "rotation",
+              "to": [
+                90,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Spark",
+      "active": true,
+      "parent": 172,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/particles/spark.png",
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              92,
+              92
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Spark count",
+      "active": true,
+      "parent": 172,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "x7",
+          "size": 28,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              1,
+              1
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              -8,
+              -6
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              1,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Ember slot",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.16,
+            0.17,
+            0.22,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              550,
+              150
+            ],
+            "size": [
+              124,
+              124
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.18,
+                1.18,
+                0,
+                0
+              ],
+              "duration": 0.12,
+              "delay": 0.36,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "backIn",
+              "withPrevious": false
+            },
+            {
+              "property": "rotation",
+              "to": [
+                90,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Ember",
+      "active": true,
+      "parent": 175,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/particles/flame.png",
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              92,
+              92
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Ember count",
+      "active": true,
+      "parent": 175,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "x5",
+          "size": 28,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              1,
+              1
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              -8,
+              -6
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              1,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Old crate slot",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.16,
+            0.17,
+            0.22,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              0,
+              0
+            ],
+            "offset": [
+              700,
+              150
+            ],
+            "size": [
+              124,
+              124
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "playOnStart": false,
+          "previewInEditor": false,
+          "repeat": "once",
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.18,
+                1.18,
+                0,
+                0
+              ],
+              "duration": 0.12,
+              "delay": 0.48,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "backIn",
+              "withPrevious": false
+            },
+            {
+              "property": "rotation",
+              "to": [
+                90,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.38,
+              "delay": 0.0,
+              "easing": "quadIn",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Old crate",
+      "active": true,
+      "parent": 178,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/box.png",
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              92,
+              92
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Old crate count",
+      "active": true,
+      "parent": 178,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "x1",
+          "size": 28,
+          "color": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              1,
+              1
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              -8,
+              -6
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              1,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "Discard button",
+      "active": true,
+      "parent": 164,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.6,
+            0.16,
+            0.1,
+            0.95
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              1,
+              0
+            ],
+            "anchorMax": [
+              1,
+              0
+            ],
+            "offset": [
+              -34,
+              24
+            ],
+            "size": [
+              250,
+              64
+            ],
+            "pivot": [
+              1,
+              0
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiButton": {
+          "playOnClick": "Inventory panel",
+          "withChildren": true,
+          "hoverTint": [
+            1.0,
+            0.85,
+            0.6
+          ],
+          "hoverScale": 1.06,
+          "pressedScale": 0.94
+        }
+      }
+    },
+    {
+      "name": "Discard label",
+      "active": true,
+      "parent": 181,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "DISCARD ALL",
+          "size": 32,
+          "color": [
+            1,
+            0.97,
+            0.9,
+            1
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Cabin sign",
+      "active": true,
+      "parent": 1,
+      "components": {
+        "transform": {
+          "position": [
+            9.5,
+            0.871,
+            8.0
+          ],
+          "rotation": [
+            0.0,
+            -25.4,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "uiCanvas": {
+          "resolution": [
+            1024,
+            640
+          ],
+          "width": 2.4,
+          "billboard": false,
+          "glow": 0.6,
+          "interactDistance": 18.0
+        }
+      }
+    },
+    {
+      "name": "Sign board",
+      "active": true,
+      "parent": 183,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/bark/albedo.png",
+          "color": [
+            0.75,
+            0.6,
+            0.45,
+            1.0
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              0,
+              0
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Sign face",
+      "active": true,
+      "parent": 184,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.07,
+            0.045,
+            0.03,
+            0.92
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              -48,
+              -48
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Sign title",
+      "active": true,
+      "parent": 185,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "THE OLD CABIN",
+          "size": 100,
+          "color": [
+            1.0,
+            0.86,
+            0.55,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0
+            ],
+            "anchorMax": [
+              0.5,
+              0
+            ],
+            "offset": [
+              0,
+              36
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Sign year",
+      "active": true,
+      "parent": 185,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "BUILT IN 1887",
+          "size": 46,
+          "color": [
+            0.9,
+            0.85,
+            0.75,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0
+            ],
+            "anchorMax": [
+              0.5,
+              0
+            ],
+            "offset": [
+              0,
+              158
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Sign leaf",
+      "active": true,
+      "parent": 185,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/vahtera/vahtera_leaf.png",
+          "layout": {
+            "anchorMin": [
+              0,
+              1
+            ],
+            "anchorMax": [
+              0,
+              1
+            ],
+            "offset": [
+              34,
+              -28
+            ],
+            "size": [
+              150,
+              150
+            ],
+            "pivot": [
+              0,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "repeat": "pingPong",
+          "playOnStart": true,
+          "previewInEditor": true,
+          "steps": [
+            {
+              "property": "rotation",
+              "to": [
+                10,
+                0,
+                0,
+                0
+              ],
+              "duration": 1.4,
+              "delay": 0.0,
+              "easing": "sineInOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                -10,
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Rest button",
+      "active": true,
+      "parent": 185,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.25,
+            0.45,
+            0.2,
+            1.0
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0.5,
+              1
+            ],
+            "anchorMax": [
+              0.5,
+              1
+            ],
+            "offset": [
+              0,
+              -44
+            ],
+            "size": [
+              380,
+              112
+            ],
+            "pivot": [
+              0.5,
+              1
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiButton": {
+          "playOnClick": "Rest message",
+          "withChildren": true,
+          "hoverTint": [
+            1.0,
+            0.9,
+            0.6
+          ],
+          "hoverScale": 1.07,
+          "pressedScale": 0.93
+        }
+      }
+    },
+    {
+      "name": "Rest label",
+      "active": true,
+      "parent": 189,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "REST HERE",
+          "size": 60,
+          "color": [
+            1.0,
+            1.0,
+            0.92,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Rest message",
+      "active": true,
+      "parent": 185,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "YOU FEEL RESTED",
+          "size": 66,
+          "color": [
+            0.75,
+            1.0,
+            0.6,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              0,
+              10
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 2
+          }
+        },
+        "uiAnimation": {
+          "repeat": "once",
+          "playOnStart": false,
+          "previewInEditor": false,
+          "steps": [
+            {
+              "property": "alpha",
+              "to": [
+                1,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.25,
+              "delay": 0.0,
+              "easing": "quadOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                0,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "scale",
+              "to": [
+                1,
+                1,
+                0,
+                0
+              ],
+              "duration": 0.5,
+              "delay": 0.0,
+              "easing": "backOut",
+              "withPrevious": true,
+              "useFrom": true,
+              "from": [
+                0.3,
+                0.3,
+                0,
+                0
+              ]
+            },
+            {
+              "property": "alpha",
+              "to": [
+                0,
+                0,
+                0,
+                0
+              ],
+              "duration": 0.6,
+              "delay": 1.6,
+              "easing": "quadIn",
+              "withPrevious": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Cabin marker",
+      "active": true,
+      "parent": 1,
+      "components": {
+        "transform": {
+          "position": [
+            5.2,
+            11.7,
+            -2.86
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "uiCanvas": {
+          "resolution": [
+            560,
+            200
+          ],
+          "width": 3.2,
+          "billboard": true,
+          "glow": 2.0,
+          "interactDistance": 0.0
+        }
+      }
+    },
+    {
+      "name": "Marker tag",
+      "active": true,
+      "parent": 192,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "color": [
+            0.04,
+            0.07,
+            0.12,
+            0.8
+          ],
+          "keepAspect": false,
+          "layout": {
+            "anchorMin": [
+              0,
+              0
+            ],
+            "anchorMax": [
+              1,
+              1
+            ],
+            "offset": [
+              0,
+              0
+            ],
+            "size": [
+              -20,
+              -40
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "repeat": "pingPong",
+          "playOnStart": true,
+          "previewInEditor": true,
+          "steps": [
+            {
+              "property": "position",
+              "to": [
+                0,
+                -12,
+                0,
+                0
+              ],
+              "duration": 1.2,
+              "delay": 0.0,
+              "easing": "sineInOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                0,
+                12,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Marker orb",
+      "active": true,
+      "parent": 193,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "sprite": {
+          "image": "Textures/particles/orb.png",
+          "color": [
+            0.6,
+            0.9,
+            1.0,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0,
+              0.5
+            ],
+            "anchorMax": [
+              0,
+              0.5
+            ],
+            "offset": [
+              22,
+              0
+            ],
+            "size": [
+              110,
+              110
+            ],
+            "pivot": [
+              0,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        },
+        "uiAnimation": {
+          "repeat": "pingPong",
+          "playOnStart": true,
+          "previewInEditor": true,
+          "steps": [
+            {
+              "property": "scale",
+              "to": [
+                1.15,
+                1.15,
+                0,
+                0
+              ],
+              "duration": 0.9,
+              "delay": 0.0,
+              "easing": "sineInOut",
+              "withPrevious": false,
+              "useFrom": true,
+              "from": [
+                0.9,
+                0.9,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Marker text",
+      "active": true,
+      "parent": 193,
+      "components": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "text": {
+          "space": "screen",
+          "style": "flat",
+          "text": "CABIN",
+          "size": 104,
+          "color": [
+            0.85,
+            0.96,
+            1.0,
+            1.0
+          ],
+          "layout": {
+            "anchorMin": [
+              0.5,
+              0.5
+            ],
+            "anchorMax": [
+              0.5,
+              0.5
+            ],
+            "offset": [
+              52,
+              4
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "pivot": [
+              0.5,
+              0.5
+            ],
+            "rotation": 0.0,
+            "scale": [
+              1.0,
+              1.0
+            ],
+            "layer": 0
+          }
+        }
+      }
     }
   ],
   "environment": {

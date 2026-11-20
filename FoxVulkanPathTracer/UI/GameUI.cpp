@@ -1,5 +1,7 @@
 #include "FoxRenderer.h"
 
+#include <unordered_map>
+
 namespace Fox {
 
 	namespace Scene {
@@ -14,14 +16,196 @@ namespace Fox {
 
 	namespace UI {
 
+		using Fox::Scene::TextComponent;
+		using Fox::Scene::SpriteComponent;
+		using Fox::Scene::UIAnimationComponent;
+		using Fox::Scene::UILayout;
+		using Easing = UIAnimationComponent::Easing;
+
+		// ------------------------------------------------------------------------------------------------
+		// Easings (after easings.net)
+		// ------------------------------------------------------------------------------------------------
+
+		float Ease(Easing easing, float t) {
+			t = glm::clamp(t, 0.0f, 1.0f);
+			const float pi = glm::pi<float>();
+			auto bounceOut = [](float x) {
+				const float n = 7.5625f, d = 2.75f;
+				if (x < 1.0f / d) return n * x * x;
+				if (x < 2.0f / d) { x -= 1.5f / d; return n * x * x + 0.75f; }
+				if (x < 2.5f / d) { x -= 2.25f / d; return n * x * x + 0.9375f; }
+				x -= 2.625f / d;
+				return n * x * x + 0.984375f;
+			};
+			const float back = 1.70158f, backInOut = back * 1.525f;
+			switch (easing) {
+			case Easing::Linear: return t;
+			case Easing::SineIn: return 1.0f - std::cos(t * pi * 0.5f);
+			case Easing::SineOut: return std::sin(t * pi * 0.5f);
+			case Easing::SineInOut: return -(std::cos(pi * t) - 1.0f) * 0.5f;
+			case Easing::QuadIn: return t * t;
+			case Easing::QuadOut: return 1.0f - (1.0f - t) * (1.0f - t);
+			case Easing::QuadInOut: return t < 0.5f ? 2.0f * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 2.0f) * 0.5f;
+			case Easing::CubicIn: return t * t * t;
+			case Easing::CubicOut: return 1.0f - std::pow(1.0f - t, 3.0f);
+			case Easing::CubicInOut: return t < 0.5f ? 4.0f * t * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) * 0.5f;
+			case Easing::ExpoIn: return t <= 0.0f ? 0.0f : std::pow(2.0f, 10.0f * t - 10.0f);
+			case Easing::ExpoOut: return t >= 1.0f ? 1.0f : 1.0f - std::pow(2.0f, -10.0f * t);
+			case Easing::ExpoInOut:
+				if (t <= 0.0f || t >= 1.0f) return t;
+				return t < 0.5f ? std::pow(2.0f, 20.0f * t - 10.0f) * 0.5f : (2.0f - std::pow(2.0f, -20.0f * t + 10.0f)) * 0.5f;
+			case Easing::BackIn: return (back + 1.0f) * t * t * t - back * t * t;
+			case Easing::BackOut: { const float u = t - 1.0f; return 1.0f + (back + 1.0f) * u * u * u + back * u * u; }
+			case Easing::BackInOut:
+				return t < 0.5f ? (std::pow(2.0f * t, 2.0f) * ((backInOut + 1.0f) * 2.0f * t - backInOut)) * 0.5f
+					: (std::pow(2.0f * t - 2.0f, 2.0f) * ((backInOut + 1.0f) * (t * 2.0f - 2.0f) + backInOut) + 2.0f) * 0.5f;
+			case Easing::ElasticIn:
+				if (t <= 0.0f || t >= 1.0f) return t;
+				return -std::pow(2.0f, 10.0f * t - 10.0f) * std::sin((t * 10.0f - 10.75f) * (2.0f * pi / 3.0f));
+			case Easing::ElasticOut:
+				if (t <= 0.0f || t >= 1.0f) return t;
+				return std::pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * (2.0f * pi / 3.0f)) + 1.0f;
+			case Easing::ElasticInOut:
+				if (t <= 0.0f || t >= 1.0f) return t;
+				return t < 0.5f ? -(std::pow(2.0f, 20.0f * t - 10.0f) * std::sin((20.0f * t - 11.125f) * (2.0f * pi / 4.5f))) * 0.5f
+					: (std::pow(2.0f, -20.0f * t + 10.0f) * std::sin((20.0f * t - 11.125f) * (2.0f * pi / 4.5f))) * 0.5f + 1.0f;
+			case Easing::BounceIn: return 1.0f - bounceOut(1.0f - t);
+			case Easing::BounceOut: return bounceOut(t);
+			case Easing::BounceInOut: return t < 0.5f ? (1.0f - bounceOut(1.0f - 2.0f * t)) * 0.5f : (1.0f + bounceOut(2.0f * t - 1.0f)) * 0.5f;
+			}
+			return t;
+		}
+
 		namespace {
-			using Fox::Scene::TextComponent;
-			using Fox::Scene::SpriteComponent;
+			bool pointerOverButton = false;
+			bool buttonsShown = false;
+		}
+
+		bool ButtonsShown() {
+			return buttonsShown;
+		}
+
+		bool PointerOverButton() {
+			return pointerOverButton;
+		}
+
+		const char* EasingName(Easing easing) {
+			static const char* const names[] = { "Linear", "Sine in", "Sine out", "Sine in-out", "Quad in", "Quad out", "Quad in-out",
+				"Cubic in", "Cubic out", "Cubic in-out", "Expo in", "Expo out", "Expo in-out", "Back in", "Back out", "Back in-out",
+				"Elastic in", "Elastic out", "Elastic in-out", "Bounce in", "Bounce out", "Bounce in-out" };
+			const int index = static_cast<int>(easing);
+			return index >= 0 && index < IM_ARRAYSIZE(names) ? names[index] : "?";
+		}
+
+		namespace {
+			using Entity = Fox::Scene::RayTracing::MainRayTracingScene::Entity;
+			uint64_t EntityKey(const Entity& e) { return (static_cast<uint64_t>(e.generation) << 32) | e.index; }
+
+			// ------------------------------------------------------------------------------------------------
+			// Animation
+			// ------------------------------------------------------------------------------------------------
+
+			// What an animation does to its element now
+			struct Animated {
+				glm::vec2 position{ 0.0f };
+				glm::vec2 scale{ 1.0f };
+				float rotation = 0.0f;
+				float alpha = 1.0f;
+				glm::vec3 tint{ 1.0f };
+			};
+
+			glm::vec4 Neutral(UIAnimationComponent::Property property) {
+				using P = UIAnimationComponent::Property;
+				return property == P::Scale || property == P::Alpha || property == P::Tint ? glm::vec4(1.0f) : glm::vec4(0.0f);
+			}
+
+			// The steps' start and end times (in order; one "with the previous" starts with the step before it)
+			float Schedule(const UIAnimationComponent& animation, std::vector<glm::vec2>& times) {
+				times.resize(animation.steps.size());
+				float sequenceEnd = 0.0f, previousStart = 0.0f;
+				for (size_t i = 0; i < animation.steps.size(); i++) {
+					const auto& step = animation.steps[i];
+					const float start = (step.withPrevious && i > 0 ? previousStart : sequenceEnd) + std::max(step.delay, 0.0f);
+					const float end = start + std::max(step.duration, 0.0f);
+					times[i] = glm::vec2(start, end);
+					previousStart = start - std::max(step.delay, 0.0f);
+					sequenceEnd = std::max(sequenceEnd, end);
+				}
+				return sequenceEnd;
+			}
+
+			Animated Evaluate(const UIAnimationComponent& animation) {
+				Animated result;
+				if (!animation.enabled || animation.steps.empty()) return result;
+				std::vector<glm::vec2> times;
+				const float total = Schedule(animation, times);
+				float t = animation.time;
+				if (total <= 0.0f) t = 0.0f;
+				else if (animation.repeat == UIAnimationComponent::Repeat::Loop) t = std::fmod(t, total);
+				else if (animation.repeat == UIAnimationComponent::Repeat::PingPong) { t = std::fmod(t, 2.0f * total); if (t > total) t = 2.0f * total - t; }
+				else t = std::min(t, total);
+
+				// Each property starts neutral; each step moves it from where the steps before ended (or its own from)
+				glm::vec4 now[5], ended[5];
+				for (int p = 0; p < 5; p++) now[p] = ended[p] = Neutral(static_cast<UIAnimationComponent::Property>(p));
+				for (size_t i = 0; i < animation.steps.size(); i++) {
+					const auto& step = animation.steps[i];
+					const int p = std::clamp(static_cast<int>(step.property), 0, 4);
+					const glm::vec4 from = step.useFrom ? step.from : ended[p];
+					if (t >= times[i].y) now[p] = step.to;
+					else if (t > times[i].x) now[p] = glm::mix(from, step.to, Ease(step.easing, (t - times[i].x) / std::max(times[i].y - times[i].x, 1e-6f)));
+					else if (step.useFrom && i == 0) now[p] = from; // Waiting at its start
+					ended[p] = step.to;
+				}
+				result.position = glm::vec2(now[0]);
+				result.scale = glm::vec2(now[1]);
+				result.rotation = now[2].x;
+				result.alpha = now[3].x;
+				result.tint = glm::vec3(now[4]);
+				return result;
+			}
+
+			// ------------------------------------------------------------------------------------------------
+			// Layout
+			// ------------------------------------------------------------------------------------------------
+
+			// An element placed: its transform to the screen (pixels, y down), its rectangle in its own space, what it
+			// passes on to its children
+			struct Placed {
+				glm::mat3 matrix{ 1.0f };
+				glm::vec2 rectMin{ 0.0f }, rectSize{ 0.0f };
+				float alpha = 1.0f;
+				glm::vec3 tint{ 1.0f };
+			};
+
+			glm::mat3 Translate(const glm::vec2& t) { glm::mat3 m(1.0f); m[2] = glm::vec3(t, 1.0f); return m; }
+			glm::mat3 Rotate(float degrees) {
+				const float a = glm::radians(degrees), c = std::cos(a), s = std::sin(a);
+				glm::mat3 m(1.0f); m[0] = glm::vec3(c, s, 0.0f); m[1] = glm::vec3(-s, c, 0.0f); return m;
+			}
+			glm::mat3 Scale(const glm::vec2& s) { glm::mat3 m(1.0f); m[0][0] = s.x; m[1][1] = s.y; return m; }
+			ImVec2 Apply(const glm::mat3& m, const glm::vec2& p) { const glm::vec3 r = m * glm::vec3(p, 1.0f); return ImVec2(r.x, r.y); }
+
+			Placed Place(const UILayout& layout, const Placed& parent, glm::vec2 naturalSize, bool sized, float unit, const Animated& animated) {
+				const glm::vec2 a = parent.rectMin + parent.rectSize * layout.anchorMin;
+				const glm::vec2 b = parent.rectMin + parent.rectSize * layout.anchorMax;
+				glm::vec2 size = sized ? layout.size * unit : naturalSize;
+				// Stretched between the anchors on an axis where they are apart (size then adds to that)
+				if (sized && layout.anchorMax.x != layout.anchorMin.x) size.x = (b.x - a.x) + layout.size.x * unit;
+				if (sized && layout.anchorMax.y != layout.anchorMin.y) size.y = (b.y - a.y) + layout.size.y * unit;
+				size = glm::max(size, glm::vec2(0.0f));
+				const glm::vec2 at = glm::mix(a, b, layout.pivot) + (layout.offset + animated.position) * unit;
+				Placed placed;
+				placed.matrix = parent.matrix * Translate(at) * Rotate(layout.rotation + animated.rotation) * Scale(layout.scale * animated.scale);
+				placed.rectSize = size;
+				placed.rectMin = -layout.pivot * size;
+				placed.alpha = parent.alpha * animated.alpha;
+				placed.tint = parent.tint * animated.tint;
+				return placed;
+			}
 
 			int TextureOf(Fox::Scene::TextureLibrary& library, const std::string& fill, const std::string& mask, std::string& problem) {
-				if (fill.empty() && mask.empty()) {
-					return -1;
-				}
+				if (fill.empty() && mask.empty()) return -1;
 				try {
 					return library.MaskedTexture(fill, mask, false);
 				}
@@ -31,17 +215,16 @@ namespace Fox {
 				}
 			}
 
-			void DrawUIText(TextComponent& text, Fox::Scene::TextureLibrary& library, ImDrawList* list, ImVec2 display, float unit,
-				const std::function<ImTextureID(int)>& imguiTexture) {
+			// Its outlines at this size (cached), and their bounds; false if there is nothing to draw
+			bool PrepareText(TextComponent& text, float pixels) {
 				const std::string fontFile = text.font.empty() ? Fox::Text::DefaultFont() : text.font;
 				auto font = Fox::Text::Font::Get(fontFile);
 				if (!font) {
 					text.problem = fontFile.empty() ? "no font in Fonts/" : "cannot read " + fontFile;
-					return;
+					return false;
 				}
-				const float pixels = std::max(text.size * unit, 1.0f); // Of an em
 				// The outlines flattened to within a third of a pixel; the size in halving steps, so resizing reuses them
-				const float tolerance = 0.35f / pixels;
+				const float tolerance = 0.35f / std::max(pixels, 1.0f);
 				const std::string key = text.text + "|" + fontFile + "|" + std::to_string(text.align) + "|" + std::to_string(text.lineSpacing) + "|"
 					+ std::to_string(text.letterSpacing) + "|" + std::to_string(static_cast<int>(std::floor(std::log2(tolerance))));
 				if (!text.cache || text.cache->key != key) {
@@ -55,18 +238,18 @@ namespace Fox {
 					text.cache = cache;
 					text.problem.clear();
 				}
+				return true;
+			}
+
+			void DrawUIText(TextComponent& text, const Placed& placed, float pixels, Fox::Scene::TextureLibrary& library, ImDrawList* list,
+				const std::function<ImTextureID(int)>& imguiTexture) {
+				if (!text.cache || text.cache->fill.triangles.empty()) return;
 				const Fox::Scene::UITextCache& cache = *text.cache;
-				if (cache.fill.triangles.empty()) {
-					return;
-				}
-
-				// Where: the pivot of its bounds at the screen position
 				const glm::vec2 extent = glm::max(cache.max - cache.min, glm::vec2(1e-4f));
-				const glm::vec2 pivot(cache.min.x + extent.x * text.pivot.x, cache.max.y - extent.y * text.pivot.y);
-				const ImVec2 anchor(text.screenPosition.x * display.x, text.screenPosition.y * display.y);
-				auto toScreen = [&](const glm::vec2& p) { return ImVec2(anchor.x + (p.x - pivot.x) * pixels, anchor.y - (p.y - pivot.y) * pixels); };
+				// Em units to the element's own space (its pivot at the origin, y down), then to the screen
+				const glm::vec2 pivot(cache.min.x + extent.x * text.layout.pivot.x, cache.max.y - extent.y * text.layout.pivot.y);
+				auto toScreen = [&](const glm::vec2& p) { return Apply(placed.matrix, glm::vec2((p.x - pivot.x) * pixels, -(p.y - pivot.y) * pixels)); };
 
-				// Its texture (fill and mask), or plain colour
 				const std::string textureKey = text.fill + "|" + text.mask;
 				if (text.uiTextureKey != textureKey) {
 					text.uiTextureKey = textureKey;
@@ -74,29 +257,27 @@ namespace Fox {
 				}
 				const bool textured = text.uiTexture >= 0;
 				const ImVec2 white = ImGui::GetFontTexUvWhitePixel();
-				auto uvOf = [&](const glm::vec2& p) {
-					return textured ? ImVec2((p.x - cache.min.x) / extent.x, (cache.max.y - p.y) / extent.y) : white;
-				};
-				const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(text.color.r, text.color.g, text.color.b, text.color.a));
+				auto uvOf = [&](const glm::vec2& p) { return textured ? ImVec2((p.x - cache.min.x) / extent.x, (cache.max.y - p.y) / extent.y) : white; };
+				const glm::vec3 rgb = glm::vec3(text.color) * placed.tint;
+				const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(rgb.r, rgb.g, rgb.b, glm::clamp(text.color.a * placed.alpha, 0.0f, 1.0f)));
+				if ((color & IM_COL32_A_MASK) == 0) return;
 				const ImU32 clear = color & ~IM_COL32_A_MASK;
 
-				if (textured) {
-					list->PushTexture(ImTextureRef(imguiTexture(text.uiTexture)));
-				}
+				if (textured) list->PushTexture(ImTextureRef(imguiTexture(text.uiTexture)));
 				const auto& fill = cache.fill;
-				size_t fringeVertices = 0;
-				for (const auto& outline : fill.outlines) fringeVertices += 2 * outline.size();
+				size_t fringeVertices = 0, fringeIndices = 0;
+				for (const auto& outline : fill.outlines) { fringeVertices += 2 * outline.size(); fringeIndices += 6 * outline.size(); }
 				const size_t vertexCount = fill.points.size() + fringeVertices;
 				if (vertexCount < 60000) {
-					size_t fringeIndices = 0;
-					for (const auto& outline : fill.outlines) fringeIndices += 6 * outline.size();
 					list->PrimReserve(static_cast<int>(fill.triangles.size() + fringeIndices), static_cast<int>(vertexCount));
 					const unsigned int base = list->_VtxCurrentIdx;
 					for (const glm::vec2& p : fill.points) list->PrimWriteVtx(toScreen(p), uvOf(p), color);
 					for (uint32_t index : fill.triangles) list->PrimWriteIdx(static_cast<ImDrawIdx>(base + index));
 
-					// A one pixel fringe fading out around every outline: smooth edges (the filled side is on the left)
-					const float fringe = 1.0f / pixels;
+					// A one pixel fringe fading out around every outline (the filled side is on the left): smooth edges,
+					// at whatever scale the element is drawn
+					const float drawnScale = std::sqrt(std::abs(glm::determinant(glm::mat2(placed.matrix))));
+					const float fringe = 1.0f / std::max(pixels * drawnScale, 1e-3f);
 					unsigned int at = base + static_cast<unsigned int>(fill.points.size());
 					for (const auto& outline : fill.outlines) {
 						const size_t n = outline.size();
@@ -117,12 +298,7 @@ namespace Fox {
 						}
 						for (size_t i = 0; i < n; i++) {
 							const unsigned int a = at + 2 * static_cast<unsigned int>(i), b = at + 2 * static_cast<unsigned int>((i + 1) % n);
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(a));
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(b));
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(b + 1));
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(a));
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(b + 1));
-							list->PrimWriteIdx(static_cast<ImDrawIdx>(a + 1));
+							for (unsigned int index : { a, b, b + 1, a, b + 1, a + 1 }) list->PrimWriteIdx(static_cast<ImDrawIdx>(index));
 						}
 						at += 2 * static_cast<unsigned int>(n);
 					}
@@ -139,34 +315,14 @@ namespace Fox {
 						}
 					}
 				}
-				if (textured) {
-					list->PopTexture();
-				}
+				if (textured) list->PopTexture();
 			}
 
-			void DrawUISprite(SpriteComponent& sprite, Fox::Scene::TextureLibrary& library, ImDrawList* list, ImVec2 display, float unit,
-				const std::function<ImTextureID(int)>& imguiTexture) {
-				const std::string textureKey = sprite.image + "|" + sprite.mask;
-				if (sprite.textureKey != textureKey) {
-					sprite.textureKey = textureKey;
-					sprite.problem.clear();
-					sprite.texture = TextureOf(library, sprite.image, sprite.mask, sprite.problem);
-				}
-				glm::vec2 size = sprite.size * unit;
-				const auto& textures = Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray();
-				if (sprite.keepAspect && sprite.texture >= 0 && sprite.texture < static_cast<int>(textures.size())) {
-					const VkExtent3D extent = textures[sprite.texture]->GetExtent();
-					if (extent.height > 0) size.x = size.y * static_cast<float>(extent.width) / static_cast<float>(extent.height);
-				}
-				const glm::vec2 anchor(sprite.screenPosition.x * display.x, sprite.screenPosition.y * display.y);
-				const float angle = glm::radians(sprite.rotation);
-				const glm::vec2 axisX(std::cos(angle), std::sin(angle)), axisY(-std::sin(angle), std::cos(angle));
-				auto corner = [&](float u, float v) {
-					const glm::vec2 local((u - sprite.pivot.x) * size.x, (v - sprite.pivot.y) * size.y);
-					const glm::vec2 p = anchor + axisX * local.x + axisY * local.y;
-					return ImVec2(p.x, p.y);
-				};
-				const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(sprite.color.r, sprite.color.g, sprite.color.b, sprite.color.a));
+			void DrawUISprite(SpriteComponent& sprite, const Placed& placed, ImDrawList* list, const std::function<ImTextureID(int)>& imguiTexture) {
+				const glm::vec3 rgb = glm::vec3(sprite.color) * placed.tint;
+				const ImU32 color = ImGui::ColorConvertFloat4ToU32(ImVec4(rgb.r, rgb.g, rgb.b, glm::clamp(sprite.color.a * placed.alpha, 0.0f, 1.0f)));
+				if ((color & IM_COL32_A_MASK) == 0) return;
+				auto corner = [&](float u, float v) { return Apply(placed.matrix, placed.rectMin + placed.rectSize * glm::vec2(u, v)); };
 				if (sprite.texture >= 0) {
 					list->AddImageQuad(ImTextureRef(imguiTexture(sprite.texture)), corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1),
 						ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1), color);
@@ -177,39 +333,352 @@ namespace Fox {
 			}
 		}
 
-		void DrawGameUI(Fox::Scene::RayTracing::MainRayTracingScene& scene, ImDrawList* list, ImVec2 display,
-			const std::function<ImTextureID(int)>& texture) {
-			if (display.x <= 0.0f || display.y <= 0.0f) {
-				return;
+		namespace {
+			// World canvases: a draw list each (built like the screen's), turned into pixels on the CPU
+			std::map<uint64_t, std::unique_ptr<ImDrawList>> canvasLists;
+
+			// The textures the UI asked for, by bindless index: their files (to read their pixels on the CPU)
+			std::map<int, std::pair<std::string, std::string>>& TextureFiles() {
+				static std::map<int, std::pair<std::string, std::string>> files;
+				return files;
 			}
+
+			// World canvas draw lists name textures as this marker plus their bindless index (the screen's: ImGui's ids)
+			constexpr uint64_t CANVAS_TEXTURE = 1ull << 62;
+
+			// Draws a draw list's triangles into straight-alpha RGBA pixels: colour and texture coordinates interpolated,
+			// textures sampled bilinearly, blended over what is there (as ImGui does on the GPU)
+			void Rasterize(const ImDrawList& list, int width, int height, std::vector<uint8_t>& out, Fox::Scene::TextureLibrary& library) {
+				std::fill(out.begin(), out.end(), 0);
+				for (const ImDrawCmd& cmd : list.CmdBuffer) {
+					if (cmd.UserCallback || cmd.ElemCount == 0) continue;
+					const Fox::Scene::RgbaImage* image = nullptr;
+					const ImTextureID id = cmd.TexRef._TexData ? ImTextureID{} : cmd.TexRef._TexID;
+					if ((static_cast<uint64_t>(id) & CANVAS_TEXTURE) != 0) {
+						const int index = static_cast<int>(static_cast<uint64_t>(id) & ~CANVAS_TEXTURE);
+						auto file = TextureFiles().find(index);
+						if (file != TextureFiles().end()) {
+							try { image = &library.MaskedPixels(file->second.first, file->second.second); }
+							catch (const std::exception&) { image = nullptr; }
+						}
+					}
+					const int clipX0 = std::max(0, static_cast<int>(cmd.ClipRect.x)), clipY0 = std::max(0, static_cast<int>(cmd.ClipRect.y));
+					const int clipX1 = std::min(width, static_cast<int>(std::ceil(cmd.ClipRect.z))), clipY1 = std::min(height, static_cast<int>(std::ceil(cmd.ClipRect.w)));
+					for (unsigned int i = 0; i + 2 < cmd.ElemCount; i += 3) {
+						const ImDrawVert& a = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i]];
+						const ImDrawVert& b = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i + 1]];
+						const ImDrawVert& c = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i + 2]];
+						const float area = (b.pos.x - a.pos.x) * (c.pos.y - a.pos.y) - (b.pos.y - a.pos.y) * (c.pos.x - a.pos.x);
+						if (std::abs(area) < 1e-8f) continue;
+						const int x0 = std::max(clipX0, static_cast<int>(std::floor(std::min({ a.pos.x, b.pos.x, c.pos.x }))));
+						const int x1 = std::min(clipX1, static_cast<int>(std::ceil(std::max({ a.pos.x, b.pos.x, c.pos.x }))));
+						const int y0 = std::max(clipY0, static_cast<int>(std::floor(std::min({ a.pos.y, b.pos.y, c.pos.y }))));
+						const int y1 = std::min(clipY1, static_cast<int>(std::ceil(std::max({ a.pos.y, b.pos.y, c.pos.y }))));
+						auto unpack = [](ImU32 col) { return glm::vec4(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, (col >> 24) & 0xFF) / 255.0f; };
+						const glm::vec4 ca = unpack(a.col), cb = unpack(b.col), cc = unpack(c.col);
+						for (int y = y0; y < y1; y++) {
+							for (int x = x0; x < x1; x++) {
+								const float px = x + 0.5f, py = y + 0.5f;
+								float w0 = (b.pos.x - px) * (c.pos.y - py) - (b.pos.y - py) * (c.pos.x - px);
+								float w1 = (c.pos.x - px) * (a.pos.y - py) - (c.pos.y - py) * (a.pos.x - px);
+								float w2 = (a.pos.x - px) * (b.pos.y - py) - (a.pos.y - py) * (b.pos.x - px);
+								if (area < 0.0f) { w0 = -w0; w1 = -w1; w2 = -w2; }
+								if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) continue;
+								const float inv = 1.0f / std::abs(area);
+								w0 *= inv; w1 *= inv; w2 *= inv;
+								glm::vec4 color = ca * w0 + cb * w1 + cc * w2;
+								if (image && image->width > 0) {
+									// Bilinear, repeating
+									const float u = (a.uv.x * w0 + b.uv.x * w1 + c.uv.x * w2) * image->width - 0.5f;
+									const float v = (a.uv.y * w0 + b.uv.y * w1 + c.uv.y * w2) * image->height - 0.5f;
+									const int iu = static_cast<int>(std::floor(u)), iv = static_cast<int>(std::floor(v));
+									const float fu = u - iu, fv = v - iv;
+									auto texel = [&](int tx, int ty) {
+										tx = ((tx % image->width) + image->width) % image->width;
+										ty = ((ty % image->height) + image->height) % image->height;
+										const uint8_t* p = &image->pixels[(static_cast<size_t>(ty) * image->width + tx) * 4];
+										return glm::vec4(p[0], p[1], p[2], p[3]) / 255.0f;
+									};
+									color *= glm::mix(glm::mix(texel(iu, iv), texel(iu + 1, iv), fu), glm::mix(texel(iu, iv + 1), texel(iu + 1, iv + 1), fu), fv);
+								}
+								if (color.a <= 0.0f) continue;
+								uint8_t* d = &out[(static_cast<size_t>(y) * width + x) * 4];
+								const glm::vec4 dst = glm::vec4(d[0], d[1], d[2], d[3]) / 255.0f;
+								const float alpha = color.a + dst.a * (1.0f - color.a);
+								const glm::vec3 rgb = alpha > 0.0f ? (glm::vec3(color) * color.a + glm::vec3(dst) * dst.a * (1.0f - color.a)) / alpha : glm::vec3(0.0f);
+								d[0] = static_cast<uint8_t>(glm::clamp(rgb.r, 0.0f, 1.0f) * 255.0f + 0.5f);
+								d[1] = static_cast<uint8_t>(glm::clamp(rgb.g, 0.0f, 1.0f) * 255.0f + 0.5f);
+								d[2] = static_cast<uint8_t>(glm::clamp(rgb.b, 0.0f, 1.0f) * 255.0f + 0.5f);
+								d[3] = static_cast<uint8_t>(glm::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f);
+							}
+						}
+					}
+				}
+			}
+
+			uint64_t Hash(const ImDrawList& list) {
+				uint64_t hash = 1469598103934665603ull;
+				auto mix = [&](const void* data, size_t size) {
+					const uint8_t* bytes = static_cast<const uint8_t*>(data);
+					for (size_t i = 0; i < size; i++) { hash ^= bytes[i]; hash *= 1099511628211ull; }
+				};
+				mix(list.VtxBuffer.Data, list.VtxBuffer.Size * sizeof(ImDrawVert));
+				mix(list.IdxBuffer.Data, list.IdxBuffer.Size * sizeof(ImDrawIdx));
+				for (const ImDrawCmd& cmd : list.CmdBuffer) {
+					const ImTextureID id = cmd.TexRef._TexData ? ImTextureID{} : cmd.TexRef._TexID;
+					mix(&id, sizeof(id));
+					mix(&cmd.ElemCount, sizeof(cmd.ElemCount));
+				}
+				return hash;
+			}
+		}
+
+		void Shutdown() {
+			canvasLists.clear();
+		}
+
+		void DrawGameUI(Fox::Scene::RayTracing::MainRayTracingScene& scene, ImDrawList* list, ImVec2 display, float deltaTime,
+			const std::function<ImTextureID(int)>& texture, const glm::vec3& mouseOrigin, const glm::vec3& mouseDirection) {
+			if (display.x <= 0.0f || display.y <= 0.0f) return;
 			auto& graph = scene.GetSceneGraph();
 			auto& registry = graph.GetRegistry();
-			const float unit = display.y / 1080.0f;
-
-			using Entity = Fox::Scene::RayTracing::MainRayTracingScene::Entity;
-			struct Item { int layer; size_t order; Entity entity; bool text; };
-			std::vector<Item> items;
-			registry.Each<TextComponent>([&](Entity entity, TextComponent& text) {
-				if (text.enabled && text.space == TextComponent::Space::Screen && text.style == TextComponent::Style::Flat && graph.IsActiveInHierarchy(entity)) {
-					items.push_back({ text.layer, items.size(), entity, true });
-				}
-			});
-			registry.Each<SpriteComponent>([&](Entity entity, SpriteComponent& sprite) {
-				if (sprite.enabled && graph.IsActiveInHierarchy(entity)) {
-					items.push_back({ sprite.layer, items.size(), entity, false });
-				}
-			});
-			std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.layer != b.layer ? a.layer < b.layer : a.order < b.order; });
-
 			Fox::Scene::TextureLibrary& library = scene.GetTextureLibrary();
-			for (const Item& item : items) {
-				if (item.text) {
-					DrawUIText(registry.Get<TextComponent>(item.entity), library, list, display, unit, texture);
+			const float screenUnit = scene.GetEnvironment().ui.ScaleFor(display.x, display.y); // Screen pixels per reference pixel
+
+			// --- Animations: on in edit mode (preview) or from the start of play; over again when that changes ---
+			static bool wasPlaying = false;
+			const bool playing = scene.IsPlaying();
+			const bool switched = playing != wasPlaying;
+			wasPlaying = playing;
+			registry.Each<UIAnimationComponent>([&](Entity, UIAnimationComponent& animation) {
+				if (switched) {
+					animation.time = 0.0f;
+					animation.triggered = false;
+					animation.playing = playing ? animation.playOnStart : animation.previewInEditor;
+				}
+				else if (!playing && !animation.triggered) {
+					animation.playing = animation.previewInEditor;
+				}
+				if (animation.playing && animation.enabled) {
+					animation.time += std::clamp(deltaTime, 0.0f, 0.25f) * animation.speed;
+					// A preview of one that plays once starts over a second after it ends (not one a click or script played)
+					if (!playing && !animation.triggered && animation.repeat == UIAnimationComponent::Repeat::Once) {
+						std::vector<glm::vec2> times;
+						const float total = Schedule(animation, times);
+						if (animation.time > total + 1.0f) animation.time = 0.0f;
+					}
+				}
+			});
+
+			// --- The elements, each under the nearest UI element above it, on the screen or in a world canvas above it ---
+			auto isElement = [&](Entity entity) {
+				if (registry.Has<SpriteComponent>(entity)) return true;
+				const TextComponent* text = registry.TryGet<TextComponent>(entity);
+				return text && text->space == TextComponent::Space::Screen && text->style == TextComponent::Style::Flat;
+			};
+			struct Node { Entity entity; int layer = 0; size_t order = 0; std::vector<size_t> children; };
+			std::vector<Node> nodes;
+			std::unordered_map<uint64_t, size_t> nodeOf;
+			const std::vector<Entity> order = graph.DepthFirst();
+			for (Entity entity : order) {
+				if (!isElement(entity)) continue;
+				const TextComponent* text = registry.TryGet<TextComponent>(entity);
+				const SpriteComponent* sprite = registry.TryGet<SpriteComponent>(entity);
+				const bool enabled = sprite ? sprite->enabled : text->enabled;
+				if (!enabled || !graph.IsActiveInHierarchy(entity)) continue;
+				nodeOf[EntityKey(entity)] = nodes.size();
+				nodes.push_back({ entity, sprite ? sprite->layout.layer : text->layout.layer, nodes.size(), {} });
+			}
+			// Roots by where they are drawn: 0 the screen, else the canvas entity's key
+			std::map<uint64_t, std::vector<size_t>> roots;
+			std::map<uint64_t, Entity> canvasOf;
+			for (size_t i = 0; i < nodes.size(); i++) {
+				Entity up = graph.GetParent(nodes[i].entity);
+				while (graph.IsValid(up) && !nodeOf.count(EntityKey(up)) && !registry.Has<Fox::Scene::UICanvasComponent>(up)) up = graph.GetParent(up);
+				if (graph.IsValid(up) && nodeOf.count(EntityKey(up))) {
+					nodes[nodeOf[EntityKey(up)]].children.push_back(i);
+				}
+				else if (graph.IsValid(up)) {
+					roots[EntityKey(up)].push_back(i);
+					canvasOf[EntityKey(up)] = up;
 				}
 				else {
-					DrawUISprite(registry.Get<SpriteComponent>(item.entity), library, list, display, unit, texture);
+					roots[0].push_back(i);
 				}
 			}
+			auto byLayer = [&](std::vector<size_t>& list) {
+				std::stable_sort(list.begin(), list.end(), [&](size_t a, size_t b) { return nodes[a].layer < nodes[b].layer; });
+			};
+
+			// --- Buttons: last frame's hover and press shape this one; clicks are the frame's ---
+			struct Hit { Entity entity; glm::mat3 toLocal; glm::vec2 rectMin, rectSize; };
+			registry.Each<Fox::Scene::UIButtonComponent>([](Entity, Fox::Scene::UIButtonComponent& button) { button.clicked = false; });
+
+			// --- Drawn parents first, each placed in its parent's rectangle ---
+			std::function<void(size_t, const Placed&, ImDrawList*, float, const std::function<ImTextureID(int)>&, std::vector<Hit>&)> draw =
+				[&](size_t index, const Placed& parent, ImDrawList* target, float unit, const std::function<ImTextureID(int)>& textureOf, std::vector<Hit>& hits) {
+				Node& node = nodes[index];
+				const UIAnimationComponent* animation = registry.TryGet<UIAnimationComponent>(node.entity);
+				Animated animated = animation ? Evaluate(*animation) : Animated{};
+				Fox::Scene::UIButtonComponent* button = registry.TryGet<Fox::Scene::UIButtonComponent>(node.entity);
+				if (button && button->enabled && button->hovered) {
+					animated.scale *= button->pressed ? button->pressedScale : button->hoverScale;
+					animated.tint *= button->hoverTint;
+				}
+				Placed placed;
+				if (SpriteComponent* sprite = registry.TryGet<SpriteComponent>(node.entity)) {
+					const std::string textureKey = sprite->image + "|" + sprite->mask;
+					if (sprite->textureKey != textureKey) {
+						sprite->textureKey = textureKey;
+						sprite->problem.clear();
+						sprite->texture = TextureOf(library, sprite->image, sprite->mask, sprite->problem);
+						if (sprite->texture >= 0) TextureFiles()[sprite->texture] = { sprite->image, sprite->mask };
+					}
+					UILayout layout = sprite->layout;
+					// Keeping the image's proportions: the width from the height (not when stretched across)
+					const auto& textures = Fox::Graphics::Managers::Vulkan::TextureManager::Get().GetBindlessTextureArray();
+					if (sprite->keepAspect && sprite->texture >= 0 && sprite->texture < static_cast<int>(textures.size())
+						&& layout.anchorMin.x == layout.anchorMax.x && layout.anchorMin.y == layout.anchorMax.y) {
+						const VkExtent3D extent = textures[sprite->texture]->GetExtent();
+						if (extent.height > 0) layout.size.x = layout.size.y * static_cast<float>(extent.width) / static_cast<float>(extent.height);
+					}
+					placed = Place(layout, parent, glm::vec2(0.0f), true, unit, animated);
+					DrawUISprite(*sprite, placed, target, textureOf);
+				}
+				else {
+					TextComponent& text = registry.Get<TextComponent>(node.entity);
+					const float pixels = std::max(text.size * unit, 1.0f); // Of an em
+					glm::vec2 natural(0.0f);
+					const bool ready = PrepareText(text, pixels);
+					if (ready && text.cache) natural = (text.cache->max - text.cache->min) * pixels;
+					placed = Place(text.layout, parent, natural, false, unit, animated);
+					if (ready) {
+						DrawUIText(text, placed, pixels, library, target, textureOf);
+						if (text.uiTexture >= 0) TextureFiles()[text.uiTexture] = { text.fill, text.mask };
+					}
+				}
+				if (button && button->enabled && placed.alpha > 0.01f) {
+					hits.push_back({ node.entity, glm::inverse(placed.matrix), placed.rectMin, placed.rectSize });
+				}
+				byLayer(node.children);
+				for (size_t child : node.children) draw(child, placed, target, unit, textureOf, hits);
+			};
+			auto inside = [](const Hit& hit, const glm::vec2& point) {
+				const glm::vec2 local = glm::vec2(hit.toLocal * glm::vec3(point, 1.0f)) - hit.rectMin;
+				return local.x >= 0.0f && local.y >= 0.0f && local.x <= hit.rectSize.x && local.y <= hit.rectSize.y;
+			};
+
+			// --- The screen ---
+			std::vector<Hit> screenHits;
+			{
+				Placed screen;
+				screen.rectSize = glm::vec2(display.x, display.y);
+				auto& screenRoots = roots[0];
+				byLayer(screenRoots);
+				for (size_t root : screenRoots) draw(root, screen, list, screenUnit, texture, screenHits);
+			}
+
+			// --- World canvases: drawn into their pictures; the mouse ray where it meets them ---
+			const ImGuiIO& io = ImGui::GetIO();
+			const bool editorHasMouse = io.WantCaptureMouse;
+			Entity over{};
+			float overDistance = std::numeric_limits<float>::max();
+			bool worldButtonsNear = false;
+			const auto canvasTexture = [](int index) { return static_cast<ImTextureID>(CANVAS_TEXTURE | static_cast<uint64_t>(index)); };
+			registry.Each<Fox::Scene::UICanvasComponent>([&](Entity entity, Fox::Scene::UICanvasComponent& canvas) {
+				if (!canvas.enabled || canvas.texture < 0 || canvas.object == SIZE_MAX || canvas.object >= scene.GetObjectCount()) return;
+				const int width = std::clamp(static_cast<int>(canvas.resolution.x), 16, 4096);
+				const int height = std::clamp(static_cast<int>(canvas.resolution.y), 16, 4096);
+				auto& owned = canvasLists[EntityKey(entity)];
+				if (!owned) owned = std::make_unique<ImDrawList>(ImGui::GetDrawListSharedData());
+				ImDrawList& canvasList = *owned;
+				canvasList._ResetForNewFrame();
+				canvasList.PushClipRect(ImVec2(0.0f, 0.0f), ImVec2(static_cast<float>(width), static_cast<float>(height)));
+				canvasList.PushTexture(io.Fonts->TexRef);
+				std::vector<Hit> hits;
+				if (graph.IsActiveInHierarchy(entity)) {
+					Placed rect;
+					rect.rectSize = glm::vec2(width, height);
+					auto& canvasRoots = roots[EntityKey(entity)];
+					byLayer(canvasRoots);
+					for (size_t root : canvasRoots) draw(root, rect, &canvasList, 1.0f, canvasTexture, hits);
+				}
+				// Its picture, drawn again only when what is on it changed
+				const uint64_t hash = Hash(canvasList);
+				if (hash != canvas.drawnHash && static_cast<int>(canvas.pixels.size()) == width * height * 4) {
+					canvas.drawnHash = hash;
+					Rasterize(canvasList, width, height, canvas.pixels, library);
+					scene.UpdateTextureRegion(canvas.texture, 0, 0, width, height, canvas.pixels);
+				}
+
+				// The mouse ray on its panel (its object as traced), in its pixels
+				if (hits.empty()) return;
+				const glm::mat4 toLocal = glm::inverse(scene.GetObjectTransform(canvas.object).Matrix());
+				const glm::vec3 origin = glm::vec3(toLocal * glm::vec4(mouseOrigin, 1.0f));
+				const glm::vec3 direction = glm::vec3(toLocal * glm::vec4(mouseDirection, 0.0f));
+				const float panelWidth = std::max(canvas.width, 0.01f), panelHeight = panelWidth * height / static_cast<float>(width);
+				if (glm::distance(mouseOrigin, glm::vec3(glm::inverse(toLocal)[3])) <= canvas.interactDistance) worldButtonsNear = true;
+				if (std::abs(direction.z) < 1e-8f || editorHasMouse) return;
+				const float t = -origin.z / direction.z;
+				if (t <= 0.0f) return;
+				const glm::vec3 at = origin + direction * t;
+				const glm::vec2 pixel((at.x / panelWidth + 0.5f) * width, (0.5f - at.y / panelHeight) * height);
+				const float distance = t * glm::length(glm::vec3(scene.GetObjectTransform(canvas.object).Matrix() * glm::vec4(direction, 0.0f)));
+				for (const Hit& hit : hits) {
+					if (inside(hit, pixel) && distance < overDistance) {
+						over = hit.entity;
+						overDistance = distance;
+					}
+				}
+			});
+
+			// --- The button under the mouse: the screen's first (drawn on top), else the nearest world canvas's ---
+			const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
+			if (!editorHasMouse && io.MousePos.x > -1e30f) {
+				Entity onScreen{};
+				for (const Hit& hit : screenHits) {
+					if (inside(hit, mouse)) onScreen = hit.entity;
+				}
+				if (!onScreen.IsNull()) over = onScreen;
+			}
+			pointerOverButton = !over.IsNull();
+			buttonsShown = !screenHits.empty() || worldButtonsNear;
+			registry.Each<Fox::Scene::UIButtonComponent>([&](Entity entity, Fox::Scene::UIButtonComponent& button) {
+				const bool hovered = !over.IsNull() && entity == over;
+				button.hovered = hovered;
+				if (hovered && io.MouseClicked[0]) button.pressed = true;
+				if (!io.MouseDown[0]) {
+					// Released over it after pressing it: a click
+					if (button.pressed && hovered) {
+						button.clicked = true;
+						button.clicks++;
+						// Play the named entities' animations (and their children's) from the start
+						std::string names = button.playOnClick;
+						size_t start = 0;
+						while (start <= names.size()) {
+							size_t end = names.find(',', start);
+							if (end == std::string::npos) end = names.size();
+							std::string name = names.substr(start, end - start);
+							name.erase(0, name.find_first_not_of(" \t"));
+							name.erase(name.find_last_not_of(" \t") + 1);
+							start = end + 1;
+							if (name.empty()) continue;
+							for (Entity target : order) {
+								if (graph.GetName(target) != name) continue;
+								const std::vector<Entity> group = button.withChildren ? graph.Subtree(target) : std::vector<Entity>{ target };
+								for (Entity e : group) {
+									if (auto* animation = registry.TryGet<UIAnimationComponent>(e)) {
+										animation->time = 0.0f;
+										animation->playing = true;
+										animation->triggered = true;
+									}
+								}
+							}
+						}
+					}
+					button.pressed = false;
+				}
+			});
 		}
 	}
 }

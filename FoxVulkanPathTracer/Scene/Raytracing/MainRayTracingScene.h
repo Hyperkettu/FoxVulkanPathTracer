@@ -90,6 +90,19 @@ namespace Fox {
                 // How the image is graded after tone mapping (Environment window > Image)
                 using ImageGrade = Fox::Graphics::Vulkan::PostProcessor::Grade;
 
+                // How the 2D UI scales with the window: its pixels are of this reference resolution, scaled by the window's
+                // width (match 0), height (1) or between the two (logarithmically)
+                struct UICanvas {
+                    float referenceWidth = 1920.0f;
+                    float referenceHeight = 1080.0f;
+                    float match = 0.5f;
+                    float ScaleFor(float width, float height) const {
+                        const float w = std::log2(std::max(width, 1.0f) / std::max(referenceWidth, 1.0f));
+                        const float h = std::log2(std::max(height, 1.0f) / std::max(referenceHeight, 1.0f));
+                        return std::exp2(w + (h - w) * std::clamp(match, 0.0f, 1.0f));
+                    }
+                };
+
                 struct Environment {
                     bool ground = true;
                     bool terrain = false; // A terrain (GetTerrain) instead of the flat ground plane
@@ -99,6 +112,7 @@ namespace Fox {
                     Clouds clouds;
                     PhysicsLayers layers;
                     ImageGrade image;
+                    UICanvas ui;
                     // One wind for every tree: degrees, where it blows to, from +x towards +z. The trees' own wind settings
                     // (Trees window) give its speed, gusts and how they respond.
                     float windDirection = 19.3f;
@@ -306,8 +320,10 @@ namespace Fox {
                 Entity AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect);
                 // Text (TextComponent) and the UI's sprites (SpriteComponent)
                 Entity AddText(const glm::vec3& position, Fox::Scene::TextComponent::Space space, Fox::Scene::TextComponent::Style style,
-                    bool billboard = false, const std::string& font = "");
-                Entity AddSprite();
+                    bool billboard = false, const std::string& font = "", Entity parent = {});
+                Entity AddSprite(Entity parent = {}, bool panel = false);
+                // A UI in the world (UICanvasComponent) with a panel and a text in it
+                Entity AddWorldCanvas(const glm::vec3& position, bool billboard);
 
                 // The camera this frame (set before the frame's update): billboards turn to it, the screen's 3D text is
                 // held in front of it (UpdateViewObjects)
@@ -398,6 +414,8 @@ namespace Fox {
                 float particleTime = 0.0f;
                 // Text: its geometry made with the rebuild; its object following its entity (or the camera)
                 void PlaceTexts(const std::vector<Entity>& entities, std::string& problems);
+                void PlaceCanvases(const std::vector<Entity>& entities);
+                static std::string CanvasKey(const Fox::Scene::UICanvasComponent& canvas);
                 void UpdateTexts();
                 static std::string TextKey(const Fox::Scene::TextComponent& text);
                 struct ViewCamera {

@@ -515,11 +515,26 @@ namespace Fox {
 					"particles leaves autumn wind flying");
 				using TextSpace = Fox::Scene::TextComponent::Space;
 				using TextStyle = Fox::Scene::TextComponent::Style;
-				shell.Add("Create/UI/Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::Screen, TextStyle::Flat)); }, "", true, -1,
+				// UI elements go under the selected one when it is a UI element itself (they follow it)
+				const auto uiParent = [&scene, selected]() {
+					const auto& registry = scene.GetSceneGraph().GetRegistry();
+					if (!scene.GetSceneGraph().IsValid(selected)) return decltype(selected){};
+					const auto* text = registry.TryGet<Fox::Scene::TextComponent>(selected);
+					const bool ui = registry.Has<Fox::Scene::SpriteComponent>(selected) || registry.Has<Fox::Scene::UICanvasComponent>(selected)
+						|| (text && text->space == Fox::Scene::TextComponent::Space::Screen && text->style == Fox::Scene::TextComponent::Style::Flat);
+					return ui ? selected : decltype(selected){};
+				};
+				shell.Add("Create/UI/Text", [&, uiParent] { gizmo.Select(scene.AddText(spawn, TextSpace::Screen, TextStyle::Flat, false, "", uiParent())); }, "", true, -1,
 					"game ui hud label score vector font");
+				shell.Add("Create/UI/World Canvas", [&] { gizmo.Select(scene.AddWorldCanvas(spawn, false)); }, "", true, -1,
+					"world space ui sign panel screen in the world");
+				shell.Add("Create/UI/World Canvas (billboard)", [&] { gizmo.Select(scene.AddWorldCanvas(spawn, true)); }, "", true, -1,
+					"world space ui label marker facing camera");
+				shell.Add("Create/UI/Panel", [&, uiParent] { gizmo.Select(scene.AddSprite(uiParent(), true)); }, "", true, -1,
+					"game ui hud box window container background");
 				shell.Add("Create/UI/3D Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::Screen, TextStyle::Extruded)); }, "", true, -1,
 					"game ui hud title extruded font");
-				shell.Add("Create/UI/Sprite", [&] { gizmo.Select(scene.AddSprite()); }, "", true, -1, "game ui hud image icon picture");
+				shell.Add("Create/UI/Sprite", [&, uiParent] { gizmo.Select(scene.AddSprite(uiParent())); }, "", true, -1, "game ui hud image icon picture");
 				shell.Add("Create/Text/World Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::World, TextStyle::Flat)); }, "", true, -1,
 					"sign label vector font");
 				shell.Add("Create/Text/Billboard Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::World, TextStyle::Flat, true)); }, "", true, -1,

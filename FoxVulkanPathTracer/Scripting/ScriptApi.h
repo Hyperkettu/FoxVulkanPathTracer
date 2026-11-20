@@ -111,6 +111,8 @@ namespace Fox {
 			int32_t (*EntitySound)(uint64_t entity, int32_t action); // 0 play, 1 stop, 2 is it playing
 			void (*SetSoundFile)(uint64_t entity, const char* file);
 			void (*SetText)(uint64_t entity, const char* text); // TextComponent (UI or world)
+			void (*PlayUIAnimation)(uint64_t entity, int32_t play); // 1: from the start, 0: stop
+			int32_t (*UIClicked)(uint64_t entity);                  // Its UI button was clicked this frame
 		};
 
 		// The scripting host's functions (Host.cs; Bootstrap fills them in)

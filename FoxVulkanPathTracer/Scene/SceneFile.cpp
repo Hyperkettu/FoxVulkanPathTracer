@@ -109,13 +109,36 @@ namespace Fox {
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UILayout, anchorMin, anchorMax, offset, size, pivot, rotation, scale, layer)
+		NLOHMANN_JSON_SERIALIZE_ENUM(UIAnimationComponent::Property, {
+			{ UIAnimationComponent::Property::Position, "position" }, { UIAnimationComponent::Property::Scale, "scale" },
+			{ UIAnimationComponent::Property::Rotation, "rotation" }, { UIAnimationComponent::Property::Alpha, "alpha" },
+			{ UIAnimationComponent::Property::Tint, "tint" } })
+		NLOHMANN_JSON_SERIALIZE_ENUM(UIAnimationComponent::Easing, {
+			{ UIAnimationComponent::Easing::Linear, "linear" }, { UIAnimationComponent::Easing::SineIn, "sineIn" },
+			{ UIAnimationComponent::Easing::SineOut, "sineOut" }, { UIAnimationComponent::Easing::SineInOut, "sineInOut" },
+			{ UIAnimationComponent::Easing::QuadIn, "quadIn" }, { UIAnimationComponent::Easing::QuadOut, "quadOut" },
+			{ UIAnimationComponent::Easing::QuadInOut, "quadInOut" }, { UIAnimationComponent::Easing::CubicIn, "cubicIn" },
+			{ UIAnimationComponent::Easing::CubicOut, "cubicOut" }, { UIAnimationComponent::Easing::CubicInOut, "cubicInOut" },
+			{ UIAnimationComponent::Easing::ExpoIn, "expoIn" }, { UIAnimationComponent::Easing::ExpoOut, "expoOut" },
+			{ UIAnimationComponent::Easing::ExpoInOut, "expoInOut" }, { UIAnimationComponent::Easing::BackIn, "backIn" },
+			{ UIAnimationComponent::Easing::BackOut, "backOut" }, { UIAnimationComponent::Easing::BackInOut, "backInOut" },
+			{ UIAnimationComponent::Easing::ElasticIn, "elasticIn" }, { UIAnimationComponent::Easing::ElasticOut, "elasticOut" },
+			{ UIAnimationComponent::Easing::ElasticInOut, "elasticInOut" }, { UIAnimationComponent::Easing::BounceIn, "bounceIn" },
+			{ UIAnimationComponent::Easing::BounceOut, "bounceOut" }, { UIAnimationComponent::Easing::BounceInOut, "bounceInOut" } })
+		NLOHMANN_JSON_SERIALIZE_ENUM(UIAnimationComponent::Repeat, {
+			{ UIAnimationComponent::Repeat::Once, "once" }, { UIAnimationComponent::Repeat::Loop, "loop" },
+			{ UIAnimationComponent::Repeat::PingPong, "pingPong" } })
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIAnimationComponent::Step, property, to, useFrom, from, duration, delay, easing, withPrevious)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIAnimationComponent, enabled, steps, repeat, speed, playOnStart, previewInEditor)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UICanvasComponent, enabled, resolution, width, billboard, glow, interactDistance)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UIButtonComponent, enabled, playOnClick, withChildren, hoverTint, hoverScale, pressedScale)
 		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Space, { { TextComponent::Space::World, "world" }, { TextComponent::Space::Screen, "screen" } })
 		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Style, { { TextComponent::Style::Flat, "flat" }, { TextComponent::Style::Extruded, "extruded" } })
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TextComponent, enabled, text, font, space, style, billboard, size, align, lineSpacing,
 			letterSpacing, color, fill, mask, roughness, metallic, emission, depth, subdivisions, displacement, displacementScale,
-			screenPosition, pivot, layer)
-		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpriteComponent, enabled, image, mask, color, screenPosition, size, pivot, rotation,
-			layer, keepAspect)
+			layout)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpriteComponent, enabled, image, mask, color, layout, keepAspect)
 		NLOHMANN_JSON_SERIALIZE_ENUM(ParticleComponent::Effect, {
 			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" },
 			{ ParticleComponent::Effect::Orbs, "orbs" } })
@@ -145,8 +168,9 @@ namespace Fox {
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Fog, enabled, density, falloff, baseHeight, color, anisotropy)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Clouds, enabled, bottom, top, coverage, density, size, wind, anisotropy, albedo, shadows)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::PhysicsLayers, names, collides)
+			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::UICanvas, referenceWidth, referenceHeight, match)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::Environment,
-				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers, image, windDirection)
+				ground, terrain, groundHeight, groundMaterial, fog, clouds, layers, image, windDirection, ui)
 			NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Scene::CameraPose, position, target)
 
 			namespace {
@@ -541,6 +565,42 @@ namespace Fox {
 						},
 						[](SceneGraph& graph, Entity entity, const json& j) {
 							graph.GetRegistry().Add<Fox::Scene::TextComponent>(entity, j.get<Fox::Scene::TextComponent>());
+						},
+					},
+					{
+						"uiCanvas",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::UICanvasComponent* canvas = graph.GetRegistry().TryGet<Fox::Scene::UICanvasComponent>(entity);
+							if (!canvas) return false;
+							j = *canvas;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::UICanvasComponent>(entity, j.get<Fox::Scene::UICanvasComponent>());
+						},
+					},
+					{
+						"uiButton",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::UIButtonComponent* button = graph.GetRegistry().TryGet<Fox::Scene::UIButtonComponent>(entity);
+							if (!button) return false;
+							j = *button;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::UIButtonComponent>(entity, j.get<Fox::Scene::UIButtonComponent>());
+						},
+					},
+					{
+						"uiAnimation",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::UIAnimationComponent* animation = graph.GetRegistry().TryGet<Fox::Scene::UIAnimationComponent>(entity);
+							if (!animation) return false;
+							j = *animation;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::UIAnimationComponent>(entity, j.get<Fox::Scene::UIAnimationComponent>());
 						},
 					},
 					{
@@ -1064,6 +1124,11 @@ namespace Fox {
 					[](const Fox::Scene::TextComponent&, const Fox::Scene::TextComponent&) { return true; },
 					[](const Fox::Scene::TextComponent&, Fox::Scene::TextComponent& value) { value.placed = false; }));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::SpriteComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::UIAnimationComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::UIButtonComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::UICanvasComponent>(graph,
+					[](const Fox::Scene::UICanvasComponent&, const Fox::Scene::UICanvasComponent&) { return true; },
+					[](const Fox::Scene::UICanvasComponent&, Fox::Scene::UICanvasComponent& value) { value.placed = false; value.drawnHash = 0; }));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ParticleComponent>(graph,
 					[](const Fox::Scene::ParticleComponent&, const Fox::Scene::ParticleComponent&) { return true; },
 					[](const Fox::Scene::ParticleComponent&, Fox::Scene::ParticleComponent& value) { value.placed = false; value.particles.clear(); }));

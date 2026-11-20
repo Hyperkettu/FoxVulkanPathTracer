@@ -419,6 +419,15 @@ namespace Fox
         {
             fixed (byte* p = Native.Utf8(text ?? "")) Native.Api->SetText(entity.Id, p);
         }
+
+        /// <summary>Plays the entity's UI animation from the start (UIAnimationComponent)</summary>
+        public static void Play(Entity entity) => Native.Api->PlayUIAnimation(entity.Id, 1);
+
+        /// <summary>Stops the entity's UI animation where it is</summary>
+        public static void Stop(Entity entity) => Native.Api->PlayUIAnimation(entity.Id, 0);
+
+        /// <summary>The entity's UI button (UIButtonComponent) was clicked since the last frame</summary>
+        public static bool Clicked(Entity entity) => Native.Api->UIClicked(entity.Id) != 0;
     }
 
     public static unsafe class Audio

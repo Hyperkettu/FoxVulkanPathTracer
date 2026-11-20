@@ -150,6 +150,7 @@ namespace Fox {
 				PlaceClutter(entities, problems);
 				PlaceParticles(entities, problems);
 				PlaceTexts(entities, problems);
+				PlaceCanvases(entities);
 
 				// Lights: one per entity with a light, dark while it is off (so turning it on needs no rebuild)
 				for (Entity entity : entities) {
@@ -1432,11 +1433,11 @@ namespace Fox {
 			}
 
 			MainRayTracingScene::Entity MainRayTracingScene::AddText(const glm::vec3& position, Fox::Scene::TextComponent::Space space,
-				Fox::Scene::TextComponent::Style style, bool billboard, const std::string& font) {
+				Fox::Scene::TextComponent::Style style, bool billboard, const std::string& font, Entity parent) {
 				using Fox::Scene::TextComponent;
 				const bool screen = space == TextComponent::Space::Screen;
 				const Entity entity = graph.CreateEntity(screen ? (style == TextComponent::Style::Flat ? "UI text" : "UI 3D text")
-					: style == TextComponent::Style::Extruded ? "3D text" : billboard ? "Billboard text" : "Text");
+					: style == TextComponent::Style::Extruded ? "3D text" : billboard ? "Billboard text" : "Text", screen ? parent : Entity{});
 				Fox::Scene::Transform transform;
 				transform.position = position + glm::vec3(0.0f, 1.0f, 0.0f);
 				graph.SetWorldTransform(entity, transform);
@@ -1457,9 +1458,96 @@ namespace Fox {
 				return entity;
 			}
 
-			MainRayTracingScene::Entity MainRayTracingScene::AddSprite() {
-				const Entity entity = graph.CreateEntity("UI sprite");
-				graph.GetRegistry().Add<Fox::Scene::SpriteComponent>(entity);
+			MainRayTracingScene::Entity MainRayTracingScene::AddWorldCanvas(const glm::vec3& position, bool billboard) {
+				const Entity entity = graph.CreateEntity(billboard ? "World UI (billboard)" : "World UI");
+				Fox::Scene::Transform transform;
+				transform.position = position + glm::vec3(0.0f, 1.5f, 0.0f);
+				graph.SetWorldTransform(entity, transform);
+				Fox::Scene::UICanvasComponent canvas;
+				canvas.billboard = billboard;
+				graph.GetRegistry().Add<Fox::Scene::UICanvasComponent>(entity, canvas);
+				// A panel filling it, and a title
+				const Entity panel = graph.CreateEntity("Panel", entity);
+				Fox::Scene::SpriteComponent sprite;
+				sprite.color = glm::vec4(0.06f, 0.07f, 0.1f, 0.9f);
+				sprite.keepAspect = false;
+				sprite.layout.anchorMin = glm::vec2(0.0f);
+				sprite.layout.anchorMax = glm::vec2(1.0f);
+				sprite.layout.size = glm::vec2(0.0f);
+				graph.GetRegistry().Add<Fox::Scene::SpriteComponent>(panel, sprite);
+				const Entity title = graph.CreateEntity("Title", panel);
+				Fox::Scene::TextComponent text;
+				text.space = Fox::Scene::TextComponent::Space::Screen;
+				text.text = "Hello world";
+				text.size = 120.0f;
+				text.layout.anchorMin = text.layout.anchorMax = glm::vec2(0.5f);
+				graph.GetRegistry().Add<Fox::Scene::TextComponent>(title, text);
+				structureChanged = true;
+				return entity;
+			}
+
+			std::string MainRayTracingScene::CanvasKey(const Fox::Scene::UICanvasComponent& canvas) {
+				if (!canvas.enabled) return "off";
+				std::ostringstream key;
+				key << canvas.resolution.x << 'x' << canvas.resolution.y << '|' << canvas.width << '|' << canvas.glow;
+				return key.str();
+			}
+
+			void MainRayTracingScene::PlaceCanvases(const std::vector<Entity>& entities) {
+				auto& registry = graph.GetRegistry();
+				for (Entity entity : entities) {
+					Fox::Scene::UICanvasComponent* canvas = registry.TryGet<Fox::Scene::UICanvasComponent>(entity);
+					if (!canvas) continue;
+					canvas->placed = true;
+					canvas->placedKey = CanvasKey(*canvas);
+					canvas->object = SIZE_MAX;
+					canvas->drawnHash = 0;
+					if (!canvas->enabled) continue;
+					// Its picture: transparent until the UI draws it (UI/GameUI.cpp); a texture of its own, kept while its size is
+					const int width = std::clamp(static_cast<int>(canvas->resolution.x), 16, 4096);
+					const int height = std::clamp(static_cast<int>(canvas->resolution.y), 16, 4096);
+					if (canvas->texture < 0 || static_cast<int>(canvas->pixels.size()) != width * height * 4) {
+						canvas->pixels.assign(static_cast<size_t>(width) * height * 4, 0);
+						canvas->texture = textureLibrary->CreateTexture(canvas->pixels, width, height, true);
+					}
+					// The panel: a quad facing +Z, centred on the entity
+					const float w = std::max(canvas->width, 0.01f), h = w * static_cast<float>(height) / static_cast<float>(width);
+					std::vector<Fox::Graphics::Vulkan::Vertex> quad(4);
+					const glm::vec2 corners[4] = { { -0.5f, 0.5f }, { 0.5f, 0.5f }, { 0.5f, -0.5f }, { -0.5f, -0.5f } };
+					for (int c = 0; c < 4; c++) {
+						auto& v = quad[c];
+						v = Fox::Graphics::Vulkan::Vertex{};
+						v.position[0] = corners[c].x * w; v.position[1] = corners[c].y * h; v.position[3] = 1.0f;
+						v.normal[2] = 1.0f;
+						v.uv[0] = corners[c].x + 0.5f; v.uv[1] = 0.5f - corners[c].y;
+						v.tangent[0] = 1.0f; v.tangent[3] = 1.0f;
+					}
+					Fox::Graphics::Vulkan::Material material;
+					material.baseColorTexture = canvas->texture;
+					material.emissiveTexture = canvas->glow > 0.0f ? canvas->texture : -1;
+					const float glow = std::max(canvas->glow, 0.0f);
+					material.emissive[0] = material.emissive[1] = material.emissive[2] = glow;
+					material.alphaCutoff = 0.5f;   // Its see-through parts are holes
+					material.roughness = 0.85f;
+					material.specularWeight = 0.2f;
+					const glm::mat4 world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+					canvas->object = AddGeneratedObject(quad, { 0u, 1u, 2u, 0u, 2u, 3u }, material, world, graph.GetName(entity));
+					objectEntities.resize(GetObjectCount());
+					objectEntities[canvas->object] = entity;
+					if (!graph.IsActiveInHierarchy(entity)) SetObjectVisible(canvas->object, false);
+				}
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddSprite(Entity parent, bool panel) {
+				const Entity entity = graph.CreateEntity(panel ? "UI panel" : "UI sprite", parent);
+				Fox::Scene::SpriteComponent sprite;
+				if (panel) {
+					// A dark, see-through box to hold other elements
+					sprite.color = glm::vec4(0.05f, 0.06f, 0.08f, 0.6f);
+					sprite.layout.size = glm::vec2(640.0f, 360.0f);
+					sprite.keepAspect = false;
+				}
+				graph.GetRegistry().Add<Fox::Scene::SpriteComponent>(entity, sprite);
 				return entity;
 			}
 
@@ -1479,7 +1567,7 @@ namespace Fox {
 				key << text.text << '|' << text.font << '|' << static_cast<int>(text.space) << static_cast<int>(text.style) << '|' << text.size << '|'
 					<< text.align << '|' << text.lineSpacing << '|' << text.letterSpacing << '|' << text.color.r << ',' << text.color.g << ',' << text.color.b
 					<< '|' << text.fill << '|' << text.mask << '|' << text.roughness << '|' << text.metallic << '|' << text.emission << '|' << text.depth
-					<< '|' << text.subdivisions << '|' << text.displacement << '|' << text.displacementScale << '|' << text.pivot.x << ',' << text.pivot.y;
+					<< '|' << text.subdivisions << '|' << text.displacement << '|' << text.displacementScale << '|' << text.layout.pivot.x << ',' << text.layout.pivot.y;
 				return key.str();
 			}
 
@@ -1514,7 +1602,7 @@ namespace Fox {
 						Fox::Text::MeshOptions options;
 						const float size = screen ? 1.0f : std::max(text->size, 0.001f); // On the screen scaled with the view
 						options.size = size;
-						options.pivot = text->pivot;
+						options.pivot = text->layout.pivot;
 						const bool extruded = text->style == TextComponent::Style::Extruded;
 						options.depth = extruded ? std::max(text->depth, 0.0f) * size : 0.0f;
 						std::shared_ptr<const Fox::Scene::GrayImage> height;
@@ -1568,6 +1656,17 @@ namespace Fox {
 
 			void MainRayTracingScene::UpdateTexts() {
 				using Fox::Scene::TextComponent;
+				// World UI canvases: made again when their size or glow change; following their entities
+				graph.GetRegistry().Each<Fox::Scene::UICanvasComponent>([&](Entity entity, Fox::Scene::UICanvasComponent& canvas) {
+					if (!canvas.placed || CanvasKey(canvas) != canvas.placedKey) {
+						structureChanged = true;
+						return;
+					}
+					if (canvas.object == SIZE_MAX || canvas.object >= GetObjectCount()) return;
+					const bool show = graph.IsActiveInHierarchy(entity);
+					if (show != IsObjectVisible(canvas.object)) SetObjectVisible(canvas.object, show);
+					if (!canvas.billboard) SetObjectTransform(canvas.object, graph.GetWorldTransform(entity));
+				});
 				graph.GetRegistry().Each<TextComponent>([&](Entity entity, TextComponent& text) {
 					if (!text.placed || TextKey(text) != text.placedKey) {
 						structureChanged = true; // Its geometry or look changed: made again with the rebuild
@@ -1588,6 +1687,17 @@ namespace Fox {
 				const ViewCamera& view = viewCamera;
 				const glm::vec3 right = glm::normalize(glm::cross(view.forward, view.up));
 				const glm::vec3 up = glm::normalize(glm::cross(right, view.forward));
+				// Billboard canvases: turning to face the camera, upright
+				graph.GetRegistry().Each<Fox::Scene::UICanvasComponent>([&](Entity entity, Fox::Scene::UICanvasComponent& canvas) {
+					if (!canvas.billboard || canvas.object == SIZE_MAX || canvas.object >= GetObjectCount()) return;
+					ObjectTransform transform = graph.GetWorldTransform(entity);
+					glm::vec3 toCamera = view.position - transform.position;
+					if (glm::dot(toCamera, toCamera) < 1e-8f) return;
+					toCamera = glm::normalize(toCamera);
+					const glm::vec3 worldUp = std::abs(toCamera.y) > 0.999f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+					transform.rotation = glm::quatLookAt(-toCamera, worldUp);
+					SetObjectTransform(canvas.object, transform);
+				});
 				graph.GetRegistry().Each<TextComponent>([&](Entity entity, TextComponent& text) {
 					if (text.object == SIZE_MAX || text.object >= GetObjectCount()) return;
 					if (text.space == TextComponent::Space::Screen) {
@@ -1595,8 +1705,11 @@ namespace Fox {
 						const float height = 2.0f * SCREEN_TEXT_DISTANCE * std::tan(0.5f * view.fovY);
 						const float width = height * view.aspect;
 						ObjectTransform transform;
+						// Its anchor (on the screen) and offset (reference pixels)
+						const glm::vec2 at = text.layout.anchorMin + text.layout.offset
+							/ glm::vec2(environment.ui.referenceWidth, environment.ui.referenceHeight);
 						transform.position = view.position + view.forward * SCREEN_TEXT_DISTANCE
-							+ right * ((text.screenPosition.x - 0.5f) * width) + up * ((0.5f - text.screenPosition.y) * height);
+							+ right * ((at.x - 0.5f) * width) + up * ((0.5f - at.y) * height);
 						transform.rotation = glm::quat_cast(glm::mat3(right, up, -view.forward));
 						transform.scale = glm::vec3(std::max(text.size, 0.01f) * height / 1080.0f);
 						SetObjectTransform(text.object, transform);

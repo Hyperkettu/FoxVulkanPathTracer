@@ -89,6 +89,27 @@ namespace Fox {
 			return index;
 		}
 
+		const RgbaImage& TextureLibrary::MaskedPixels(const std::string& fill, const std::string& mask) {
+			const std::string key = fill + "|" + mask;
+			if (auto it = maskedPixels.find(key); it != maskedPixels.end()) {
+				return it->second;
+			}
+			RgbaImage image;
+			if (mask.empty()) {
+				int channels = 0;
+				stbi_uc* data = fill.empty() ? nullptr : stbi_load(fill.c_str(), &image.width, &image.height, &channels, 4);
+				if (!data) {
+					throw std::runtime_error("Cannot read " + fill);
+				}
+				image.pixels.assign(data, data + static_cast<size_t>(image.width) * image.height * 4);
+				stbi_image_free(data);
+			}
+			else {
+				ComposeMasked(fill, mask, image);
+			}
+			return maskedPixels.emplace(key, std::move(image)).first->second;
+		}
+
 		int TextureLibrary::MaskedTexture(const std::string& fill, const std::string& mask, bool srgb) {
 			if (mask.empty()) {
 				return Texture(fill, srgb);
@@ -97,6 +118,14 @@ namespace Fox {
 			if (auto it = masked.find(key); it != masked.end()) {
 				return it->second;
 			}
+			RgbaImage composed;
+			ComposeMasked(fill, mask, composed);
+			const int index = CreateTexture(composed.pixels, composed.width, composed.height, srgb);
+			masked[key] = index;
+			return index;
+		}
+
+		void TextureLibrary::ComposeMasked(const std::string& fill, const std::string& mask, RgbaImage& image) {
 			int fillWidth = 1, fillHeight = 1, maskWidth = 0, maskHeight = 0, channels = 0;
 			std::vector<uint8_t> pixels(4, 255);
 			if (!fill.empty()) {
@@ -129,9 +158,9 @@ namespace Fox {
 				}
 			}
 			stbi_image_free(alpha);
-			const int index = CreateTexture(out, width, height, srgb);
-			masked[key] = index;
-			return index;
+			image.width = width;
+			image.height = height;
+			image.pixels = std::move(out);
 		}
 
 		const GrayImage& TextureLibrary::Gray(const std::string& file) {

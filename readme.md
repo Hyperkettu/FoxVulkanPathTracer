@@ -64,7 +64,32 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
     * **World, 3D:** extruded letters (Depth). **Subdivisions** split every triangle in four, up to 5 times. A **Displacement** height map over the text's bounds then moves the surface along its smoothed normals. Positions are welded, so no cracks open between faces and walls.
     * **Screen, 3D:** extruded letters held 25 cm in front of the camera, placed and sized like UI text and lit by the world around the camera. Only camera rays see them (instance mask `INSTANCE_MASK_UI`), so they cast no shadows and show in no reflections.
   * **Decorated text:** a **Fill image** textures the text over its bounds, and a **Mask** cuts it out where the mask is transparent, or dark if it has no alpha. Both work in the UI and in the world, where they combine into one texture with the alpha tested. In the world, text can also have roughness, metallic and **Glow** (emission, so neon signs light their surroundings).
-  * **Sprite component** (Create > UI > Sprite): an image on the screen with a mask, colour, size, pivot, rotation and layer, keeping the image's proportions if wanted.
+  * **Sprite component** (Create > UI > Sprite, or **Panel**: a dark see-through box to hold others): an image on the screen, with a mask, a colour, and its image's proportions kept if wanted.
+  * **UI layout:** every UI element (sprite or screen text) has a layout in its parent's rectangle. The parent is the screen, or the nearest UI element above it in the Hierarchy.
+    * **Anchors:** a point (a corner, an edge, the middle), or two points apart on an axis so that it stretches across its parent. The Inspector has presets.
+    * **Offset and size:** in pixels from the anchor; when stretched, the size is added to the stretch.
+    * **Pivot, rotation, scale and layer:** the layer orders siblings. Parents are drawn first, and children follow their transform, alpha and tint.
+    * **Scaling:** pixels are of a reference resolution, 1920 × 1080 by default (Environment > UI canvas). The whole UI scales with the window by its width, its height, or between the two (**Match**). Anchored elements keep their corners, and stretched ones keep spanning the screen.
+    * **Create:** Create > UI puts a new element under the selected one when that is a UI element.
+  * **UI animation component:** steps played in sequence, each starting after the one before or **with the previous** one.
+    * **Properties:** position (an offset in pixels), scale, rotation, alpha and tint, each step taking one property from where the steps before left it (or from its own **From**) to a value.
+    * **Timing:** each step has a duration, a delay and an easing. There are 22 easings: linear, and in, out and in-out versions of sine, quad, cubic, expo, back, elastic and bounce.
+    * **Playback:** Once, Loop or Ping-pong, at a speed. Animations play when the game starts and preview in edit mode. Scripts call `UI.Play(entity)` and `UI.Stop(entity)`.
+    * **Examples:** pop in, slide in, bounce down, pulse, spin and wobble, in the Inspector's example list.
+  * **UI button component:** makes a sprite or screen text clickable, in play mode and in edit mode.
+    * **Feedback:** a hover tint and scale, and a pressed scale.
+    * **Action:** a click plays the UI animations of the entities named in **Play on click** from the start, with their children's if wanted. A clicked button doesn't also select what is behind it in the editor.
+    * **Pointer:** outside edit mode the mouse normally looks around. While any UI button is on the screen the pointer is freed to click, and the right mouse button looks around. When the buttons are gone, the mouse looks around again.
+    * **Scripts:** `UI.Clicked(entity)` tells whether the button was clicked this frame.
+  * **World UI canvas** (Create > UI > World Canvas, or World Canvas (billboard)): a UI in the 3D world.
+    * **What it draws:** the UI elements under the canvas entity (sprites, texts, layouts, animations and buttons, exactly as on the screen) are laid out in the canvas's own pixels (Resolution). They are drawn on the CPU into its picture, again only when something on it changed.
+    * **How it shows:** the picture is a panel of real geometry in the scene. It is lit, hidden behind what is in front of it, and seen in reflections, and its see-through parts are holes (alpha tested). **Glow** makes it give off light like a screen, and lights what is around it.
+    * **Orientation:** it keeps its entity's orientation (front +Z), or turns to face the camera (**Billboard**).
+    * **Buttons:** clicked where the mouse ray meets the panel. Within **Interact distance** of the camera they free the pointer outside edit mode.
+  * **Cabin UI in my_yard:** both are children of the Cabin, so they move with it.
+    * **Cabin sign:** a fixed bark-framed board in front of the house with "THE OLD CABIN", "BUILT IN 1887", a rocking leaf and a **REST HERE** button. The button pops up "YOU FEEL RESTED", which fades away again.
+    * **Cabin marker:** a glowing billboard label, "CABIN" with a pulsing orb, bobbing above the roof.
+  * **Sample in my_yard:** the "Game UI" entity holds an inventory panel with five item slots (icon and count) and a **DISCARD ALL** button. A click makes the items pop, spin and shrink away one after another, then the panel slides down and fades out. Starting or stopping play brings it back.
   * **Scripts:** `UI.SetText(entity, "Score: 10")` changes a text. Text on the screen changes at once; text in the world is rebuilt as geometry with the next scene rebuild.
 * **Particle effects** **Create > Effects > Fire / Magic / Falling Leaves**, or a **Particles** component on any entity.
   * **Simulation:** particles are simulated on the CPU. Each is a quad of real geometry in a simulated surface, with its structure rebuilt every frame and previous positions uploaded, so motion vectors and DLSS see them move.

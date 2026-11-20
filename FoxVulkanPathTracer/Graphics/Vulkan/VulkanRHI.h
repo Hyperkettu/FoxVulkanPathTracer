@@ -229,6 +229,7 @@ namespace Fox {
 				Fox::Editor::TerrainEditor terrainEditor;
 				uint32_t textureVersion = 0;     // Of the scene's texture library, when the descriptors were written
 				bool editMode = false;
+				bool uiPointer = false; // Outside edit mode with UI buttons on the screen: a free pointer (right mouse looks)
 				Fox::Editor::TransformGizmo gizmo;
 				std::unique_ptr<OverlayRenderer> overlay;
 				std::vector<OverlayRenderer::Vertex> overlayVertices;

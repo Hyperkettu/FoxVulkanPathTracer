@@ -105,6 +105,14 @@ namespace Fox {
 			ImGui::SliderFloat("Wind towards", &environment.windDirection, -180.0f, 180.0f, "%.0f deg");
 			ImGui::SetItemTooltip("Where the wind blows to (from +x towards +z): every tree leans and sways that way. Speed and gusts: Trees window > Wind");
 
+			// The 2D UI's scaling with the window
+			ImGui::SeparatorText("UI canvas");
+			auto& canvas = environment.ui;
+			ImGui::DragFloat2("Reference resolution", &canvas.referenceWidth, 1.0f, 64.0f, 8192.0f, "%.0f");
+			ImGui::SetItemTooltip("The UI's pixels are of this resolution; on other windows it scales");
+			ImGui::SliderFloat("Match width / height", &canvas.match, 0.0f, 1.0f, "%.2f");
+			ImGui::SetItemTooltip("Scales with the window's width (0), height (1) or between the two");
+
 			// Fog and clouds: live, no rebuild
 			ImGui::SeparatorText("Fog");
 			auto& fog = environment.fog;

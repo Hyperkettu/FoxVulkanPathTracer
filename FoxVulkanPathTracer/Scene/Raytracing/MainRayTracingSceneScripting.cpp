@@ -574,6 +574,23 @@ namespace Fox {
 					if (auto* text = Graph().GetRegistry().TryGet<Fox::Scene::TextComponent>(e)) text->text = value;
 				}
 
+				static void PlayUIAnimation(uint64_t id, int32_t play) {
+					Entity e;
+					if (!Valid(id, e)) return;
+					if (auto* animation = Graph().GetRegistry().TryGet<Fox::Scene::UIAnimationComponent>(e)) {
+						if (play) animation->time = 0.0f;
+						animation->playing = play != 0;
+						animation->triggered = play != 0;
+					}
+				}
+
+				static int32_t UIClicked(uint64_t id) {
+					Entity e;
+					if (!Valid(id, e)) return 0;
+					const auto* button = Graph().GetRegistry().TryGet<Fox::Scene::UIButtonComponent>(e);
+					return button && button->clicked ? 1 : 0;
+				}
+
 				static int32_t LayerFromName(const char* name) {
 					if (!name) return -1;
 					for (int i = 0; i < PhysicsWorld::LAYER_COUNT; i++) {
@@ -645,6 +662,8 @@ namespace Fox {
 				api.EntitySound = ScriptBindings::EntitySound;
 				api.SetSoundFile = ScriptBindings::SetSoundFile;
 				api.SetText = ScriptBindings::SetText;
+				api.PlayUIAnimation = ScriptBindings::PlayUIAnimation;
+				api.UIClicked = ScriptBindings::UIClicked;
 
 				// The game's named input
 				std::string inputError;

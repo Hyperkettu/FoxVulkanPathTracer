@@ -225,6 +225,7 @@ namespace Fox {
 					mouseButtonReleaseBind.Disconnect();
 
 					if (userInterface) {
+						Fox::UI::Shutdown(); // The world canvases' draw lists, while ImGui is still there
 						ImGui_ImplVulkan_Shutdown();
 						ImGui_ImplSDL2_Shutdown();
 						ImGui::DestroyContext();
@@ -997,6 +998,11 @@ namespace Fox {
 
 				// Editor windows, and what they changed in the scene
 				BuildUserInterface();
+				// A game UI with buttons frees the pointer to click them; without, the mouse looks around again
+				uiPointer = !editMode && Fox::UI::ButtonsShown();
+				if (inputManager && !editMode) {
+					inputManager->SetRelativeMode(!uiPointer);
+				}
 				ApplySceneChanges();
 
 				// Terrain brush strokes, and what they changed on its way to the GPU
@@ -1366,8 +1372,10 @@ namespace Fox {
 
 				// The game's UI (texts and sprites on the screen), under the editor's windows
 				if (raytracingScene) {
-					Fox::UI::DrawGameUI(*raytracingScene, ImGui::GetBackgroundDrawList(), ImGui::GetIO().DisplaySize,
-						[this](int index) { return ImGuiTexture(index); });
+					glm::vec3 rayOrigin, rayDirection;
+					Fox::Editor::TransformGizmo::MouseRay(GizmoView(), MouseInDisplayPixels(), rayOrigin, rayDirection);
+					Fox::UI::DrawGameUI(*raytracingScene, ImGui::GetBackgroundDrawList(), ImGui::GetIO().DisplaySize, ImGui::GetIO().DeltaTime,
+						[this](int index) { return ImGuiTexture(index); }, rayOrigin, rayDirection);
 				}
 
 				if (editMode) {
@@ -1604,7 +1612,7 @@ namespace Fox {
 					// Looking around: always outside edit mode, with the right mouse button held inside it
 					// Not while the camera flies its path
 					scriptMouseDelta += glm::vec2(static_cast<float>(dx), static_cast<float>(dy));
-					const bool look = (inputManager->IsRelativeMode() || (editMode && inputManager->IsMouseDown(SDL_BUTTON_RIGHT)))
+					const bool look = (inputManager->IsRelativeMode() || ((editMode || uiPointer) && inputManager->IsMouseDown(SDL_BUTTON_RIGHT)))
 						&& !raytracingScene->GetCameraManager().IsPlaying() && !LooksThroughGameCamera();
 					if (look) {
 						Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera()->Rotate(
@@ -1621,6 +1629,9 @@ namespace Fox {
 				mouseButtonPressBind = input.OnMouseButtonPressed.Connect([this](Uint8 button) {
 					if (!editMode || button != SDL_BUTTON_LEFT) {
 						return;
+					}
+					if (Fox::UI::PointerOverButton()) {
+						return; // A UI button's click
 					}
 
 					// Grab a handle of the gizmo, or select what is under the mouse (answered a frame or two later)

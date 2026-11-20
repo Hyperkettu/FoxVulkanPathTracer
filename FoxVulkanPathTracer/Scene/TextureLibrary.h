@@ -27,6 +27,13 @@ namespace Fox {
 		// 8 and 16 bit images, converted to one channel (grey) at full precision. Throws if it cannot be read.
 		GrayImage LoadGray(const std::string& path);
 
+		// An 8 bit RGBA picture in memory (straight alpha), for drawing on the CPU (world UI canvases)
+		struct RgbaImage {
+			int width = 0;
+			int height = 0;
+			std::vector<uint8_t> pixels;
+		};
+
 		// Loads textures for materials made at runtime (the tree editor), each file once. Everything it loads
 		// stays loaded, so materials can share textures freely; GetVersion changes whenever a texture is added
 		// (the renderer must then rewrite its texture descriptors).
@@ -45,6 +52,8 @@ namespace Fox {
 			// stretched over the same 0..1 coordinates: decorated, textured text and sprites. srgb: for the path tracer
 			// (colour decoded); not for the screen-space UI (which draws the stored values). -1 if neither is given.
 			int MaskedTexture(const std::string& fill, const std::string& mask, bool srgb);
+			// The same picture in memory (loaded once); throws if a file cannot be read
+			const RgbaImage& MaskedPixels(const std::string& fill, const std::string& mask);
 
 			// Occlusion (R), roughness (G) and metallic (B) packed into one texture, the glTF way. Missing files
 			// count as no occlusion (1), roughness 1 and metallic 0. Files of other sizes are resampled.
@@ -72,10 +81,12 @@ namespace Fox {
 			std::map<std::string, int> textures;
 			std::map<std::string, int> packed;
 			std::map<std::string, int> masked;
+			std::map<std::string, RgbaImage> maskedPixels;
 			std::map<std::string, std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::AlphaMask>> alphas;
 			std::map<std::string, std::shared_ptr<const GrayImage>> heights;
 			std::map<std::string, GrayImage> grays; // Loaded files, by path
 			const GrayImage& Gray(const std::string& file);
+			void ComposeMasked(const std::string& fill, const std::string& mask, RgbaImage& image);
 		};
 	}
 }

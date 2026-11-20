@@ -64,6 +64,8 @@ namespace Fox.Interop
         public delegate* unmanaged<ulong, int, int> EntitySound;
         public delegate* unmanaged<ulong, byte*, void> SetSoundFile;
         public delegate* unmanaged<ulong, byte*, void> SetText;
+        public delegate* unmanaged<ulong, int, void> PlayUIAnimation;
+        public delegate* unmanaged<ulong, int> UIClicked;
     }
 
     [StructLayout(LayoutKind.Sequential)]
