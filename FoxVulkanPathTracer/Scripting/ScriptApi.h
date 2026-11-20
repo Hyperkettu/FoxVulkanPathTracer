@@ -110,6 +110,7 @@ namespace Fox {
 			void (*SetBusVolume)(int32_t bus, float volume);
 			int32_t (*EntitySound)(uint64_t entity, int32_t action); // 0 play, 1 stop, 2 is it playing
 			void (*SetSoundFile)(uint64_t entity, const char* file);
+			void (*SetText)(uint64_t entity, const char* text); // TextComponent (UI or world)
 		};
 
 		// The scripting host's functions (Host.cs; Bootstrap fills them in)

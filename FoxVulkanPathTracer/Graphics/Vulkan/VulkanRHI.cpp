@@ -1176,6 +1176,10 @@ namespace Fox {
 					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
 					const float pixelScale = static_cast<float>(capabilities.currentExtent.height) / (2.0f * std::tan(camera->GetFov() * 0.5f));
 					raytracingScene->SetClusterLodView(camera->GetPosition(), pixelScale);
+					// Billboards and the screen's 3D text, for this frame's camera (no lag behind it)
+					raytracingScene->SetViewCamera(camera->GetPosition(), camera->GetForward(), camera->GetUp(), camera->GetFov(),
+						static_cast<float>(capabilities.currentExtent.width) / std::max(static_cast<float>(capabilities.currentExtent.height), 1.0f));
+					raytracingScene->UpdateViewObjects();
 					// The preset's (the scene may be newer than the settings)
 					raytracingScene->SetWindLevelOfDetail(SettingsOf(EffectivePreset()).windLevelOfDetail);
 				}
@@ -1313,7 +1317,7 @@ namespace Fox {
 				info.Device = device;
 				info.QueueFamily = graphicsQueueFamily;
 				info.Queue = graphicsQueue;
-				info.DescriptorPoolSize = 16; // The backend makes its own pool (the font texture)
+				info.DescriptorPoolSize = 512; // The backend makes its own pool (the font texture, the game UI's images)
 				info.MinImageCount = 2;
 				info.ImageCount = std::max(swapchain->GetImageCount(), 2u);
 				info.PipelineInfoMain.RenderPass = Managers::RenderPassManager::Get().GetPass(Managers::RenderPass::DEFAULT)->Get();
@@ -1360,11 +1364,31 @@ namespace Fox {
 					shell.FocusFind();
 				}
 
+				// The game's UI (texts and sprites on the screen), under the editor's windows
+				if (raytracingScene) {
+					Fox::UI::DrawGameUI(*raytracingScene, ImGui::GetBackgroundDrawList(), ImGui::GetIO().DisplaySize,
+						[this](int index) { return ImGuiTexture(index); });
+				}
+
 				if (editMode) {
 					BuildEditor();
 				}
 
 				ImGui::Render();
+			}
+
+			ImTextureID VulkanRHI::ImGuiTexture(int index) {
+				if (auto it = imguiTextures.find(index); it != imguiTextures.end()) {
+					return reinterpret_cast<ImTextureID>(it->second);
+				}
+				const auto& textures = Managers::TextureManager::Get().GetBindlessTextureArray();
+				if (index < 0 || index >= static_cast<int>(textures.size()) || !textures[index]) {
+					return ImTextureID{};
+				}
+				const VkDescriptorSet set = ImGui_ImplVulkan_AddTexture(textures[index]->GetSampler(), textures[index]->GetView(),
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				imguiTextures[index] = set;
+				return reinterpret_cast<ImTextureID>(set);
 			}
 
 			void VulkanRHI::ApplySceneChanges() {

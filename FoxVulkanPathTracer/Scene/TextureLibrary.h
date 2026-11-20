@@ -39,7 +39,12 @@ namespace Fox {
 			int Texture(const std::string& file, bool srgb);
 
 			// A new texture from 8 bit RGBA pixels (linear), e.g. one that is then edited (a terrain's blend map)
-			int CreateTexture(const std::vector<uint8_t>& rgba, int width, int height);
+			int CreateTexture(const std::vector<uint8_t>& rgba, int width, int height, bool srgb = false);
+
+			// A fill image (its colour; empty: white) cut out by a mask image (its alpha; empty: the fill's own), both
+			// stretched over the same 0..1 coordinates: decorated, textured text and sprites. srgb: for the path tracer
+			// (colour decoded); not for the screen-space UI (which draws the stored values). -1 if neither is given.
+			int MaskedTexture(const std::string& fill, const std::string& mask, bool srgb);
 
 			// Occlusion (R), roughness (G) and metallic (B) packed into one texture, the glTF way. Missing files
 			// count as no occlusion (1), roughness 1 and metallic 0. Files of other sizes are resampled.
@@ -66,6 +71,7 @@ namespace Fox {
 
 			std::map<std::string, int> textures;
 			std::map<std::string, int> packed;
+			std::map<std::string, int> masked;
 			std::map<std::string, std::unique_ptr<Fox::Graphics::Vulkan::RayTracing::AlphaMask>> alphas;
 			std::map<std::string, std::shared_ptr<const GrayImage>> heights;
 			std::map<std::string, GrayImage> grays; // Loaded files, by path

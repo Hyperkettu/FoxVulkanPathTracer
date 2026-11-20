@@ -78,7 +78,8 @@ static const float RAY_MAX_DISTANCE = 1e4f;
 // rough hit). With shader execution reordering (FOX_SER, the raygen_ser variant, chosen when the
 // GPU supports it) the threads are first regrouped by what they hit, so the closest hit shader and
 // the shading after it run on coherent groups: same material, same textures, same branches.
-HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
+// mask: what it can hit; rays other than the camera's do not see the screen's 3D text
+HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false, uint mask = INSTANCE_MASK_ALL & ~INSTANCE_MASK_UI)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -91,7 +92,7 @@ HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
 
 #if FOX_SER
     if (reorder) {
-        HitObject hitObject = HitObject::TraceRay(tlas, RAY_FLAG_NONE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
+        HitObject hitObject = HitObject::TraceRay(tlas, RAY_FLAG_NONE, mask, 0, 0, 0, ray, payload);
         ReorderThread(hitObject);
         HitObject::Invoke(tlas, hitObject, payload);
         return payload;
@@ -100,7 +101,7 @@ HitPayload TraceSurface(float3 origin, float3 direction, bool reorder = false)
 
     // Opaque geometry is flagged as such in the acceleration structures; alpha tested geometry (leaves)
     // runs the any-hit shader where its opacity micromap cannot decide
-    TraceRay(tlas, RAY_FLAG_NONE, INSTANCE_MASK_ALL, 0, 0, 0, ray, payload);
+    TraceRay(tlas, RAY_FLAG_NONE, mask, 0, 0, 0, ray, payload);
     return payload;
 }
 
@@ -666,7 +667,7 @@ void main()
     float3 primaryDirection = PrimaryRayDirection(primaryPosition);
 
     // Traced once, used for both the G-buffer and the paths through the same sub-pixel position
-    HitPayload primaryHit = TraceSurface(camera.camPos, primaryDirection);
+    HitPayload primaryHit = TraceSurface(camera.camPos, primaryDirection, false, INSTANCE_MASK_ALL);
 
     PrimarySurface primary = FindPrimarySurface(camera.camPos, primaryDirection, primaryHit);
 

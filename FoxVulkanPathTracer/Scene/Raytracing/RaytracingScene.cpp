@@ -1532,6 +1532,12 @@ namespace Fox {
                 materialOffset += 1;
             }
 
+            size_t RayTracingScene::AddGeneratedObject(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices,
+                const std::vector<uint32_t>& surfaceIndices, const Fox::Graphics::Vulkan::Material& material, const glm::mat4& transform, const std::string& name) {
+                AddGeneratedSurface(surfaceVertices, surfaceIndices, material, transform, name, true);
+                return placements.size() - 1;
+            }
+
             void RayTracingScene::AddGroundPlane(float height, float halfSize, const Fox::Graphics::Vulkan::Material& material) {
                 const float corners[4][2] = { { -1.0f, -1.0f }, { -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f } };
 

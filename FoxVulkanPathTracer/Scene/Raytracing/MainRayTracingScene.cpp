@@ -149,6 +149,7 @@ namespace Fox {
 				// Clutter: on the ground just placed; particle effects
 				PlaceClutter(entities, problems);
 				PlaceParticles(entities, problems);
+				PlaceTexts(entities, problems);
 
 				// Lights: one per entity with a light, dark while it is off (so turning it on needs no rebuild)
 				for (Entity entity : entities) {
@@ -550,6 +551,7 @@ namespace Fox {
 				SyncMeshes();
 				UpdateClutter(dt);
 				UpdateParticles(step);
+				UpdateTexts();
 				SyncLights();
 				UpdateAudio();
 				UpdateWater(step);
@@ -929,7 +931,8 @@ namespace Fox {
 
 			MainRayTracingScene::Entity MainRayTracingScene::AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect) {
 				using Effect = Fox::Scene::ParticleComponent::Effect;
-				const Entity entity = graph.CreateEntity(effect == Effect::Fire ? "Fire" : effect == Effect::Magic ? "Magic" : "Falling leaves");
+				const Entity entity = graph.CreateEntity(effect == Effect::Fire ? "Fire" : effect == Effect::Magic ? "Magic"
+					: effect == Effect::Orbs ? "Magic orbs" : "Falling leaves");
 				Fox::Scene::Transform transform;
 				transform.position = position;
 				graph.SetWorldTransform(entity, transform);
@@ -952,7 +955,7 @@ namespace Fox {
 					emitter->placedMax = emitter->maxParticles;
 					emitter->placedTexture = emitter->texture;
 					emitter->surface = SIZE_MAX;
-					emitter->lightIndex = SIZE_MAX;
+					emitter->lights.clear();
 					emitter->particles.assign(std::clamp<uint32_t>(emitter->maxParticles, 1, 16384), Fox::Scene::Particle{});
 					emitter->problem.clear();
 					if (!emitter->enabled) {
@@ -1008,15 +1011,22 @@ namespace Fox {
 					}
 					else {
 						const bool fire = emitter->effect == Effect::Fire;
-						const std::string sprite = fire ? "Textures/particles/flame.png" : "Textures/particles/spark.png";
+						const bool orbs = emitter->effect == Effect::Orbs;
+						const std::string sprite = fire ? "Textures/particles/flame.png" : orbs ? "Textures/particles/orb.png" : "Textures/particles/spark.png";
 						const glm::vec3 glow = (fire ? glm::vec3(1.0f) : emitter->color) * std::max(emitter->brightness, 0.0f);
 						material.baseColor[0] = material.baseColor[1] = material.baseColor[2] = fire ? 0.04f : 0.1f; // Soot, as it cools
+						if (orbs) {
+							// The second colour (Shaders/common.slang, PARTICLE_MATERIAL)
+							material.baseColor[0] = emitter->color2.r;
+							material.baseColor[1] = emitter->color2.g;
+							material.baseColor[2] = emitter->color2.b;
+						}
 						material.emissive[0] = glow.r;
 						material.emissive[1] = glow.g;
 						material.emissive[2] = glow.b;
 						material.baseColorTexture = library.Texture(sprite, true);
 						material.emissiveTexture = material.baseColorTexture;
-						material.alphaCutoff = fire ? 0.3f : 0.25f;
+						material.alphaCutoff = fire ? 0.3f : orbs ? 0.5f : 0.25f;
 						material.roughness = 1.0f;
 						material.specularWeight = 0.0f;
 					}
@@ -1043,15 +1053,18 @@ namespace Fox {
 					objectEntities.resize(GetObjectCount());
 					objectEntities[GetSurfaceObject(emitter->surface)] = entity;
 
-					// --- Its light ---
+					// --- Its lights: one for fire and magic, one per orb of the first dozen ---
 					if (emitter->effect != Effect::Leaves && emitter->light) {
-						Fox::Graphics::Vulkan::Light light{};
-						light.type = 1; // Point
-						light.position = glm::vec3(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix[3]);
-						light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
-						light.area = std::max(emitter->spread, 0.05f);
-						light.color = glm::vec3(0.0f); // Lit by UpdateParticles
-						emitter->lightIndex = RayTracingScene::AddLight(light);
+						const size_t lightCount = emitter->effect == Effect::Orbs ? std::min<size_t>(12, OrbSlots(*emitter)) : 1;
+						for (size_t i = 0; i < lightCount; i++) {
+							Fox::Graphics::Vulkan::Light light{};
+							light.type = 1; // Point
+							light.position = glm::vec3(registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix[3]);
+							light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+							light.area = emitter->effect == Effect::Orbs ? 0.5f * emitter->size : std::max(emitter->spread, 0.05f);
+							light.color = glm::vec3(0.0f); // Lit by UpdateParticles
+							emitter->lights.push_back(RayTracingScene::AddLight(light));
+						}
 					}
 				}
 			}
@@ -1113,14 +1126,32 @@ namespace Fox {
 					emitter.spawnCarry += std::max(emitter.rate, 0.0f) * dt;
 				}
 				size_t next = 0;
+				const size_t orbSlots = OrbSlots(emitter);
+				size_t nextOrb = 0, nextMote = orbSlots;
 				while (emitter.spawnCarry >= 1.0f) {
 					emitter.spawnCarry -= 1.0f;
-					while (next < emitter.particles.size() && emitter.particles[next].alive) next++;
-					if (next == emitter.particles.size()) {
-						emitter.spawnCarry = 0.0f; // Full: born when there is room
-						break;
+					size_t slot;
+					bool mote = false;
+					if (emitter.effect == Effect::Orbs) {
+						// Orbs in the first slots (the lit ones first), motes after: a mote three times in four
+						mote = random() < 0.75f;
+						size_t& cursor = mote ? nextMote : nextOrb;
+						const size_t end = mote ? emitter.particles.size() : orbSlots;
+						while (cursor < end && emitter.particles[cursor].alive) cursor++;
+						if (cursor >= end) {
+							continue; // That kind is full
+						}
+						slot = cursor;
 					}
-					Particle& p = emitter.particles[next];
+					else {
+						while (next < emitter.particles.size() && emitter.particles[next].alive) next++;
+						if (next == emitter.particles.size()) {
+							emitter.spawnCarry = 0.0f; // Full: born when there is room
+							break;
+						}
+						slot = next;
+					}
+					Particle& p = emitter.particles[slot];
 					p = Particle{};
 					p.alive = true;
 					p.life = std::max(emitter.lifetime, 0.05f) * (0.7f + 0.6f * random());
@@ -1136,6 +1167,17 @@ namespace Fox {
 					else if (emitter.effect == Effect::Magic) {
 						p.position = origin + glm::vec3(std::cos(angle) * emitter.spread, 0.1f + random() * 0.3f, std::sin(angle) * emitter.spread);
 						p.spin.x = angle; // Its angle around the axis
+					}
+					else if (emitter.effect == Effect::Orbs) {
+						p.mote = mote;
+						p.shade = random();
+						p.position = origin + glm::vec3((random() * 2.0f - 1.0f) * emitter.spread, 0.0f, (random() * 2.0f - 1.0f) * emitter.spread);
+						p.hover = mote ? 0.2f + 2.5f * random() : std::max(emitter.height, 0.1f) * (0.5f + random());
+						p.position.y = floorAt(p.position) + p.hover;
+						if (mote) {
+							p.life *= 0.4f;
+							p.size = emitter.size * 0.22f * (0.6f + 0.8f * random());
+						}
 					}
 					else {
 						p.position = origin + glm::vec3((random() * 2.0f - 1.0f) * emitter.spread, emitter.height + random() * 1.5f,
@@ -1178,6 +1220,19 @@ namespace Fox {
 						p.spin.x += emitter.speed / std::max(radius, 0.05f) * dt;
 						const glm::vec3 drift = windAt(origin) * (0.3f * p.age);
 						p.position = origin + drift + glm::vec3(std::cos(p.spin.x) * radius, 0.1f + 1.2f * t * emitter.speed * 0.6f, std::sin(p.spin.x) * radius);
+						glowSum += 1.0f - t;
+					}
+					else if (emitter.effect == Effect::Orbs) {
+						// Wandering slowly where its own currents take it, a breath of wind, hovering and bobbing over the ground
+						const float s = std::max(emitter.speed, 0.0f) * (p.mote ? 0.6f : 1.0f);
+						const glm::vec3 wander(std::sin(0.37f * p.age + p.phase) + 0.5f * std::sin(0.91f * p.age + 2.0f * p.phase), 0.0f,
+							std::cos(0.29f * p.age + 1.3f * p.phase) + 0.5f * std::cos(0.83f * p.age + 3.0f * p.phase));
+						const glm::vec3 wanted = wander * s + windAt(p.position) * 0.15f;
+						p.velocity += (wanted - p.velocity) * std::min(0.8f * dt, 1.0f);
+						p.position += p.velocity * dt;
+						const float bob = (p.mote ? 0.1f : 0.25f) * std::sin(1.1f * p.age + p.phase);
+						const float target = floorAt(p.position) + p.hover + bob;
+						p.position.y += (target - p.position.y) * std::min(1.5f * dt, 1.0f);
 						glowSum += 1.0f - t;
 					}
 					else if (!p.landed) {
@@ -1253,7 +1308,28 @@ namespace Fox {
 				}
 
 				// --- The light: flickering with the flames (or the sparks) ---
-				if (emitter.lightIndex != SIZE_MAX) {
+				// Orbs: a light each (the first ones), following it, in its shade, fading with it
+				auto orbFade = [](const Particle& p) {
+					return glm::clamp(std::min(p.age, p.life - p.age) / 1.5f, 0.0f, 1.0f);
+				};
+				auto orbPulse = [this](const Particle& p) {
+					return p.mote ? 0.4f + 0.6f * std::pow(0.5f + 0.5f * std::sin(9.0f * particleTime + 7.0f * p.phase), 3.0f)
+						: 0.8f + 0.2f * std::sin(2.3f * p.age + p.phase);
+				};
+				if (emitter.effect == Effect::Orbs) {
+					for (size_t i = 0; i < emitter.lights.size() && i < emitter.particles.size(); i++) {
+						const Particle& p = emitter.particles[i];
+						Fox::Graphics::Vulkan::Light light{};
+						light.type = 1;
+						light.position = p.alive ? p.position : origin;
+						light.normal = glm::vec3(0.0f, -1.0f, 0.0f);
+						light.area = 0.5f * emitter.size;
+						const glm::vec3 shade = glm::mix(emitter.color, emitter.color2, p.shade);
+						light.color = (active && emitter.light && p.alive) ? shade * (emitter.lightIntensity * orbFade(p) * orbPulse(p)) : glm::vec3(0.0f);
+						SetLight(emitter.lights[i], light);
+					}
+				}
+				else if (!emitter.lights.empty()) {
 					Fox::Graphics::Vulkan::Light light{};
 					light.type = 1;
 					light.position = origin + glm::vec3(0.0f, emitter.effect == Effect::Fire ? 0.5f : 0.7f, 0.0f);
@@ -1264,7 +1340,7 @@ namespace Fox {
 						: 0.9f + 0.1f * std::sin(9.0f * particleTime);
 					const float amount = emitter.particles.empty() ? 0.0f : std::min(glowSum / (0.5f * std::max(emitter.rate, 1.0f) * emitter.lifetime), 1.0f);
 					light.color = (active && emitter.light) ? emitter.color * (emitter.lightIntensity * flicker * amount) : glm::vec3(0.0f);
-					SetLight(emitter.lightIndex, light);
+					SetLight(emitter.lights[0], light);
 				}
 
 				// --- The quads ---
@@ -1320,6 +1396,14 @@ namespace Fox {
 							heat = glm::clamp(1.0f - 1.15f * t, 0.0f, 1.0f);
 							brightness = glm::clamp(1.0f - t, 0.0f, 1.0f) * (0.85f + 0.15f * std::sin(23.0f * particleTime + p.phase));
 						}
+						else if (emitter.effect == Effect::Orbs) {
+							// Fading in and out, pulsing (motes twinkle); its shade between the two colours
+							const float fade = orbFade(p);
+							brightness = fade * orbPulse(p);
+							size *= std::sqrt(fade);
+							previousSize = size;
+							heat = -1.0f - p.shade;
+						}
 						else {
 							const float twinkle = 0.7f + 0.3f * std::sin(13.0f * particleTime + 5.0f * p.phase);
 							brightness = glm::clamp(std::min(t * 6.0f, (1.0f - t) * 2.0f), 0.0f, 1.0f) * twinkle;
@@ -1345,6 +1429,189 @@ namespace Fox {
 				UpdateSurfaceVertices(emitter.surface, 0, quads.data(), static_cast<uint32_t>(quads.size()));
 				UpdateSurfacePrevious(emitter.surface, previous.data(), static_cast<uint32_t>(previous.size()));
 				MarkSurfaceDeformed(emitter.surface, true); // They fly far: built anew every frame
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddText(const glm::vec3& position, Fox::Scene::TextComponent::Space space,
+				Fox::Scene::TextComponent::Style style, bool billboard, const std::string& font) {
+				using Fox::Scene::TextComponent;
+				const bool screen = space == TextComponent::Space::Screen;
+				const Entity entity = graph.CreateEntity(screen ? (style == TextComponent::Style::Flat ? "UI text" : "UI 3D text")
+					: style == TextComponent::Style::Extruded ? "3D text" : billboard ? "Billboard text" : "Text");
+				Fox::Scene::Transform transform;
+				transform.position = position + glm::vec3(0.0f, 1.0f, 0.0f);
+				graph.SetWorldTransform(entity, transform);
+				TextComponent text;
+				text.space = space;
+				text.style = style;
+				text.billboard = billboard;
+				text.font = font;
+				text.text = screen ? "Score: 0" : "Hello";
+				text.size = screen ? (style == TextComponent::Style::Flat ? 64.0f : 90.0f) : 1.0f;
+				if (style == TextComponent::Style::Extruded) {
+					text.color = glm::vec4(0.95f, 0.75f, 0.3f, 1.0f); // Gold
+					text.metallic = 1.0f;
+					text.roughness = 0.3f;
+				}
+				graph.GetRegistry().Add<TextComponent>(entity, text);
+				structureChanged = true;
+				return entity;
+			}
+
+			MainRayTracingScene::Entity MainRayTracingScene::AddSprite() {
+				const Entity entity = graph.CreateEntity("UI sprite");
+				graph.GetRegistry().Add<Fox::Scene::SpriteComponent>(entity);
+				return entity;
+			}
+
+			void MainRayTracingScene::SetViewCamera(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up, float fovY, float aspect) {
+				viewCamera.position = position;
+				viewCamera.forward = glm::normalize(forward);
+				viewCamera.up = glm::normalize(up);
+				viewCamera.fovY = fovY;
+				viewCamera.aspect = aspect;
+			}
+
+			std::string MainRayTracingScene::TextKey(const Fox::Scene::TextComponent& text) {
+				using Fox::Scene::TextComponent;
+				if (!text.enabled) return "off";
+				if (text.space == TextComponent::Space::Screen && text.style == TextComponent::Style::Flat) return "ui"; // Drawn, not geometry
+				std::ostringstream key;
+				key << text.text << '|' << text.font << '|' << static_cast<int>(text.space) << static_cast<int>(text.style) << '|' << text.size << '|'
+					<< text.align << '|' << text.lineSpacing << '|' << text.letterSpacing << '|' << text.color.r << ',' << text.color.g << ',' << text.color.b
+					<< '|' << text.fill << '|' << text.mask << '|' << text.roughness << '|' << text.metallic << '|' << text.emission << '|' << text.depth
+					<< '|' << text.subdivisions << '|' << text.displacement << '|' << text.displacementScale << '|' << text.pivot.x << ',' << text.pivot.y;
+				return key.str();
+			}
+
+			void MainRayTracingScene::PlaceTexts(const std::vector<Entity>& entities, std::string& problems) {
+				using Fox::Scene::TextComponent;
+				auto& registry = graph.GetRegistry();
+				for (Entity entity : entities) {
+					TextComponent* text = registry.TryGet<TextComponent>(entity);
+					if (!text) continue;
+					text->placed = true;
+					text->placedKey = TextKey(*text);
+					text->object = SIZE_MAX;
+					text->triangles = 0;
+					text->problem.clear();
+					const bool screen = text->space == TextComponent::Space::Screen;
+					if (!text->enabled || (screen && text->style == TextComponent::Style::Flat)) {
+						continue; // Off, or drawn by the UI
+					}
+					const std::string fontFile = text->font.empty() ? Fox::Text::DefaultFont() : text->font;
+					auto font = Fox::Text::Font::Get(fontFile);
+					if (!font) {
+						text->problem = fontFile.empty() ? "no font in Fonts/" : "cannot read " + fontFile;
+						problems += std::string(problems.empty() ? "" : "; ") + graph.GetName(entity) + ": " + text->problem;
+						continue;
+					}
+					try {
+						// The outlines fine enough for a close look (a thousandth of an em), filled, as a mesh
+						const Fox::Text::Layout layout = Fox::Text::LayOut(*font, text->text, static_cast<Fox::Text::Align>(std::clamp(text->align, 0, 2)),
+							text->lineSpacing, text->letterSpacing, 0.001f);
+						const Fox::Text::Fill fill = Fox::Text::Triangulate(layout.contours);
+						if (fill.triangles.empty()) continue;
+						Fox::Text::MeshOptions options;
+						const float size = screen ? 1.0f : std::max(text->size, 0.001f); // On the screen scaled with the view
+						options.size = size;
+						options.pivot = text->pivot;
+						const bool extruded = text->style == TextComponent::Style::Extruded;
+						options.depth = extruded ? std::max(text->depth, 0.0f) * size : 0.0f;
+						std::shared_ptr<const Fox::Scene::GrayImage> height;
+						if (extruded) {
+							options.subdivisions = text->subdivisions;
+							if (!text->displacement.empty()) {
+								height = textureLibrary->Height(text->displacement, 1, false, "", 0.5f);
+								options.displacement = height.get();
+								options.displacementScale = text->displacementScale * size;
+							}
+						}
+						std::vector<Fox::Graphics::Vulkan::Vertex> vertices;
+						std::vector<uint32_t> indices;
+						Fox::Text::BuildMesh(layout, fill, options, vertices, indices);
+
+						Fox::Graphics::Vulkan::Material material;
+						material.baseColor[0] = text->color.r;
+						material.baseColor[1] = text->color.g;
+						material.baseColor[2] = text->color.b;
+						material.roughness = text->roughness;
+						material.metallic = text->metallic;
+						for (int c = 0; c < 3; c++) material.emissive[c] = text->color[c] * std::max(text->emission, 0.0f);
+						if (!text->fill.empty() || !text->mask.empty()) {
+							material.baseColorTexture = textureLibrary->MaskedTexture(text->fill, text->mask, true);
+							material.emissiveTexture = text->emission > 0.0f ? material.baseColorTexture : -1;
+							if (!text->mask.empty()) material.alphaCutoff = 0.5f;
+						}
+						if (screen) {
+							// Its glow lights nothing in the world (it is not there): a particle material, full brightness
+							material.layerMaterial = -3;
+							for (auto& v : vertices) { v.pad[0] = 1.0f; v.pad[1] = -1.0f; }
+						}
+						const glm::mat4 world = registry.Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+						text->object = AddGeneratedObject(vertices, indices, material, screen ? glm::mat4(1.0f) : world, graph.GetName(entity));
+						text->triangles = indices.size() / 3;
+						if (screen) {
+							SetObjectMask(text->object, INSTANCE_MASK_UI);
+						}
+						objectEntities.resize(GetObjectCount());
+						objectEntities[text->object] = entity;
+						if (!graph.IsActiveInHierarchy(entity)) {
+							SetObjectVisible(text->object, false);
+						}
+					}
+					catch (const std::exception& error) {
+						text->problem = error.what();
+						problems += std::string(problems.empty() ? "" : "; ") + graph.GetName(entity) + ": " + text->problem;
+					}
+				}
+			}
+
+			void MainRayTracingScene::UpdateTexts() {
+				using Fox::Scene::TextComponent;
+				graph.GetRegistry().Each<TextComponent>([&](Entity entity, TextComponent& text) {
+					if (!text.placed || TextKey(text) != text.placedKey) {
+						structureChanged = true; // Its geometry or look changed: made again with the rebuild
+						return;
+					}
+					if (text.object == SIZE_MAX || text.object >= GetObjectCount()) return;
+					const bool show = graph.IsActiveInHierarchy(entity);
+					if (show != IsObjectVisible(text.object)) SetObjectVisible(text.object, show);
+					// In the world and not turning: where its entity is (the others follow the camera: UpdateViewObjects)
+					if (text.space == TextComponent::Space::World && !text.billboard) {
+						SetObjectTransform(text.object, graph.GetWorldTransform(entity));
+					}
+				});
+			}
+
+			void MainRayTracingScene::UpdateViewObjects() {
+				using Fox::Scene::TextComponent;
+				const ViewCamera& view = viewCamera;
+				const glm::vec3 right = glm::normalize(glm::cross(view.forward, view.up));
+				const glm::vec3 up = glm::normalize(glm::cross(right, view.forward));
+				graph.GetRegistry().Each<TextComponent>([&](Entity entity, TextComponent& text) {
+					if (text.object == SIZE_MAX || text.object >= GetObjectCount()) return;
+					if (text.space == TextComponent::Space::Screen) {
+						// Held in front of the camera where its screen position is, facing it, as big as its size in pixels
+						const float height = 2.0f * SCREEN_TEXT_DISTANCE * std::tan(0.5f * view.fovY);
+						const float width = height * view.aspect;
+						ObjectTransform transform;
+						transform.position = view.position + view.forward * SCREEN_TEXT_DISTANCE
+							+ right * ((text.screenPosition.x - 0.5f) * width) + up * ((0.5f - text.screenPosition.y) * height);
+						transform.rotation = glm::quat_cast(glm::mat3(right, up, -view.forward));
+						transform.scale = glm::vec3(std::max(text.size, 0.01f) * height / 1080.0f);
+						SetObjectTransform(text.object, transform);
+					}
+					else if (text.billboard) {
+						// Turning to face the camera, upright
+						ObjectTransform transform = graph.GetWorldTransform(entity);
+						glm::vec3 toCamera = view.position - transform.position;
+						if (glm::dot(toCamera, toCamera) < 1e-8f) return;
+						toCamera = glm::normalize(toCamera);
+						const glm::vec3 worldUp = std::abs(toCamera.y) > 0.999f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+						transform.rotation = glm::quatLookAt(-toCamera, worldUp);
+						SetObjectTransform(text.object, transform);
+					}
+				});
 			}
 
 			float MainRayTracingScene::GetGroundHeight() const {

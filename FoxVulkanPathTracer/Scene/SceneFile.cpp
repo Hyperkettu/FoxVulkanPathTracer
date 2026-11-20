@@ -50,6 +50,12 @@ namespace nlohmann {
 		static void to_json(json& j, const glm::vec3& v) { j = { v.x, v.y, v.z }; }
 		static void from_json(const json& j, glm::vec3& v) { v = glm::vec3(j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>()); }
 	};
+	template<> struct adl_serializer<glm::vec4> {
+		static void to_json(json& j, const glm::vec4& v) { j = { v.x, v.y, v.z, v.w }; }
+		static void from_json(const json& j, glm::vec4& v) {
+			v = glm::vec4(j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>(), j.size() > 3 ? j.at(3).get<float>() : 1.0f);
+		}
+	};
 }
 
 namespace {
@@ -103,10 +109,18 @@ namespace Fox {
 	namespace Scene {
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraKey, position, target)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CameraComponent, enabled, fov, priority)
+		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Space, { { TextComponent::Space::World, "world" }, { TextComponent::Space::Screen, "screen" } })
+		NLOHMANN_JSON_SERIALIZE_ENUM(TextComponent::Style, { { TextComponent::Style::Flat, "flat" }, { TextComponent::Style::Extruded, "extruded" } })
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(TextComponent, enabled, text, font, space, style, billboard, size, align, lineSpacing,
+			letterSpacing, color, fill, mask, roughness, metallic, emission, depth, subdivisions, displacement, displacementScale,
+			screenPosition, pivot, layer)
+		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SpriteComponent, enabled, image, mask, color, screenPosition, size, pivot, rotation,
+			layer, keepAspect)
 		NLOHMANN_JSON_SERIALIZE_ENUM(ParticleComponent::Effect, {
-			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" } })
+			{ ParticleComponent::Effect::Fire, "fire" }, { ParticleComponent::Effect::Magic, "magic" }, { ParticleComponent::Effect::Leaves, "leaves" },
+			{ ParticleComponent::Effect::Orbs, "orbs" } })
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ParticleComponent, enabled, effect, maxParticles, rate, lifetime, size, speed, spread,
-			height, color, brightness, windSpeed, light, lightIntensity, texture)
+			height, color, color2, brightness, windSpeed, light, lightIntensity, texture)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ClutterComponent, enabled, model, size, density, seed, minScale, maxScale,
 			randomTurn, alignToGround, maxSlope, sink, edgeFade, terrainLayer, faceCamera, sway, grassColor, grassHeight, blades)
 		NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SoundComponent, enabled, file, volume, pitch, loop, playOnStart, music, spatial,
@@ -515,6 +529,30 @@ namespace Fox {
 								component.scripts.push_back(std::move(script));
 							}
 							graph.GetRegistry().Add<Fox::Scene::ScriptComponent>(entity, std::move(component));
+						},
+					},
+					{
+						"text",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::TextComponent* text = graph.GetRegistry().TryGet<Fox::Scene::TextComponent>(entity);
+							if (!text) return false;
+							j = *text;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::TextComponent>(entity, j.get<Fox::Scene::TextComponent>());
+						},
+					},
+					{
+						"sprite",
+						[](const SceneGraph& graph, Entity entity, json& j) {
+							const Fox::Scene::SpriteComponent* sprite = graph.GetRegistry().TryGet<Fox::Scene::SpriteComponent>(entity);
+							if (!sprite) return false;
+							j = *sprite;
+							return true;
+						},
+						[](SceneGraph& graph, Entity entity, const json& j) {
+							graph.GetRegistry().Add<Fox::Scene::SpriteComponent>(entity, j.get<Fox::Scene::SpriteComponent>());
 						},
 					},
 					{
@@ -1022,6 +1060,10 @@ namespace Fox {
 				snapshot->restores.push_back(SnapshotOf<PhysicsComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<VolumeComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<CameraComponent>(graph));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::TextComponent>(graph,
+					[](const Fox::Scene::TextComponent&, const Fox::Scene::TextComponent&) { return true; },
+					[](const Fox::Scene::TextComponent&, Fox::Scene::TextComponent& value) { value.placed = false; }));
+				snapshot->restores.push_back(SnapshotOf<Fox::Scene::SpriteComponent>(graph));
 				snapshot->restores.push_back(SnapshotOf<Fox::Scene::ParticleComponent>(graph,
 					[](const Fox::Scene::ParticleComponent&, const Fox::Scene::ParticleComponent&) { return true; },
 					[](const Fox::Scene::ParticleComponent&, Fox::Scene::ParticleComponent& value) { value.placed = false; value.particles.clear(); }));

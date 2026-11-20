@@ -81,11 +81,56 @@ namespace Fox {
 			return index;
 		}
 
-		int TextureLibrary::CreateTexture(const std::vector<uint8_t>& rgba, int width, int height) {
+		int TextureLibrary::CreateTexture(const std::vector<uint8_t>& rgba, int width, int height, bool srgb) {
 			auto texture = Fox::Graphics::Vulkan::ShaderResourceTexture::LoadFromPixelData(device, physicalDevice, commandPool, queue,
-				rgba.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), VK_FORMAT_R8G8B8A8_UNORM, 4);
+				rgba.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height), srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, 4);
 			const int index = static_cast<int>(Fox::Graphics::Managers::Vulkan::TextureManager::Get().AddBindlessTexture(std::move(texture)));
 			version++;
+			return index;
+		}
+
+		int TextureLibrary::MaskedTexture(const std::string& fill, const std::string& mask, bool srgb) {
+			if (mask.empty()) {
+				return Texture(fill, srgb);
+			}
+			const std::string key = fill + "|" + mask + (srgb ? "|srgb" : "|linear");
+			if (auto it = masked.find(key); it != masked.end()) {
+				return it->second;
+			}
+			int fillWidth = 1, fillHeight = 1, maskWidth = 0, maskHeight = 0, channels = 0;
+			std::vector<uint8_t> pixels(4, 255);
+			if (!fill.empty()) {
+				stbi_uc* data = stbi_load(fill.c_str(), &fillWidth, &fillHeight, &channels, 4);
+				if (!data) {
+					throw std::runtime_error("Cannot read " + fill);
+				}
+				pixels.assign(data, data + static_cast<size_t>(fillWidth) * fillHeight * 4);
+				stbi_image_free(data);
+			}
+			int maskChannels = 0;
+			stbi_uc* alpha = stbi_load(mask.c_str(), &maskWidth, &maskHeight, &maskChannels, 4);
+			if (!alpha) {
+				throw std::runtime_error("Cannot read " + mask);
+			}
+			// At the larger of the two resolutions, the fill resampled (nearest) to it
+			const int width = std::max(fillWidth, maskWidth), height = std::max(fillHeight, maskHeight);
+			std::vector<uint8_t> out(static_cast<size_t>(width) * height * 4);
+			for (int y = 0; y < height; y++) {
+				for (int x = 0; x < width; x++) {
+					const int fx = x * fillWidth / width, fy = y * fillHeight / height;
+					const int mx = x * maskWidth / width, my = y * maskHeight / height;
+					const uint8_t* f = &pixels[(static_cast<size_t>(fy) * fillWidth + fx) * 4];
+					const uint8_t* m = &alpha[(static_cast<size_t>(my) * maskWidth + mx) * 4];
+					uint8_t* o = &out[(static_cast<size_t>(y) * width + x) * 4];
+					o[0] = f[0]; o[1] = f[1]; o[2] = f[2];
+					// The mask's alpha, or its brightness when it has none (a grey image)
+					const int cut = (maskChannels == 2 || maskChannels == 4) ? m[3] : (m[0] * 54 + m[1] * 183 + m[2] * 19) / 256;
+					o[3] = static_cast<uint8_t>(f[3] * cut / 255);
+				}
+			}
+			stbi_image_free(alpha);
+			const int index = CreateTexture(out, width, height, srgb);
+			masked[key] = index;
 			return index;
 		}
 

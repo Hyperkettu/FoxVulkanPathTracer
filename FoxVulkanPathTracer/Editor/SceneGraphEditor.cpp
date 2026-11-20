@@ -24,6 +24,139 @@ namespace Fox {
 			using Fox::Scene::SoundComponent;
 			using Fox::Scene::ClutterComponent;
 			using Fox::Scene::ParticleComponent;
+			using Fox::Scene::TextComponent;
+			using Fox::Scene::SpriteComponent;
+
+			// An image file, or none
+			bool ImageCombo(const char* label, std::string& file) {
+				static std::vector<std::string> images;
+				static double listed = -10.0;
+				if (ImGui::GetTime() - listed > 3.0) {
+					images = Fox::Scene::TextureLibrary::ListImages("Textures");
+					listed = ImGui::GetTime();
+				}
+				bool changed = false;
+				if (ImGui::BeginCombo(label, file.empty() ? "(none)" : file.c_str(), ImGuiComboFlags_HeightLarge)) {
+					if (ImGui::Selectable("(none)", file.empty())) { file.clear(); changed = true; }
+					for (const std::string& image : images) {
+						if (ImGui::Selectable(image.c_str(), image == file)) { file = image; changed = true; }
+					}
+					ImGui::EndCombo();
+				}
+				return changed;
+			}
+
+			void ScreenPlacement(glm::vec2& position, glm::vec2& pivot, int& layer) {
+				ImGui::SliderFloat2("Screen position", &position.x, 0.0f, 1.0f, "%.3f");
+				ImGui::SetItemTooltip("Fractions of the screen: (0, 0) the top left corner, (1, 1) the bottom right");
+				ImGui::SliderFloat2("Pivot", &pivot.x, 0.0f, 1.0f, "%.2f");
+				ImGui::SetItemTooltip("The point of it at the screen position: (0, 0) its top left, (0.5, 0.5) its middle");
+				ImGui::InputInt("Layer", &layer);
+				ImGui::SetItemTooltip("Higher layers are drawn in front");
+			}
+
+			void DrawTextInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
+				TextComponent& text = scene.GetSceneGraph().GetRegistry().Get<TextComponent>(entity);
+				ImGui::Checkbox("On", &text.enabled);
+				char buffer[4096];
+				std::snprintf(buffer, sizeof(buffer), "%s", text.text.c_str());
+				if (ImGui::InputTextMultiline("Text", buffer, sizeof(buffer), ImVec2(0.0f, ImGui::GetTextLineHeight() * 3.5f))) {
+					text.text = buffer;
+				}
+				static std::vector<std::string> fonts;
+				static double listed = -10.0;
+				if (ImGui::GetTime() - listed > 3.0) {
+					fonts = Fox::Text::ListFonts();
+					listed = ImGui::GetTime();
+				}
+				const std::string shownFont = text.font.empty() ? Fox::Text::DefaultFont() + " (default)" : text.font;
+				if (ImGui::BeginCombo("Font", shownFont.c_str())) {
+					for (const std::string& font : fonts) {
+						if (ImGui::Selectable(font.c_str(), font == text.font)) text.font = font;
+					}
+					if (fonts.empty()) ImGui::TextDisabled("No .ttf or .otf files in Fonts/");
+					ImGui::EndCombo();
+				}
+
+				int space = static_cast<int>(text.space);
+				const char* spaces[] = { "World", "Screen (UI)" };
+				if (ImGui::Combo("Where", &space, spaces, IM_ARRAYSIZE(spaces))) {
+					text.space = static_cast<TextComponent::Space>(space);
+					text.size = text.space == TextComponent::Space::Screen ? 64.0f : 1.0f;
+				}
+				int style = static_cast<int>(text.style);
+				const char* styles[] = { "Flat", "3D (extruded)" };
+				ImGui::Combo("Style", &style, styles, IM_ARRAYSIZE(styles));
+				text.style = static_cast<TextComponent::Style>(style);
+				const bool screen = text.space == TextComponent::Space::Screen;
+				const bool geometry = !screen || text.style == TextComponent::Style::Extruded;
+				if (!screen) {
+					ImGui::Checkbox("Billboard (faces the camera)", &text.billboard);
+				}
+
+				ImGui::SeparatorText("Look");
+				ImGui::DragFloat(screen ? "Size (px at 1080 lines)" : "Size (m)", &text.size, screen ? 0.5f : 0.01f, 0.01f, 4000.0f, "%.2f");
+				int align = std::clamp(text.align, 0, 2);
+				const char* aligns[] = { "Left", "Centre", "Right" };
+				if (ImGui::Combo("Align", &align, aligns, IM_ARRAYSIZE(aligns))) text.align = align;
+				ImGui::SliderFloat("Line spacing", &text.lineSpacing, 0.5f, 3.0f, "%.2f");
+				ImGui::SliderFloat("Letter spacing (em)", &text.letterSpacing, -0.3f, 1.0f, "%.3f");
+				ImGui::ColorEdit4("Colour", &text.color.x);
+				ImageCombo("Fill image", text.fill);
+				ImGui::SetItemTooltip("Textures the text over its bounds (multiplied by the colour)");
+				ImageCombo("Mask", text.mask);
+				ImGui::SetItemTooltip("Cuts the text out where the image is transparent (or dark, if it has no alpha): decorated text");
+				if (geometry) {
+					ImGui::SliderFloat("Roughness", &text.roughness, 0.0f, 1.0f, "%.2f");
+					ImGui::SliderFloat("Metallic", &text.metallic, 0.0f, 1.0f, "%.2f");
+					ImGui::SliderFloat("Glow", &text.emission, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+					ImGui::SetItemTooltip("Emitted light of its colour: neon. In the world it lights what is around");
+				}
+				if (text.style == TextComponent::Style::Extruded) {
+					ImGui::SeparatorText("3D");
+					ImGui::SliderFloat("Depth (em)", &text.depth, 0.0f, 2.0f, "%.3f");
+					ImGui::SliderInt("Subdivisions", &text.subdivisions, 0, 5);
+					ImGui::SetItemTooltip("Each triangle split in four this many times: detail for the displacement");
+					ImageCombo("Displacement", text.displacement);
+					ImGui::SetItemTooltip("A height map over the text's bounds: grey 0.5 stays, white rises, black sinks (along the surface)");
+					if (!text.displacement.empty()) {
+						ImGui::SliderFloat("Displacement (em)", &text.displacementScale, -0.5f, 0.5f, "%.3f");
+					}
+				}
+				if (screen) {
+					ImGui::SeparatorText("Screen");
+					ScreenPlacement(text.screenPosition, text.pivot, text.layer);
+				}
+				else {
+					ImGui::SliderFloat2("Pivot", &text.pivot.x, 0.0f, 1.0f, "%.2f");
+					ImGui::SetItemTooltip("The point of the text at the entity: (0.5, 0.5) its middle, (0.5, 0) its bottom");
+				}
+				if (geometry && text.triangles > 0) {
+					ImGui::TextDisabled("%llu triangles", static_cast<unsigned long long>(text.triangles));
+				}
+				if (geometry) {
+					ImGui::TextDisabled("Geometry: made again when a change is let go");
+				}
+				if (!text.problem.empty()) {
+					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", text.problem.c_str());
+				}
+			}
+
+			void DrawSpriteInspector(Scene& scene, Entity entity, SceneGraphEditor::InspectorState&) {
+				SpriteComponent& sprite = scene.GetSceneGraph().GetRegistry().Get<SpriteComponent>(entity);
+				ImGui::Checkbox("On", &sprite.enabled);
+				ImageCombo("Image", sprite.image);
+				ImageCombo("Mask", sprite.mask);
+				ImGui::SetItemTooltip("Cuts the image out where this is transparent (or dark, if it has no alpha)");
+				ImGui::ColorEdit4("Colour", &sprite.color.x);
+				ImGui::DragFloat2("Size (px at 1080 lines)", &sprite.size.x, 0.5f, 1.0f, 4000.0f, "%.0f");
+				ImGui::Checkbox("Keep the image's proportions", &sprite.keepAspect);
+				ImGui::SliderFloat("Rotation", &sprite.rotation, -180.0f, 180.0f, "%.0f deg");
+				ScreenPlacement(sprite.screenPosition, sprite.pivot, sprite.layer);
+				if (!sprite.problem.empty()) {
+					ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", sprite.problem.c_str());
+				}
+			}
 
 			// Prefab instances in the Hierarchy: the instance blue, what is under it a paler blue
 			const ImVec4 PREFAB_COLOR(0.45f, 0.72f, 1.0f, 1.0f);
@@ -715,7 +848,7 @@ namespace Fox {
 				using Effect = ParticleComponent::Effect;
 				ImGui::Checkbox("On", &particles.enabled);
 				int effect = static_cast<int>(particles.effect);
-				const char* effects[] = { "Fire", "Magic", "Leaves in the wind" };
+				const char* effects[] = { "Fire", "Magic", "Leaves in the wind", "Orbs (enchanted)" };
 				if (ImGui::Combo("Effect", &effect, effects, IM_ARRAYSIZE(effects)) && effect != static_cast<int>(particles.effect)) {
 					particles = ParticleComponent::Preset(static_cast<Effect>(effect)); // Its defaults (the rebuild follows)
 				}
@@ -726,10 +859,16 @@ namespace Fox {
 				ImGui::SliderFloat("Rate (per s)", &particles.rate, 0.0f, 500.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
 				ImGui::SliderFloat("Lifetime (s)", &particles.lifetime, 0.1f, 60.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 				ImGui::SliderFloat("Size (m)", &particles.size, 0.01f, 3.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-				ImGui::SliderFloat(particles.effect == Effect::Magic ? "Swirl speed (m/s)" : particles.effect == Effect::Fire ? "Rise (m/s)" : "Thrown (m/s)",
-					&particles.speed, 0.0f, 10.0f, "%.2f");
-				ImGui::SliderFloat(particles.effect == Effect::Leaves ? "Area half size (m)" : "Radius (m)", &particles.spread, 0.0f, 50.0f, "%.2f",
-					ImGuiSliderFlags_Logarithmic);
+				ImGui::SliderFloat(particles.effect == Effect::Magic ? "Swirl speed (m/s)" : particles.effect == Effect::Fire ? "Rise (m/s)"
+					: particles.effect == Effect::Orbs ? "Wander (m/s)" : "Thrown (m/s)", &particles.speed, 0.0f, 10.0f, "%.2f");
+				const bool area = particles.effect == Effect::Leaves || particles.effect == Effect::Orbs;
+				ImGui::SliderFloat(area ? "Area half size (m)" : "Radius (m)", &particles.spread, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+				if (particles.effect == Effect::Orbs) {
+					ImGui::SliderFloat("Hover height (m)", &particles.height, 0.1f, 10.0f, "%.2f");
+					ImGui::SetItemTooltip("Above the ground (each orb half to one and a half times this)");
+					ImGui::ColorEdit3("Second colour", &particles.color2.x);
+					ImGui::SetItemTooltip("Each orb is a shade between the colour and this");
+				}
 				if (particles.effect == Effect::Leaves) {
 					ImGui::SliderFloat("Start height (m)", &particles.height, 0.0f, 50.0f, "%.1f");
 					static std::vector<std::string> images;
@@ -755,7 +894,8 @@ namespace Fox {
 					ImGui::ColorEdit3(particles.effect == Effect::Fire ? "Light colour" : "Colour", &particles.color.x);
 					ImGui::SliderFloat("Brightness", &particles.brightness, 0.0f, 200.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
 					ImGui::Checkbox("Light", &particles.light);
-					ImGui::SetItemTooltip("A point light at it, flickering with it: it lights what is around");
+					ImGui::SetItemTooltip(particles.effect == Effect::Orbs ? "A point light in each of the first dozen orbs: they light what is under them"
+						: "A point light at it, flickering with it: it lights what is around");
 					if (particles.light) {
 						ImGui::SliderFloat("Light intensity", &particles.lightIntensity, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
 					}
@@ -1104,6 +1244,32 @@ namespace Fox {
 					},
 					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<ScriptComponent>(entity); },
 					DrawScript,
+				},
+				{
+					"Text", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<TextComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Text")) {
+							scene.GetSceneGraph().GetRegistry().Add<TextComponent>(entity);
+							scene.MarkStructureChanged();
+						}
+					},
+					[](Scene& scene, Entity entity) {
+						scene.GetSceneGraph().GetRegistry().Remove<TextComponent>(entity);
+						scene.MarkStructureChanged();
+					},
+					DrawTextInspector,
+				},
+				{
+					"Sprite", true,
+					[](Scene& scene, Entity entity) { return scene.GetSceneGraph().GetRegistry().Has<SpriteComponent>(entity); },
+					[](Scene& scene, Entity entity) {
+						if (ImGui::MenuItem("Sprite (UI image)")) {
+							scene.GetSceneGraph().GetRegistry().Add<SpriteComponent>(entity);
+						}
+					},
+					[](Scene& scene, Entity entity) { scene.GetSceneGraph().GetRegistry().Remove<SpriteComponent>(entity); },
+					DrawSpriteInspector,
 				},
 				{
 					"Particles", true,

@@ -11,10 +11,12 @@ static const uint INSTANCE_MASK_OPAQUE = 0x01;
 static const uint INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
 static const uint INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
 static const uint INSTANCE_MASK_EFFECT = 0x08;      // Glowing particles (fire, magic): seen and lit by, never in shadow rays
+static const uint INSTANCE_MASK_UI = 0x10;          // 3D text on the screen: only rays from the camera see it
 static const uint INSTANCE_MASK_ALL = 0xFF;
 
 // Material.layerMaterial of particles (ParticleComponent): the vertices' padding scales the emission (x: brightness 0..1)
-// and, from 0 up, colours it as fire of that heat (y: 1 white hot .. 0 out; below 0: the material's own colour)
+// and, from 0 up, colours it as fire of that heat (y: 1 white hot .. 0 out). Below 0 it blends from the material's emissive
+// colour (y = -1) to its second colour, baseColor at the emissive's strength (y = -2).
 static const int PARTICLE_MATERIAL = -3;
 
 // Fire's colour by heat: white-yellow, orange, deep red, then nothing (soot)

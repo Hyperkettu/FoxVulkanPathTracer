@@ -568,6 +568,12 @@ namespace Fox {
 					if (auto* sound = Graph().GetRegistry().TryGet<SoundComponent>(e)) sound->file = file;
 				}
 
+				static void SetText(uint64_t id, const char* value) {
+					Entity e;
+					if (!Valid(id, e) || !value) return;
+					if (auto* text = Graph().GetRegistry().TryGet<Fox::Scene::TextComponent>(e)) text->text = value;
+				}
+
 				static int32_t LayerFromName(const char* name) {
 					if (!name) return -1;
 					for (int i = 0; i < PhysicsWorld::LAYER_COUNT; i++) {
@@ -638,6 +644,7 @@ namespace Fox {
 				api.SetBusVolume = ScriptBindings::SetBusVolume;
 				api.EntitySound = ScriptBindings::EntitySound;
 				api.SetSoundFile = ScriptBindings::SetSoundFile;
+				api.SetText = ScriptBindings::SetText;
 
 				// The game's named input
 				std::string inputError;

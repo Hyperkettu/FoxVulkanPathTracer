@@ -411,6 +411,16 @@ namespace Fox
     /// distance from the camera). Background music is one track at a time on the music bus: a new one crossfades.
     /// Everything stops when play stops; pausing the game pauses it.
     /// </summary>
+    /// <summary>The game's UI and texts (TextComponent)</summary>
+    public static unsafe class UI
+    {
+        /// <summary>Changes a text: "Score: 10". Text on the screen changes at once; text in the world (geometry) with the next rebuild.</summary>
+        public static void SetText(Entity entity, string text)
+        {
+            fixed (byte* p = Native.Utf8(text ?? "")) Native.Api->SetText(entity.Id, p);
+        }
+    }
+
     public static unsafe class Audio
     {
         public static Sound Play(string file, float volume = 1.0f, float pitch = 1.0f, bool loop = false)

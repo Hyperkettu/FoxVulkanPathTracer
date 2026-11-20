@@ -304,6 +304,15 @@ namespace Fox {
                 Entity AddClutter(const glm::vec3& position);
                 // An entity emitting an effect (ParticleComponent)
                 Entity AddParticles(const glm::vec3& position, Fox::Scene::ParticleComponent::Effect effect);
+                // Text (TextComponent) and the UI's sprites (SpriteComponent)
+                Entity AddText(const glm::vec3& position, Fox::Scene::TextComponent::Space space, Fox::Scene::TextComponent::Style style,
+                    bool billboard = false, const std::string& font = "");
+                Entity AddSprite();
+
+                // The camera this frame (set before the frame's update): billboards turn to it, the screen's 3D text is
+                // held in front of it (UpdateViewObjects)
+                void SetViewCamera(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up, float fovY, float aspect);
+                void UpdateViewObjects();
 
                 // Whether a placed mesh moved, appeared or disappeared since the last call (for the denoisers)
                 bool TakeObjectsChanged() {
@@ -379,10 +388,23 @@ namespace Fox {
                 void PlaceParticles(const std::vector<Entity>& entities, std::string& problems);
                 void UpdateParticles(float dt);
                 void SimulateParticles(Entity entity, Fox::Scene::ParticleComponent& emitter, float dt);
+                // Orbs: the slots kept for orbs (the rest are motes)
+                static size_t OrbSlots(const Fox::Scene::ParticleComponent& emitter) {
+                    return std::max<size_t>(1, emitter.particles.size() / 4);
+                }
                 // Water surfaces' rectangles and levels (leaves float on them, clutter keeps out of them)
                 struct Pond { glm::vec3 centre; glm::vec2 half; };
                 std::vector<Pond> ponds;
                 float particleTime = 0.0f;
+                // Text: its geometry made with the rebuild; its object following its entity (or the camera)
+                void PlaceTexts(const std::vector<Entity>& entities, std::string& problems);
+                void UpdateTexts();
+                static std::string TextKey(const Fox::Scene::TextComponent& text);
+                struct ViewCamera {
+                    glm::vec3 position{ 0.0f }, forward{ 0.0f, 0.0f, -1.0f }, up{ 0.0f, 1.0f, 0.0f };
+                    float fovY = 1.0f, aspect = 1.5f;
+                } viewCamera;
+                static constexpr float SCREEN_TEXT_DISTANCE = 0.25f; // Metres in front of the camera the screen's 3D text is held
                 static void MakeGrassTuft(const Fox::Scene::ClutterComponent& clutter, std::vector<Fox::Graphics::Vulkan::Vertex>& vertices,
                     std::vector<uint32_t>& indices);
                 bool windLevelOfDetail = true;

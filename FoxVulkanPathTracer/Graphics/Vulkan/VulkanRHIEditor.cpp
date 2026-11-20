@@ -85,6 +85,9 @@ namespace Fox {
 						gizmo.Select(scene.AddModel(file, displacement, position));
 						sceneEditor.SetStatus("Loading " + file + "...", false);
 					};
+					actions.addFont = [&](const std::string& file) {
+						gizmo.Select(scene.AddText(glm::vec3(0.0f), Fox::Scene::TextComponent::Space::Screen, Fox::Scene::TextComponent::Style::Flat, false, file));
+					};
 					actions.openScene = [&](const std::string& file) {
 						sceneEditor.Open(scene, gizmo, file);
 					};
@@ -506,8 +509,23 @@ namespace Fox {
 					"particles flames campfire burning");
 				shell.Add("Create/Effects/Magic", [&] { gizmo.Select(scene.AddParticles(spawn + glm::vec3(0.0f, 0.2f, 0.0f), ParticleEffect::Magic)); }, "", true, -1,
 					"particles sparks glow spell swirl");
+				shell.Add("Create/Effects/Magic Orbs", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Orbs)); }, "", true, -1,
+					"particles orbs wisps fairy lights fireflies enchanted glow");
 				shell.Add("Create/Effects/Falling Leaves", [&] { gizmo.Select(scene.AddParticles(spawn, ParticleEffect::Leaves)); }, "", true, -1,
 					"particles leaves autumn wind flying");
+				using TextSpace = Fox::Scene::TextComponent::Space;
+				using TextStyle = Fox::Scene::TextComponent::Style;
+				shell.Add("Create/UI/Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::Screen, TextStyle::Flat)); }, "", true, -1,
+					"game ui hud label score vector font");
+				shell.Add("Create/UI/3D Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::Screen, TextStyle::Extruded)); }, "", true, -1,
+					"game ui hud title extruded font");
+				shell.Add("Create/UI/Sprite", [&] { gizmo.Select(scene.AddSprite()); }, "", true, -1, "game ui hud image icon picture");
+				shell.Add("Create/Text/World Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::World, TextStyle::Flat)); }, "", true, -1,
+					"sign label vector font");
+				shell.Add("Create/Text/Billboard Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::World, TextStyle::Flat, true)); }, "", true, -1,
+					"label facing camera name tag font");
+				shell.Add("Create/Text/3D Text", [&] { gizmo.Select(scene.AddText(spawn, TextSpace::World, TextStyle::Extruded)); }, "", true, -1,
+					"extruded letters title logo font");
 				shell.Add("Create/Clutter (grass)", [&] { gizmo.Select(scene.AddClutter(spawn)); }, "", true, -1,
 					"grass foliage scatter instanced instances billboard flowers stones rocks");
 				shell.Add("Create/Water", [&] { gizmo.Select(scene.AddWater(spawn + glm::vec3(0.0f, 0.8f, 0.0f))); }, "", true, -1,

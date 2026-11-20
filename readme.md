@@ -56,11 +56,28 @@ The **Fox Vulkan Path Tracing Renderer** leverages modern GPU hardware to produc
 * **Skinning & Wind** Skinned meshes are deformed on the GPU every frame (linear blend skinning in a compute shader,
   acceleration structures refitted). A procedural tree is built out of cylinders with a bone per cylinder, and every
   joint is an angular spring pushed by gusty wind. One wind direction for the whole scene: every tree sways the same way.
+* **Game UI and text** Vector text in any TrueType / OpenType font from `Fonts/`. The Content Browser lists that folder, and double-clicking a font adds a UI text in it.
+  * **How text is drawn:** glyph outlines (their quadratic and cubic curves) are flattened as finely as the size needs, laid out with the font's advances and kerning, and filled by triangulating them, holes and all. Nothing is a bitmap, so edges stay sharp at any size. A missing character leaves a space-wide gap. Code: `Text/VectorText`, triangulation after mapbox/earcut.
+  * **Text component** (**Create > UI** or **Create > Text**, or added in the Inspector), by where it is and its style:
+    * **Screen, flat:** the game's UI, drawn over the image and under the editor. It sits at a screen position with a pivot and a layer, at a size in pixels at 1080 lines, so it scales with the window. Edges get a one-pixel anti-aliased fringe.
+    * **World, flat:** a sign of real geometry, lit, shadowed and reflected like everything else. **Billboard** turns it to face the camera every frame.
+    * **World, 3D:** extruded letters (Depth). **Subdivisions** split every triangle in four, up to 5 times. A **Displacement** height map over the text's bounds then moves the surface along its smoothed normals. Positions are welded, so no cracks open between faces and walls.
+    * **Screen, 3D:** extruded letters held 25 cm in front of the camera, placed and sized like UI text and lit by the world around the camera. Only camera rays see them (instance mask `INSTANCE_MASK_UI`), so they cast no shadows and show in no reflections.
+  * **Decorated text:** a **Fill image** textures the text over its bounds, and a **Mask** cuts it out where the mask is transparent, or dark if it has no alpha. Both work in the UI and in the world, where they combine into one texture with the alpha tested. In the world, text can also have roughness, metallic and **Glow** (emission, so neon signs light their surroundings).
+  * **Sprite component** (Create > UI > Sprite): an image on the screen with a mask, colour, size, pivot, rotation and layer, keeping the image's proportions if wanted.
+  * **Scripts:** `UI.SetText(entity, "Score: 10")` changes a text. Text on the screen changes at once; text in the world is rebuilt as geometry with the next scene rebuild.
 * **Particle effects** **Create > Effects > Fire / Magic / Falling Leaves**, or a **Particles** component on any entity.
   * **Simulation:** particles are simulated on the CPU. Each is a quad of real geometry in a simulated surface, with its structure rebuilt every frame and previous positions uploaded, so motion vectors and DLSS see them move.
   * **Fire:** flame sprites (`Textures/particles/flame.png`) rise with buoyancy and turbulence and are carried by the wind. Each glows by its own heat, cooling from white-yellow through orange and red to soot (`FireColor` in `Shaders/common.slang`). A flickering point light lights what is around.
   * **Magic:** sparks (`Textures/particles/spark.png`) swirl up around the entity in its colour and twinkle, with a point light in the colour.
-  * **Fire and magic** face the camera and cast no shadows (instance mask `INSTANCE_MASK_EFFECT`). Every ray still sees them, and bounce rays carry their glow.
+  * **Magic orbs** (Create > Effects > Magic Orbs): glowing orbs (`Textures/particles/orb.png`) wander slowly over an area on currents of their own, with a breath of the scene's wind.
+    * **Hover:** they float and bob over the ground, at half to one and a half times the hover height.
+    * **Colour:** each orb is its own shade between two colours.
+    * **Motes:** three in four particles are tiny motes that twinkle around them.
+    * **Lights:** the first dozen orbs each carry a point light in their shade, so the ground and trees under them glow.
+    * **Fading:** orbs fade in and out over 1.5 s and pulse gently.
+    * **Brightness:** keep it low, about 2–6. Very bright colours are bleached toward white by the tone curve.
+  * **Fire, magic and orbs** face the camera and cast no shadows (instance mask `INSTANCE_MASK_EFFECT`). Every ray still sees them, and bounce rays carry their glow.
   * **Falling leaves:** each leaf is a rigid plate in the scene's wind (Environment > Wind towards, at the emitter's wind speed, gusting).
     * **Force:** the air pushes the leaf along its normal with ½ ρ C<sub>N</sub> A<sub>projected</sub> \|u\|², where A<sub>projected</sub> = A \|n · û\| is its area facing the relative wind u. A little skin friction acts along it. Velocity follows F / m, with an areal density of 0.15 kg/m².
     * **Torque:** that push acts at the centre of pressure, upwind of the middle by up to a quarter of the leaf the more the flow runs along it, and at the middle when it meets the leaf head on. So the torque is in proportion to the projected area too. It turns the leaf with a plate's moments of inertia (gyroscopic term included), damped by the air, which gives fluttering and tumbling.

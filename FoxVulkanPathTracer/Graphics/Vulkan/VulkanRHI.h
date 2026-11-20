@@ -175,6 +175,9 @@ namespace Fox {
 
 				// --- Editing ---
 				bool userInterface = false;      // ImGui is initialized
+				// Bindless textures as ImGui draws them (the game's UI), registered once each
+				std::map<int, VkDescriptorSet> imguiTextures;
+				ImTextureID ImGuiTexture(int index);
 				float uiScale = 0.0f;            // Sizes scale with the window height
 				Fox::Editor::TreeEditor treeEditor;
 				Fox::Editor::SceneEditor sceneEditor;

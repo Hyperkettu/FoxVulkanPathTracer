@@ -63,6 +63,7 @@ namespace Fox.Interop
         public delegate* unmanaged<int, float, void> SetBusVolume;
         public delegate* unmanaged<ulong, int, int> EntitySound;
         public delegate* unmanaged<ulong, byte*, void> SetSoundFile;
+        public delegate* unmanaged<ulong, byte*, void> SetText;
     }
 
     [StructLayout(LayoutKind.Sequential)]

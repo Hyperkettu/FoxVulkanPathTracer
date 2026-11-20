@@ -251,6 +251,9 @@ namespace Fox {
                 // Moves what is traced, not the object: applied after its transform (a tree swaying in the wind)
                 // Its instances' visibility mask instead of their surface kind's (INSTANCE_MASK_EFFECT: casts no shadow). Before Build.
                 void SetObjectMask(size_t object, uint32_t mask) { placements[object].maskOverride = mask; }
+                // Generated geometry with one material as a movable object (text); returns the object. Before Build.
+                size_t AddGeneratedObject(const std::vector<Fox::Graphics::Vulkan::Vertex>& surfaceVertices, const std::vector<uint32_t>& surfaceIndices,
+                    const Fox::Graphics::Vulkan::Material& material, const glm::mat4& transform, const std::string& name);
                 void SetObjectSway(size_t object, const glm::mat4& sway) {
                     placements[object].sway = sway;
                     tlasDirty = true;
@@ -330,6 +333,7 @@ namespace Fox {
                 static constexpr uint32_t INSTANCE_MASK_GLASS = 0x02;       // Thin glass (windows)
                 static constexpr uint32_t INSTANCE_MASK_SOLID_GLASS = 0x04; // Refracting solids
                 static constexpr uint32_t INSTANCE_MASK_EFFECT = 0x08;      // Glowing particles: no shadows
+                static constexpr uint32_t INSTANCE_MASK_UI = 0x10;          // On the screen (3D UI text): rays from the camera only
 
                 inline std::vector<Fox::Graphics::Vulkan::Vertex>& GetVertices() {
                     return vertices;

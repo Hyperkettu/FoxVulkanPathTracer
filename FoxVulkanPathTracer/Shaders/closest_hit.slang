@@ -149,11 +149,19 @@ void main(inout HitPayload payload, BuiltInTriangleIntersectionAttributes attrib
         if (material.layerMaterial == PARTICLE_MATERIAL)
         {
             float2 glow = v0.padding * barycentrics.x + v1.padding * barycentrics.y + v2.padding * barycentrics.z;
-            emission *= max(glow.x, 0.0f);
             if (glow.y >= 0.0f)
             {
                 emission *= FireColor(glow.y);
             }
+            else
+            {
+                // Between its two colours (orbs: each its own shade)
+                float3 second = material.baseColor.rgb * MaxComponent(material.emissive);
+                if (material.emissiveTexture >= 0)
+                    second *= SampleTexture(material.emissiveTexture, uv).rgb;
+                emission = lerp(emission, second, saturate(-1.0f - glow.y));
+            }
+            emission *= max(glow.x, 0.0f);
         }
     }
 

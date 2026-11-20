@@ -25,6 +25,8 @@
 //   SoundComponent      it plays a sound (in the world, from where it is) or background music (Audio/AudioEngine.h)
 //   ClutterComponent    it scatters copies of a mesh over the ground around it: grass, flowers, stones (instanced)
 //   ParticleComponent   it emits particles: fire, magic sparks or leaves flying in the wind
+//   TextComponent       vector text: on the screen (the game's UI) or in the world, flat, facing the camera or 3D
+//   SpriteComponent     an image on the screen (the game's UI)
 //
 // Adding a component type (e.g. audio):
 //   1. the struct here
@@ -355,6 +357,74 @@ namespace Fox {
 			std::vector<float> phases;
 		};
 
+		struct UITextCache; // UI/GameUI.cpp
+
+		// Vector text in a TrueType / OpenType font (Fonts/, Text/VectorText.h): the glyphs' outlines, sharp at any size.
+		//   Screen + Flat      the game's UI: drawn over the image at a fraction of the screen (GameUI)
+		//   World  + Flat      a flat sign of real geometry in the world, lit like everything else; or a billboard,
+		//                      turning to face the camera
+		//   World  + Extruded  3D letters (depth), subdivided and displaced by a height map if wanted
+		//   Screen + Extruded  3D letters in the UI: geometry held in front of the camera, lit by the world around it;
+		//                      only rays from the camera see it (no shadows on the world, no reflections)
+		// A fill image textures it and a mask (alpha, or brightness) cuts it: decorated text. Sizes: in the world metres
+		// of an em, on the screen pixels of an em at 1080 lines.
+		struct TextComponent {
+			enum class Space { World, Screen };
+			enum class Style { Flat, Extruded };
+			bool enabled = true;
+			std::string text = "Text";
+			std::string font;            // Fonts/*.ttf or .otf; empty: the first one there
+			Space space = Space::World;
+			Style style = Style::Flat;
+			bool billboard = false;      // World: turns to face the camera
+			float size = 1.0f;           // World: metres; screen: pixels at 1080 lines
+			int align = 1;               // 0 left, 1 centre, 2 right
+			float lineSpacing = 1.0f;    // Of the font's line height
+			float letterSpacing = 0.0f;  // Ems
+			glm::vec4 color{ 1.0f };     // On the screen its alpha too
+			std::string fill;            // An image textured over its bounds
+			std::string mask;            // An image whose alpha (or brightness) cuts it out over its bounds
+			float roughness = 0.4f;      // Geometry (world, 3D)
+			float metallic = 0.0f;
+			float emission = 0.0f;       // Glow: emitted radiance of its colour
+			float depth = 0.2f;          // Extruded: ems
+			int subdivisions = 0;        // Extruded: every triangle split in four this many times (for displacement)
+			std::string displacement;    // Extruded: a height map over its bounds (0.5 grey: none)
+			float displacementScale = 0.03f; // Ems from black to white
+			glm::vec2 screenPosition{ 0.5f, 0.1f }; // Screen: 0..1, (0, 0) the top left corner
+			glm::vec2 pivot{ 0.5f, 0.5f };          // The point of its bounds there (and the world's origin of it)
+			int layer = 0;               // Screen: higher in front
+
+			// Set by the scene
+			bool placed = false;
+			std::string placedKey;
+			size_t object = SIZE_MAX;
+			uint64_t triangles = 0;
+			std::string problem;
+			std::shared_ptr<UITextCache> cache; // Screen text's outlines
+			std::string uiTextureKey;
+			int uiTexture = -1;
+		};
+
+		// An image on the screen (the game's UI), over the 3D image and under the editor
+		struct SpriteComponent {
+			bool enabled = true;
+			std::string image;           // Empty: a plain rectangle of the colour
+			std::string mask;            // Alpha (or brightness) cutting it out
+			glm::vec4 color{ 1.0f };     // Multiplies the image
+			glm::vec2 screenPosition{ 0.5f, 0.5f }; // 0..1, (0, 0) the top left corner
+			glm::vec2 size{ 128.0f, 128.0f };       // Pixels at 1080 lines
+			glm::vec2 pivot{ 0.5f, 0.5f };
+			float rotation = 0.0f;       // Degrees, clockwise
+			int layer = 0;
+			bool keepAspect = true;      // Width from the height and the image's proportions
+
+			// Set by the UI
+			std::string textureKey;
+			int texture = -1;
+			std::string problem;
+		};
+
 		// One particle of a ParticleComponent (simulated on the CPU, MainRayTracingScene::UpdateParticles)
 		struct Particle {
 			glm::vec3 position{ 0.0f }, previousPosition{ 0.0f };
@@ -367,20 +437,25 @@ namespace Fox {
 			float life = 1.0f;
 			float phase = 0.0f;          // Decorrelates flicker and swirl
 			bool landed = false;         // Leaves: lying on the ground or the water
+			bool mote = false;           // Orbs: a glittering mote around them, not an orb
+			float shade = 0.0f;          // Orbs: 0 the first colour .. 1 the second
+			float hover = 1.0f;          // Orbs: metres above the ground it floats at
 			bool alive = false;
 		};
 
 		// The entity emits particles, simulated on the CPU and traced as real geometry (a quad each):
 		//   Fire    glowing flame sprites rising, cooling from white-yellow to red and soot; a flickering point light
 		//   Magic   glowing sparks swirling up around it in the colour; a point light in the colour
+		//   Orbs    glowing orbs drifting and hovering over the area, each its own shade between two colours, with
+		//           glittering motes twinkling around them; the first dozen orbs light what is under them (enchanted)
 		//   Leaves  leaves (a texture with alpha: its normal, roughness, metallic and ambient occlusion maps are found
 		//           beside it) flying in the scene's wind and fluttering down. Each is a rigid plate: the air pushes it
 		//           along its normal in proportion to its area facing the relative wind, at the centre of pressure
 		//           (off centre, upwind, unless the flow is head-on): that turns it, damped by the air. They land and
 		//           lie on the ground (or float on water) until their life is over.
-		// Fire and magic face the camera and cast no shadows; leaves cast them.
+		// Fire, magic and orbs face the camera and cast no shadows; leaves cast them.
 		struct ParticleComponent {
-			enum class Effect { Fire, Magic, Leaves };
+			enum class Effect { Fire, Magic, Leaves, Orbs };
 			bool enabled = true;
 			Effect effect = Effect::Fire;
 			uint32_t maxParticles = 320;
@@ -391,9 +466,10 @@ namespace Fox {
 			float spread = 0.35f;        // Metres: fire's base radius; magic's ring; leaves: half the area they start over
 			float height = 0.0f;         // Leaves: metres above the entity they start at
 			glm::vec3 color{ 1.0f, 0.55f, 0.2f }; // Fire: its light's colour; magic: the sparks' and light's colour
+			glm::vec3 color2{ 0.85f, 0.45f, 1.0f }; // Orbs: the other colour (each orb is a shade between the two)
 			float brightness = 12.0f;    // Glow (emitted radiance)
 			float windSpeed = 4.0f;      // m/s of the scene's wind (Environment > Wind towards) it is carried by
-			bool light = true;           // Fire and magic: a point light that flickers with it
+			bool light = true;           // Fire and magic: a point light that flickers with it; orbs: one each (the first dozen)
 			float lightIntensity = 4.0f; // Irradiance at 1 m
 			std::string texture;         // Leaves: the albedo image (empty: Textures/vahtera/vahtera_leaf.png)
 
@@ -404,6 +480,11 @@ namespace Fox {
 				if (effect == Effect::Magic) {
 					p.maxParticles = 256; p.rate = 120.0f; p.lifetime = 1.6f; p.size = 0.09f; p.speed = 2.5f; p.spread = 0.6f;
 					p.color = glm::vec3(0.35f, 0.6f, 1.0f); p.brightness = 25.0f; p.windSpeed = 0.0f; p.lightIntensity = 2.0f;
+				}
+				else if (effect == Effect::Orbs) {
+					p.maxParticles = 160; p.rate = 8.0f; p.lifetime = 12.0f; p.size = 0.18f; p.speed = 0.35f; p.spread = 10.0f;
+					p.height = 1.2f; p.color = glm::vec3(0.55f, 0.85f, 1.0f); p.color2 = glm::vec3(0.85f, 0.45f, 1.0f);
+					p.brightness = 4.0f; p.windSpeed = 0.6f; p.lightIntensity = 1.2f; // Not too bright: the tone curve bleaches very bright colours white
 				}
 				else if (effect == Effect::Leaves) {
 					p.maxParticles = 300; p.rate = 10.0f; p.lifetime = 25.0f; p.size = 0.14f; p.speed = 0.5f; p.spread = 6.0f;
@@ -418,7 +499,7 @@ namespace Fox {
 			uint32_t placedMax = 0;
 			std::string placedTexture;
 			size_t surface = SIZE_MAX;   // Its simulated surface
-			size_t lightIndex = SIZE_MAX;
+			std::vector<size_t> lights;  // Fire and magic: one; orbs: one per orb slot of the first dozen
 			std::vector<Particle> particles;
 			float spawnCarry = 0.0f;
 			uint32_t random = 1;

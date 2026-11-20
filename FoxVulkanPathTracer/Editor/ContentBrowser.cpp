@@ -40,6 +40,9 @@ namespace Fox {
 				|| extension == ".hdr" || extension == ".exr") {
 				return Kind::Image;
 			}
+			if (extension == ".ttf" || extension == ".otf") {
+				return Kind::Font;
+			}
 			return Kind::Other;
 		}
 
@@ -49,6 +52,7 @@ namespace Fox {
 			case Kind::Model: return "[model]";
 			case Kind::Scene: return "[scene]";
 			case Kind::Image: return "[image]";
+			case Kind::Font: return "[font]";
 			default: return "";
 			}
 		}
@@ -128,6 +132,11 @@ namespace Fox {
 			case Kind::Scene:
 				if (actions.openScene) {
 					actions.openScene(entry.path);
+				}
+				break;
+			case Kind::Font:
+				if (actions.addFont) {
+					actions.addFont(entry.path);
 				}
 				break;
 			default:
@@ -221,7 +230,8 @@ namespace Fox {
 						if (ImGui::IsItemHovered() && entry.kind != Kind::Folder) {
 							ImGui::SetItemTooltip("%s\n%s", entry.path.c_str(),
 								entry.kind == Kind::Model ? "Double-click to add it to the scene, or drag it onto an entity in the Hierarchy"
-								: entry.kind == Kind::Scene ? "Double-click to open this scene" : "");
+								: entry.kind == Kind::Scene ? "Double-click to open this scene"
+								: entry.kind == Kind::Font ? "Double-click to add a UI text in this font" : "");
 						}
 
 						// Models drag into the Hierarchy
