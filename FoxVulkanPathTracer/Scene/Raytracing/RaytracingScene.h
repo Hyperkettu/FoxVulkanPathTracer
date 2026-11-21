@@ -569,7 +569,7 @@ namespace Fox {
                 VkBuffer editScratchBuffer = VK_NULL_HANDLE;
                 VkDeviceMemory editScratchMemory = VK_NULL_HANDLE;
                 VkDeviceSize editScratchSize = 0;
-                void RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot);
+                void RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot, const std::function<void(const char*)>& mark = {});
 
                 // Builds the bottom level structures from index first on (with their own scratch memory)
                 void BuildDynamicBLAS(size_t first);

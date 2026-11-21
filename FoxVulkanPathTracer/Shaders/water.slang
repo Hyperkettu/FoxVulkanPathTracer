@@ -82,7 +82,7 @@ struct Constants
 [[vk::binding(13, 0)]] RWStructuredBuffer<float> gFoamOut;
 [[vk::binding(14, 0)]] RWStructuredBuffer<uint> gLanded;      // Per cell: spray that landed (thousandths of a cell of foam)
 [[vk::binding(15, 0)]] RWStructuredBuffer<float4> gParticles; // 2 per droplet: position + life (seconds), velocity + radius
-[[vk::binding(16, 0)]] RWStructuredBuffer<uint> gParticleCounter; // Droplets ever thrown (the ring's next slot)
+[[vk::binding(16, 0)]] RWStructuredBuffer<uint> gParticleCounter; // [0] droplets ever thrown (the ring's next slot), [1] flying this frame
 [[vk::binding(17, 0)]] RWStructuredBuffer<float> gChurn;      // Per cell: how hard the water breaks this frame
 
 static const float WET = 1e-3f; // Metres: shallower is dry
@@ -464,6 +464,11 @@ void main(uint3 id : SV_DispatchThreadID)
         }
         gParticles[id.x * 2 + 0] = float4(position, life);
         gParticles[id.x * 2 + 1] = float4(velocity, radius);
+        if (life > 0.0f)
+        {
+            uint ignoredCount;
+            InterlockedAdd(gParticleCounter[1], 1u, ignoredCount); // Read back: no flying droplets, no structure rebuild
+        }
     }
 
     // Its octahedron. While it is not flying its corners are NaN: inactive triangles, which the structure's build

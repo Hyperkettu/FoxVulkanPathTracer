@@ -370,7 +370,15 @@ namespace Fox {
 
 					// 1, 2: select, prepare
 					dispatch(0, workCount);
-					dispatch(1, clusterCount);
+					{
+						// A workgroup per cluster, in rows (a dimension's group count may be limited to 65535)
+						constexpr uint32_t PREPARE_ROW = 32768; // As in cluster_lod.slang
+						vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[1]);
+						vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout->Get(), 0, 1, &set, 0, nullptr);
+						vkCmdPushConstants(cmd, layout->Get(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Constants), &constants);
+						vkCmdDispatch(cmd, std::min(clusterCount, PREPARE_ROW), (clusterCount + PREPARE_ROW - 1) / PREPARE_ROW, 1);
+						Barrier(cmd);
+					}
 					if (mark) mark("lod select");
 
 					// 3: the clusters used this frame

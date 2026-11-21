@@ -83,6 +83,8 @@ namespace Fox {
 
 			const Grid& GetGrid() const { return grid; }
 			uint32_t LastSubsteps() const { return lastSubsteps; }
+			// Spray droplets flying a few frames ago (read back), or ~0u before the first readback
+			uint32_t FlyingDroplets() const { return flyingDroplets; }
 
 		private:
 			std::unique_ptr<Fox::Graphics::Vulkan::Buffer> MakeBuffer(VkDeviceSize size, const void* data);
@@ -120,6 +122,7 @@ namespace Fox {
 			uint32_t frame = 0;
 			double initialVolume = 0.0;
 			float correction = 0.0f; // Metres per second added to every wet cell
+			uint32_t flyingDroplets = ~0u;
 		};
 	}
 }

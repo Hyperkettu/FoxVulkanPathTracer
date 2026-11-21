@@ -1401,7 +1401,7 @@ namespace Fox {
                 // Simulations writing geometry (water), then what the edits and simulations changed
                 RecordSimulations(cmd, frameSlot);
                 if (mark) mark("simulate");
-                RecordEdits(cmd, frameSlot);
+                RecordEdits(cmd, frameSlot, mark);
                 if (mark) mark("edits");
 
                 // Deform the skinned meshes every frame (also when their joints did not change: the previous
@@ -2288,7 +2288,7 @@ namespace Fox {
                 textureUpdates.push_back({ texture, x, y, width, height, std::move(rgba) });
             }
 
-            void RayTracingScene::RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot) {
+            void RayTracingScene::RecordEdits(VkCommandBuffer cmd, uint32_t frameSlot, const std::function<void(const char*)>& mark) {
                 using Fox::Graphics::Vulkan::Vertex;
 
                 VkDeviceSize stagingBytes = 0;
@@ -2415,15 +2415,33 @@ namespace Fox {
                         0, 1, &afterCopy, 0, nullptr, 0, nullptr);
                 }
 
+                if (mark) mark("edits upload");
                 // --- Bottom level structures of the edited surfaces: refitted, or built anew ---
-                // They share one scratch buffer, sized first for all of them: replacing it between two builds
-                // would free memory an earlier build in this command buffer (or a frame in flight) still uses
+                // All in one build command, each with its own part of one scratch buffer, so the GPU builds them side by
+                // side. (One after another, behind a barrier each, a few small ones cost milliseconds of waiting: every
+                // particle emitter and simulated surface is built anew every frame.)
+                struct EditBuild {
+                    BottomLevelAccelerationStructure* blas;
+                    bool rebuild;
+                    VkDeviceSize scratchOffset;
+                };
+                std::vector<EditBuild> builds;
                 {
+                    static VkDeviceSize alignment = 0;
+                    if (alignment == 0) {
+                        VkPhysicalDeviceAccelerationStructurePropertiesKHR properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR };
+                        VkPhysicalDeviceProperties2 properties2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &properties };
+                        vkGetPhysicalDeviceProperties2(physicalDevice, &properties2);
+                        alignment = std::max<VkDeviceSize>(properties.minAccelerationStructureScratchOffsetAlignment, 256);
+                    }
                     VkDeviceSize needed = 0;
-                    for (const EditableSurface& surface : editableSurfaces) {
+                    for (EditableSurface& surface : editableSurfaces) {
                         if (!surface.refit && !surface.rebuild) {
                             continue;
                         }
+                        const bool rebuild = surface.rebuild;
+                        surface.refit = false;
+                        surface.rebuild = false;
                         for (int blasIndex : meshRecords[surface.record].blas) {
                             if (blasIndex < 0) {
                                 continue;
@@ -2439,8 +2457,12 @@ namespace Fox {
                             };
                             VkAccelerationStructureBuildSizesInfoKHR sizes{ .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
                             vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &sizeQuery, blas.primitiveCounts.data(), &sizes);
-                            needed = std::max({ needed, sizes.buildScratchSize, sizes.updateScratchSize });
+                            builds.push_back({ &blas, rebuild, needed });
+                            const VkDeviceSize scratch = rebuild ? sizes.buildScratchSize : sizes.updateScratchSize;
+                            needed += (scratch + alignment - 1) / alignment * alignment;
                         }
+                        // The top level structure stores the bounds of the bottom level ones
+                        tlasDirty = true;
                     }
                     if (needed > editScratchSize) {
                         if (editScratchBuffer != VK_NULL_HANDLE) {
@@ -2448,56 +2470,49 @@ namespace Fox {
                             vkDestroyBuffer(device, editScratchBuffer, nullptr);
                             vkFreeMemory(device, editScratchMemory, nullptr);
                         }
-                        CreateScratchBuffer(device, physicalDevice, needed, editScratchBuffer, editScratchMemory, "Edit BLAS Scratch");
-                        editScratchSize = needed;
+                        // Room to grow (another emitter, a bigger one) without waiting for the GPU again soon
+                        const VkDeviceSize size = needed + needed / 2;
+                        CreateScratchBuffer(device, physicalDevice, size, editScratchBuffer, editScratchMemory, "Edit BLAS Scratch");
+                        editScratchSize = size;
                     }
                 }
-                for (EditableSurface& surface : editableSurfaces) {
-                    if (!surface.refit && !surface.rebuild) {
-                        continue;
-                    }
-                    const bool rebuild = surface.rebuild;
-                    surface.refit = false;
-                    surface.rebuild = false;
-
-                    for (int blasIndex : meshRecords[surface.record].blas) {
-                        if (blasIndex < 0) {
-                            continue;
-                        }
-                        BottomLevelAccelerationStructure& blas = bottomLevelAccelerationStructure[blasIndex];
-                        const VkBuildAccelerationStructureFlagsKHR flags = BlasBuildFlags(blas);
-
-                        // The previous frame's rays and builds must be done with the structure and the scratch memory
-                        VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
-                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
-                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
-
-                        VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
+                if (!builds.empty()) {
+                    const VkDeviceAddress scratchAddress = GetBufferAddress(editScratchBuffer);
+                    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
+                    std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> ranges;
+                    infos.reserve(builds.size());
+                    ranges.reserve(builds.size());
+                    for (const EditBuild& build : builds) {
+                        BottomLevelAccelerationStructure& blas = *build.blas;
+                        infos.push_back({
                             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
                             .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-                            .flags = flags,
-                            .mode = rebuild ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR,
-                            .srcAccelerationStructure = rebuild ? VK_NULL_HANDLE : blas.handle,
+                            .flags = BlasBuildFlags(blas),
+                            .mode = build.rebuild ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR,
+                            .srcAccelerationStructure = build.rebuild ? VK_NULL_HANDLE : blas.handle,
                             .dstAccelerationStructure = blas.handle,
                             .geometryCount = static_cast<uint32_t>(blas.geometries.size()),
                             .pGeometries = blas.geometries.data(),
-                            .scratchData = {.deviceAddress = GetBufferAddress(editScratchBuffer) }
-                        };
-                        const VkAccelerationStructureBuildRangeInfoKHR* ranges[] = { blas.ranges.data() };
-                        vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, ranges);
-
-                        VkMemoryBarrier afterBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
-                            VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                            VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
-                        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                            0, 1, &afterBuild, 0, nullptr, 0, nullptr);
+                            .scratchData = {.deviceAddress = scratchAddress + build.scratchOffset }
+                        });
+                        ranges.push_back(blas.ranges.data());
                     }
 
-                    // The top level structure stores the bounds of the bottom level ones
-                    tlasDirty = true;
+                    // The previous frame's rays and builds must be done with the structures and the scratch memory
+                    VkMemoryBarrier beforeBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &beforeBuild, 0, nullptr, 0, nullptr);
+
+                    vkCmdBuildAccelerationStructuresKHR(cmd, static_cast<uint32_t>(infos.size()), infos.data(), ranges.data());
+
+                    VkMemoryBarrier afterBuild{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr,
+                        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                        VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR };
+                    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                        0, 1, &afterBuild, 0, nullptr, 0, nullptr);
                 }
             }
 		            Fox::Graphics::Vulkan::RayTracing::HybridRasterPass::Content RayTracingScene::MakeRasterContent() const {

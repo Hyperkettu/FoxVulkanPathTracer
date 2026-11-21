@@ -174,6 +174,9 @@ namespace Fox {
 			cpuDepth.assign(values, values + cells);
 			cpuU.assign(values + cells, values + cells + uFaces);
 			cpuV.assign(values + cells + uFaces, values + cells + uFaces + vFaces);
+			if (particleCount > 0) {
+				std::memcpy(&flyingDroplets, values + cells + uFaces + vFaces, sizeof(uint32_t));
+			}
 			readback[slot]->Unmap();
 
 			// The volume, every second or so: what it lost is put back over the next second
@@ -193,7 +196,7 @@ namespace Fox {
 				static const bool debug = SDL_getenv("FOX_WATER_DEBUG") != nullptr;
 				if (debug) {
 					std::cout << "Water: depth " << low << " .. " << high << ", volume " << volume << " of " << initialVolume << " m3, "
-						<< substeps << " steps of " << dt * 1000.0f << " ms" << std::endl;
+						<< substeps << " steps of " << dt * 1000.0f << " ms, " << flyingDroplets << " droplets flying" << std::endl;
 				}
 			}
 		}
@@ -323,6 +326,8 @@ namespace Fox {
 				vkCmdCopyBuffer(cmd, foam[1]->Get(), foam[0]->Get(), 1, &copy);
 				Barrier(cmd);
 				if (particleCount > 0) {
+					vkCmdFillBuffer(cmd, particleCounter->Get(), sizeof(uint32_t), sizeof(uint32_t), 0); // This frame's flying count
+					Barrier(cmd);
 					dispatch(5, current, cells);
 					dispatch(6, current, particleCount);
 				}
@@ -336,7 +341,7 @@ namespace Fox {
 				const uint32_t uFaces = (grid.width + 1) * grid.depth;
 				const uint32_t vFaces = grid.width * (grid.depth + 1);
 				if (!readback[slot]) {
-					readback[slot] = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(float) * (cells + uFaces + vFaces),
+					readback[slot] = std::make_unique<Fox::Graphics::Vulkan::Buffer>(device, physicalDevice, sizeof(float) * (cells + uFaces + vFaces + 1),
 						VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 				}
 				const VkBufferCopy copies[3] = {
@@ -347,6 +352,10 @@ namespace Fox {
 				vkCmdCopyBuffer(cmd, depth[current]->Get(), readback[slot]->Get(), 1, &copies[0]);
 				vkCmdCopyBuffer(cmd, u[current]->Get(), readback[slot]->Get(), 1, &copies[1]);
 				vkCmdCopyBuffer(cmd, v[current]->Get(), readback[slot]->Get(), 1, &copies[2]);
+				if (particleCount > 0) {
+					const VkBufferCopy flying{ sizeof(uint32_t), sizeof(float) * (cells + uFaces + vFaces), sizeof(uint32_t) };
+					vkCmdCopyBuffer(cmd, particleCounter->Get(), readback[slot]->Get(), 1, &flying);
+				}
 				VkMemoryBarrier toHost{ VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT };
 				vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
 				readbackWritten[slot] = true;

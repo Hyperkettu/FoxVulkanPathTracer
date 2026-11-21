@@ -19,11 +19,11 @@ namespace Fox {
 		// ------------------------------------------------------------------------------------------------
 
 		std::shared_ptr<Font> Font::Get(const std::string& file) {
-			static std::map<std::string, std::weak_ptr<Font>> loaded;
+			// Kept for good: a font is read once (a weak reference let it go as soon as each text was drawn, so every
+			// text read its font file again every frame, and its glyphs' outlines were flattened again)
+			static std::map<std::string, std::shared_ptr<Font>> loaded;
 			if (auto it = loaded.find(file); it != loaded.end()) {
-				if (auto font = it->second.lock()) {
-					return font;
-				}
+				return it->second;
 			}
 			std::ifstream in(file, std::ios::binary);
 			if (!in) {

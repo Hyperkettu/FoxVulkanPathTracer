@@ -701,7 +701,7 @@ namespace Fox {
 					shell.Add(label, [this, pixels] { raytracingScene->SetClusterLodThreshold(pixels); }, "",
 						raytracingScene->HasClusterMeshes(), raytracingScene->GetClusterLodThreshold() == pixels ? 1 : 0, "lod level of detail clusters nanite quality");
 				}
-				for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance }) {
+				for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance, RenderPreset::Laptop30, RenderPreset::Laptop25 }) {
 					std::string label = std::string("Render/Preset/") + PresetName(p);
 					if (p == RenderPreset::Auto) {
 						label += std::string(" (") + PresetName(modestGpu ? RenderPreset::Balanced : RenderPreset::Quality) + " here)";

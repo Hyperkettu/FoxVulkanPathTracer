@@ -958,6 +958,7 @@ namespace Fox {
 					emitter->placedMax = emitter->maxParticles;
 					emitter->placedTexture = emitter->texture;
 					emitter->surface = SIZE_MAX;
+					emitter->idle = false;
 					emitter->lights.clear();
 					emitter->particleLightIndices.clear();
 					emitter->particles.assign(std::clamp<uint32_t>(emitter->maxParticles, 1, 16384), Fox::Scene::Particle{});
@@ -1450,6 +1451,14 @@ namespace Fox {
 					light.color = (active && emitter.light) ? emitter.color * (emitter.lightIntensity * flicker * amount) : glm::vec3(0.0f);
 					SetLight(emitter.lights[0], light);
 				}
+
+				// --- Nothing to show (an emitter switched off, like rain that has stopped): once its surface shows nothing,
+				// it is left as it is: no quads, no upload, no rebuilt structure, and its lights stay dark ---
+				const bool anyAlive = std::any_of(emitter.particles.begin(), emitter.particles.end(), [](const Particle& p) { return p.alive; });
+				if (!anyAlive && emitter.idle) {
+					return;
+				}
+				emitter.idle = !anyAlive; // This frame writes the empty surface (and the dark lights) one last time
 
 				// --- The quads ---
 				const glm::vec3 camera = GetClusterLodView().cameraPosition;
@@ -2488,7 +2497,13 @@ namespace Fox {
 					water.simulation->Record(cmd, frameTime, parameters, frameSlot);
 					MarkSurfaceDeformed(water.surface);
 					if (water.hasSpray) {
-						MarkSurfaceDeformed(water.spraySurface, true); // Droplets fly far: built anew every frame
+						// Droplets fly far: built anew every frame while any fly. The count read back is a few frames old,
+						// so it keeps building a few frames after it reads none (the last droplets' landing is written)
+						const uint32_t flying = water.simulation->FlyingDroplets();
+						water.sprayQuietFrames = flying == 0 ? water.sprayQuietFrames + 1 : 0;
+						if (water.sprayQuietFrames <= 6) {
+							MarkSurfaceDeformed(water.spraySurface, true);
+						}
 					}
 				});
 			}

@@ -3,7 +3,7 @@
 //
 //   0 select    per (instance, candidate cluster): is the cluster in the instance's cut through the graph?
 //               Collects the cluster in the instance's list and marks it used this frame.
-//   1 prepare   per cluster: a used cluster gets a slot in this frame's cluster build, its instantiation info (its
+//   1 prepare   a workgroup per cluster: a used cluster gets a slot in this frame's cluster build, its instantiation info (its
 //               template and its vertices), and its vertices gathered from the skinned vertex buffer (where the wind put them)
 //   2 refs      per (instance, selected cluster): the address of the cluster's acceleration structure, and per
 //               instance the bottom level build info listing them
@@ -79,6 +79,7 @@ struct Constants
 [[vk::binding(16, 0)]] RWByteAddressBuffer gTlasInstances;       // VkAccelerationStructureInstanceKHR, 64 bytes each
 
 static const float NO_PARENT = 3.0e38f;
+static const uint PREPARE_ROW = 32768; // Workgroups per row of the prepare pass (ClusterLodPass::PREPARE_ROW)
 
 // The instance that thread t works for: the last one whose first thread is <= t
 uint InstanceOfWork(uint t)
@@ -109,7 +110,7 @@ float ProjectedError(float error, float4 bounds, Instance instance)
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void main(uint3 id : SV_DispatchThreadID)
+void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID)
 {
 #if PASS == 0
     // --- Select ---
@@ -137,18 +138,22 @@ void main(uint3 id : SV_DispatchThreadID)
     }
 
 #elif PASS == 1
-    // --- Prepare ---
-    uint c = id.x;
+    // --- Prepare --- (a workgroup per cluster, in rows of PREPARE_ROW groups: its threads gather its vertices
+    // side by side; one thread looping over a cluster's hundred-odd vertices left the GPU mostly waiting)
+    uint c = group.y * PREPARE_ROW + group.x;
     if (c >= constants.clusterCount || gUsedStamp[c] != constants.frameStamp)
         return;
-    uint slot;
-    InterlockedAdd(gCounters[0], 1, slot);
-    gClusterSlot[c] = slot;
-    for (uint q = 0; q < 2; q++)
-        gBuildInfos[slot * 2 + q] = gBuildTemplates[c * 2 + q];
+    if (lane.x == 0)
+    {
+        uint slot;
+        InterlockedAdd(gCounters[0], 1, slot);
+        gClusterSlot[c] = slot;
+        for (uint q = 0; q < 2; q++)
+            gBuildInfos[slot * 2 + q] = gBuildTemplates[c * 2 + q];
+    }
 
     Cluster cluster = gClusters[c];
-    for (uint v = 0; v < cluster.gatherCount; v++)
+    for (uint v = lane.x; v < cluster.gatherCount; v += 64)
     {
         uint local = cluster.gatherFirst + v;
         float3 p = gVertices[gLocalVertexIds[local]].position.xyz;

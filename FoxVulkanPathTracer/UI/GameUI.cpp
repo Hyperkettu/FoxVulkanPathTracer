@@ -1,6 +1,9 @@
 #include "FoxRenderer.h"
 
 #include <unordered_map>
+#include <cstring>
+#include <future>
+#include <thread>
 
 namespace Fox {
 
@@ -347,47 +350,78 @@ namespace Fox {
 			constexpr uint64_t CANVAS_TEXTURE = 1ull << 62;
 
 			// Draws a draw list's triangles into straight-alpha RGBA pixels: colour and texture coordinates interpolated,
-			// textures sampled bilinearly, blended over what is there (as ImGui does on the GPU)
-			void Rasterize(const ImDrawList& list, int width, int height, std::vector<uint8_t>& out, Fox::Scene::TextureLibrary& library) {
-				std::fill(out.begin(), out.end(), 0);
-				for (const ImDrawCmd& cmd : list.CmdBuffer) {
+			// textures sampled bilinearly, blended over what is there (as ImGui does on the GPU). Each row visits only the
+			// pixels inside the triangle (the span where all three edges agree), and bands of rows are drawn on threads
+			// of their own (each band draws every triangle in order, so the blending order is kept).
+			// A canvas's draw list as it was when its picture was asked for, and the textures it samples
+			struct CanvasDraw {
+				ImVector<ImDrawCmd> CmdBuffer;
+				ImVector<ImDrawVert> VtxBuffer;
+				ImVector<ImDrawIdx> IdxBuffer;
+				std::vector<std::shared_ptr<const Fox::Scene::RgbaImage>> images; // Per command (null: untextured)
+			};
+
+			void RasterizeRows(const CanvasDraw& list, int width, int rowBegin, int rowEnd, std::vector<uint8_t>& out) {
+				auto unpack = [](ImU32 col) { return glm::vec4(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, (col >> 24) & 0xFF) * (1.0f / 255.0f); };
+				for (int command = 0; command < list.CmdBuffer.Size; command++) {
+					const ImDrawCmd& cmd = list.CmdBuffer[command];
 					if (cmd.UserCallback || cmd.ElemCount == 0) continue;
-					const Fox::Scene::RgbaImage* image = nullptr;
-					const ImTextureID id = cmd.TexRef._TexData ? ImTextureID{} : cmd.TexRef._TexID;
-					if ((static_cast<uint64_t>(id) & CANVAS_TEXTURE) != 0) {
-						const int index = static_cast<int>(static_cast<uint64_t>(id) & ~CANVAS_TEXTURE);
-						auto file = TextureFiles().find(index);
-						if (file != TextureFiles().end()) {
-							try { image = &library.MaskedPixels(file->second.first, file->second.second); }
-							catch (const std::exception&) { image = nullptr; }
-						}
-					}
-					const int clipX0 = std::max(0, static_cast<int>(cmd.ClipRect.x)), clipY0 = std::max(0, static_cast<int>(cmd.ClipRect.y));
-					const int clipX1 = std::min(width, static_cast<int>(std::ceil(cmd.ClipRect.z))), clipY1 = std::min(height, static_cast<int>(std::ceil(cmd.ClipRect.w)));
+					const Fox::Scene::RgbaImage* image = list.images[command].get();
+					if (image && image->width <= 0) image = nullptr;
+					const int clipX0 = std::max(0, static_cast<int>(cmd.ClipRect.x));
+					const int clipY0 = std::max(rowBegin, static_cast<int>(cmd.ClipRect.y));
+					const int clipX1 = std::min(width, static_cast<int>(std::ceil(cmd.ClipRect.z)));
+					const int clipY1 = std::min(rowEnd, static_cast<int>(std::ceil(cmd.ClipRect.w)));
+					if (clipX0 >= clipX1 || clipY0 >= clipY1) continue;
 					for (unsigned int i = 0; i + 2 < cmd.ElemCount; i += 3) {
 						const ImDrawVert& a = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i]];
 						const ImDrawVert& b = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i + 1]];
 						const ImDrawVert& c = list.VtxBuffer[cmd.VtxOffset + list.IdxBuffer[cmd.IdxOffset + i + 2]];
 						const float area = (b.pos.x - a.pos.x) * (c.pos.y - a.pos.y) - (b.pos.y - a.pos.y) * (c.pos.x - a.pos.x);
 						if (std::abs(area) < 1e-8f) continue;
-						const int x0 = std::max(clipX0, static_cast<int>(std::floor(std::min({ a.pos.x, b.pos.x, c.pos.x }))));
-						const int x1 = std::min(clipX1, static_cast<int>(std::ceil(std::max({ a.pos.x, b.pos.x, c.pos.x }))));
 						const int y0 = std::max(clipY0, static_cast<int>(std::floor(std::min({ a.pos.y, b.pos.y, c.pos.y }))));
 						const int y1 = std::min(clipY1, static_cast<int>(std::ceil(std::max({ a.pos.y, b.pos.y, c.pos.y }))));
-						auto unpack = [](ImU32 col) { return glm::vec4(col & 0xFF, (col >> 8) & 0xFF, (col >> 16) & 0xFF, (col >> 24) & 0xFF) / 255.0f; };
+						if (y0 >= y1) continue;
+						const int bx0 = std::max(clipX0, static_cast<int>(std::floor(std::min({ a.pos.x, b.pos.x, c.pos.x }))));
+						const int bx1 = std::min(clipX1, static_cast<int>(std::ceil(std::max({ a.pos.x, b.pos.x, c.pos.x }))));
+						if (bx0 >= bx1) continue;
+
+						// Each weight is linear in the pixel centre, w = A x + B y + C: positive inside, divided by the area
+						const float inv = 1.0f / area; // The sign of the area makes the inside positive
+						auto edge = [&](const ImVec2& p, const ImVec2& q, float& A, float& B, float& C) {
+							// (p.x - x)(q.y - y) - (p.y - y)(q.x - x)
+							A = (p.y - q.y) * inv;
+							B = (q.x - p.x) * inv;
+							C = (p.x * q.y - p.y * q.x) * inv;
+						};
+						float A[3], B[3], C[3];
+						edge(b.pos, c.pos, A[0], B[0], C[0]);
+						edge(c.pos, a.pos, A[1], B[1], C[1]);
+						edge(a.pos, b.pos, A[2], B[2], C[2]);
 						const glm::vec4 ca = unpack(a.col), cb = unpack(b.col), cc = unpack(c.col);
+						const bool flat = a.col == b.col && b.col == c.col;
 						for (int y = y0; y < y1; y++) {
-							for (int x = x0; x < x1; x++) {
-								const float px = x + 0.5f, py = y + 0.5f;
-								float w0 = (b.pos.x - px) * (c.pos.y - py) - (b.pos.y - py) * (c.pos.x - px);
-								float w1 = (c.pos.x - px) * (a.pos.y - py) - (c.pos.y - py) * (a.pos.x - px);
-								float w2 = (a.pos.x - px) * (b.pos.y - py) - (a.pos.y - py) * (b.pos.x - px);
-								if (area < 0.0f) { w0 = -w0; w1 = -w1; w2 = -w2; }
-								if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) continue;
-								const float inv = 1.0f / std::abs(area);
-								w0 *= inv; w1 *= inv; w2 *= inv;
-								glm::vec4 color = ca * w0 + cb * w1 + cc * w2;
-								if (image && image->width > 0) {
+							const float py = y + 0.5f;
+							// The span of pixel centres where every weight is >= 0
+							float lo = bx0 + 0.5f, hi = bx1 - 0.5f;
+							bool empty = false;
+							for (int e = 0; e < 3; e++) {
+								const float rest = B[e] * py + C[e];
+								if (A[e] > 0.0f) lo = std::max(lo, -rest / A[e]);
+								else if (A[e] < 0.0f) hi = std::min(hi, -rest / A[e]);
+								else if (rest < 0.0f) empty = true;
+							}
+							if (empty || lo > hi) continue;
+							const int x0 = std::max(bx0, static_cast<int>(std::ceil(lo - 0.5f)));
+							const int x1 = std::min(bx1 - 1, static_cast<int>(std::floor(hi - 0.5f)));
+							uint8_t* row = &out[static_cast<size_t>(y) * width * 4];
+							for (int x = x0; x <= x1; x++) {
+								const float px = x + 0.5f;
+								const float w0 = std::max(A[0] * px + B[0] * py + C[0], 0.0f);
+								const float w1 = std::max(A[1] * px + B[1] * py + C[1], 0.0f);
+								const float w2 = std::max(A[2] * px + B[2] * py + C[2], 0.0f);
+								glm::vec4 color = flat ? ca : ca * w0 + cb * w1 + cc * w2;
+								if (image) {
 									// Bilinear, repeating
 									const float u = (a.uv.x * w0 + b.uv.x * w1 + c.uv.x * w2) * image->width - 0.5f;
 									const float v = (a.uv.y * w0 + b.uv.y * w1 + c.uv.y * w2) * image->height - 0.5f;
@@ -396,16 +430,20 @@ namespace Fox {
 									auto texel = [&](int tx, int ty) {
 										tx = ((tx % image->width) + image->width) % image->width;
 										ty = ((ty % image->height) + image->height) % image->height;
-										const uint8_t* p = &image->pixels[(static_cast<size_t>(ty) * image->width + tx) * 4];
-										return glm::vec4(p[0], p[1], p[2], p[3]) / 255.0f;
+										const uint8_t* t = &image->pixels[(static_cast<size_t>(ty) * image->width + tx) * 4];
+										return glm::vec4(t[0], t[1], t[2], t[3]) * (1.0f / 255.0f);
 									};
 									color *= glm::mix(glm::mix(texel(iu, iv), texel(iu + 1, iv), fu), glm::mix(texel(iu, iv + 1), texel(iu + 1, iv + 1), fu), fv);
 								}
 								if (color.a <= 0.0f) continue;
-								uint8_t* d = &out[(static_cast<size_t>(y) * width + x) * 4];
-								const glm::vec4 dst = glm::vec4(d[0], d[1], d[2], d[3]) / 255.0f;
-								const float alpha = color.a + dst.a * (1.0f - color.a);
-								const glm::vec3 rgb = alpha > 0.0f ? (glm::vec3(color) * color.a + glm::vec3(dst) * dst.a * (1.0f - color.a)) / alpha : glm::vec3(0.0f);
+								uint8_t* d = row + static_cast<size_t>(x) * 4;
+								glm::vec3 rgb = glm::vec3(color);
+								float alpha = color.a;
+								if (color.a < 1.0f && d[3] > 0) {
+									const glm::vec4 dst = glm::vec4(d[0], d[1], d[2], d[3]) * (1.0f / 255.0f);
+									alpha = color.a + dst.a * (1.0f - color.a);
+									rgb = (glm::vec3(color) * color.a + glm::vec3(dst) * dst.a * (1.0f - color.a)) / alpha;
+								}
 								d[0] = static_cast<uint8_t>(glm::clamp(rgb.r, 0.0f, 1.0f) * 255.0f + 0.5f);
 								d[1] = static_cast<uint8_t>(glm::clamp(rgb.g, 0.0f, 1.0f) * 255.0f + 0.5f);
 								d[2] = static_cast<uint8_t>(glm::clamp(rgb.b, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -416,11 +454,74 @@ namespace Fox {
 				}
 			}
 
+			// The textures a canvas samples, copied once from the library (the copies outlive what the library keeps while a
+			// picture is drawn on another thread)
+			std::shared_ptr<const Fox::Scene::RgbaImage> CanvasImage(Fox::Scene::TextureLibrary& library, const std::string& image, const std::string& mask) {
+				static std::map<std::pair<std::string, std::string>, std::shared_ptr<const Fox::Scene::RgbaImage>> copies;
+				auto& copy = copies[{ image, mask }];
+				if (!copy) {
+					try { copy = std::make_shared<const Fox::Scene::RgbaImage>(library.MaskedPixels(image, mask)); }
+					catch (const std::exception&) { copy = nullptr; }
+				}
+				return copy;
+			}
+
+			CanvasDraw CopyCanvasDraw(const ImDrawList& list, Fox::Scene::TextureLibrary& library) {
+				CanvasDraw draw;
+				draw.CmdBuffer = list.CmdBuffer;
+				draw.VtxBuffer = list.VtxBuffer;
+				draw.IdxBuffer = list.IdxBuffer;
+				draw.images.resize(list.CmdBuffer.Size);
+				for (int command = 0; command < list.CmdBuffer.Size; command++) {
+					const ImDrawCmd& cmd = list.CmdBuffer[command];
+					if (cmd.UserCallback || cmd.ElemCount == 0) continue;
+					const ImTextureID id = cmd.TexRef._TexData ? ImTextureID{} : cmd.TexRef._TexID;
+					if ((static_cast<uint64_t>(id) & CANVAS_TEXTURE) != 0) {
+						const int index = static_cast<int>(static_cast<uint64_t>(id) & ~CANVAS_TEXTURE);
+						auto file = TextureFiles().find(index);
+						if (file != TextureFiles().end()) draw.images[command] = CanvasImage(library, file->second.first, file->second.second);
+					}
+				}
+				return draw;
+			}
+
+			// The picture, in bands of rows on threads of their own (this thread draws the first)
+			std::vector<uint8_t> Rasterize(const CanvasDraw& list, int width, int height) {
+				std::vector<uint8_t> out(static_cast<size_t>(width) * height * 4, 0);
+				const int bands = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) / 2, 1, std::max(1, height / 16));
+				const int rowsPerBand = (height + bands - 1) / bands;
+				std::vector<std::future<void>> others;
+				for (int band = 1; band < bands; band++) {
+					const int begin = band * rowsPerBand, end = std::min(height, begin + rowsPerBand);
+					if (begin >= end) break;
+					others.push_back(std::async(std::launch::async, [&list, &out, width, begin, end] { RasterizeRows(list, width, begin, end, out); }));
+				}
+				RasterizeRows(list, width, 0, std::min(height, rowsPerBand), out);
+				for (auto& other : others) other.get();
+				return out;
+			}
+
+			// Each canvas's picture being drawn on another thread: started by one frame, taken by a later one (an animated
+			// sign takes milliseconds to draw: the frame goes on meanwhile)
+			struct CanvasJob {
+				std::future<std::vector<uint8_t>> pixels;
+				int width = 0, height = 0;
+			};
+			std::map<uint64_t, CanvasJob> canvasJobs;
+
 			uint64_t Hash(const ImDrawList& list) {
 				uint64_t hash = 1469598103934665603ull;
+				// 8 bytes at a time (a canvas's vertices are hundreds of kilobytes)
 				auto mix = [&](const void* data, size_t size) {
 					const uint8_t* bytes = static_cast<const uint8_t*>(data);
-					for (size_t i = 0; i < size; i++) { hash ^= bytes[i]; hash *= 1099511628211ull; }
+					size_t i = 0;
+					for (; i + 8 <= size; i += 8) {
+						uint64_t word;
+						std::memcpy(&word, bytes + i, 8);
+						hash = (hash ^ word) * 1099511628211ull;
+						hash ^= hash >> 29;
+					}
+					for (; i < size; i++) { hash ^= bytes[i]; hash *= 1099511628211ull; }
 				};
 				mix(list.VtxBuffer.Data, list.VtxBuffer.Size * sizeof(ImDrawVert));
 				mix(list.IdxBuffer.Data, list.IdxBuffer.Size * sizeof(ImDrawIdx));
@@ -434,6 +535,7 @@ namespace Fox {
 		}
 
 		void Shutdown() {
+			canvasJobs.clear(); // Waits for the pictures being drawn
 			canvasLists.clear();
 		}
 
@@ -613,12 +715,48 @@ namespace Fox {
 					byLayer(canvasRoots);
 					for (size_t root : canvasRoots) draw(root, rect, &canvasList, 1.0f, canvasTexture, hits);
 				}
-				// Its picture, drawn again only when what is on it changed
+				// Its picture, drawn again (on another thread) only when what is on it changed. A finished one is compared with
+				// the last (which the GPU has) and only the rectangle that differs is sent: an animated sign changes a small part
+				CanvasJob& job = canvasJobs[EntityKey(entity)];
+				if (job.pixels.valid() && job.pixels.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+					std::vector<uint8_t> fresh = job.pixels.get();
+					if (job.width == width && job.height == height && fresh.size() == canvas.pixels.size()) {
+						int top = height, bottom = -1, left = width, right = -1;
+						const size_t rowBytes = static_cast<size_t>(width) * 4;
+						for (int y = 0; y < height; y++) {
+							const uint32_t* a = reinterpret_cast<const uint32_t*>(fresh.data() + y * rowBytes);
+							const uint32_t* b = reinterpret_cast<const uint32_t*>(canvas.pixels.data() + y * rowBytes);
+							if (std::memcmp(a, b, rowBytes) == 0) continue;
+							top = std::min(top, y);
+							bottom = y;
+							int x0 = 0;
+							while (x0 < width && a[x0] == b[x0]) x0++;
+							int x1 = width - 1;
+							while (x1 > x0 && a[x1] == b[x1]) x1--;
+							left = std::min(left, x0);
+							right = std::max(right, x1);
+						}
+						canvas.pixels.swap(fresh);
+						if (bottom >= top) {
+							const int w = right - left + 1, h = bottom - top + 1;
+							std::vector<uint8_t> region(static_cast<size_t>(w) * h * 4);
+							for (int y = 0; y < h; y++) {
+								std::memcpy(region.data() + static_cast<size_t>(y) * w * 4,
+									canvas.pixels.data() + (static_cast<size_t>(top + y) * width + left) * 4, static_cast<size_t>(w) * 4);
+							}
+							scene.UpdateTextureRegion(canvas.texture, left, top, w, h, std::move(region));
+						}
+					}
+					else {
+						canvas.drawnHash = 0; // Drawn for another size: again
+					}
+				}
 				const uint64_t hash = Hash(canvasList);
-				if (hash != canvas.drawnHash && static_cast<int>(canvas.pixels.size()) == width * height * 4) {
+				if (hash != canvas.drawnHash && !job.pixels.valid() && static_cast<int>(canvas.pixels.size()) == width * height * 4) {
 					canvas.drawnHash = hash;
-					Rasterize(canvasList, width, height, canvas.pixels, library);
-					scene.UpdateTextureRegion(canvas.texture, 0, 0, width, height, canvas.pixels);
+					job.width = width;
+					job.height = height;
+					job.pixels = std::async(std::launch::async, [draw = CopyCanvasDraw(canvasList, library), width, height] { return Rasterize(draw, width, height); });
 				}
 
 				// The mouse ray on its panel (its object as traced), in its pixels

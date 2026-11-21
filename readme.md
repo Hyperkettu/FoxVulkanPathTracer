@@ -313,7 +313,15 @@ expensive, on GPUs with slower ray tracing, or for many paths per pixel.
 | Quality | Native (Quality upscaling at 4K and above) | 4 | As vsync allows | Off |
 | Balanced | DLSS Balanced (58 % of the display's width and height) | 3 | 60 fps at most | On |
 | Performance | DLSS Performance (50 %) | 2 | 40 fps at most | On |
+| Laptop 30 fps | DLSS Performance (50 %); Ultra Performance (33 %) above 1200 display lines | 2 | 30 fps at most | On |
+| Laptop 25 fps | DLSS Ultra Performance (33 %) | 1 | 25 fps at most | On |
 
+* **Laptop 30 fps and Laptop 25 fps** are for keeping a laptop cool and quiet: the GPU rests for a larger part of
+  each frame. Laptop 25 fps also renders a ninth of the pixels and traces one bounce.
+* **CPU time:** `FOX_CPU_PROFILE=1` prints where each frame's CPU time goes (UI, scene update, command recording) every
+  2 seconds. In my_yard the UI used to take 86 ms a frame (10 fps whatever the GPU did): every text read its font
+  file again each frame, and the world canvases were drawn pixel by pixel on the main thread. Fonts now stay loaded,
+  and canvas pictures are drawn on other threads, a row span at a time, and uploaded a frame later.
 * **Auto** (the default) picks **Balanced** on laptop GPUs (a name with "Laptop"), integrated GPUs and GPUs with less
   than 10 GB of their own memory, and **Quality** on the others.
 * **The frame cap** keeps a laptop's GPU cooler, so it keeps its clocks: uncapped, an RTX 3070 Laptop reached 86 °C

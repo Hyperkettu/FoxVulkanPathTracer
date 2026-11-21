@@ -689,6 +689,8 @@ namespace Fox {
 				case RenderPreset::Quality: return "Quality";
 				case RenderPreset::Balanced: return "Balanced";
 				case RenderPreset::Performance: return "Performance";
+				case RenderPreset::Laptop30: return "Laptop 30 fps";
+				case RenderPreset::Laptop25: return "Laptop 25 fps";
 				default: return "Auto";
 				}
 			}
@@ -706,6 +708,15 @@ namespace Fox {
 					return { Mode::Performance, 2, 40.0f, true };
 				case RenderPreset::Balanced:
 					return { Mode::Balanced, 3, 60.0f, true };
+				case RenderPreset::Laptop30: {
+					// Two bounces at 30 fps, at most about 600 rendered lines: DLSS Performance in a window, Ultra Performance
+					// on a large display (a 2560x1600 laptop screen at Performance renders 1280x800, ~43 ms on an RTX 3070 Laptop)
+					const bool large = capabilities.currentExtent.height / 2 > 600;
+					return { large ? Mode::UltraPerformance : Mode::Performance, 2, 30.0f, true };
+				}
+				case RenderPreset::Laptop25:
+					// A ninth of the pixels (DLSS Ultra Performance) and one bounce, at 25 fps: the least work per second
+					return { Mode::UltraPerformance, 1, 25.0f, true };
 				default: {
 					// Full paths; resolution from the display size. At 4K, Quality (1440p) keeps a 60 fps frame well
 					// within budget (~4.5 ms on an RTX 5090; Native takes ~8.6 ms).
@@ -722,7 +733,7 @@ namespace Fox {
 					if (in) {
 						const nlohmann::json j = nlohmann::json::parse(in, nullptr, true, true);
 						const std::string name = j.value("preset", std::string("Auto"));
-						for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance }) {
+						for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance, RenderPreset::Laptop30, RenderPreset::Laptop25 }) {
 							if (name == PresetName(p)) preset = p;
 						}
 						const std::string pipeline = j.value("pipeline", std::string(PipelineName(RenderPipeline::RealTime)));
@@ -1074,6 +1085,47 @@ if (!gbuffer) {
 			// Frame
 			// ------------------------------------------------------------------------------------
 
+			namespace {
+				// FOX_CPU_PROFILE=1: where each frame's CPU time goes, averaged on the console every 2 seconds
+				struct CpuProfile {
+					bool enabled = SDL_getenv("FOX_CPU_PROFILE") != nullptr;
+					std::chrono::steady_clock::time_point last{};
+					std::vector<std::pair<const char*, double>> sections;
+					size_t next = 0;
+					uint32_t frames = 0;
+					double elapsed = 0.0;
+					void Begin() {
+						if (!enabled) return;
+						// From the last frame's end: "cap" also holds the event loop between frames
+						if (last.time_since_epoch().count() == 0) last = std::chrono::steady_clock::now();
+						next = 0;
+					}
+					void Mark(const char* name) {
+						if (!enabled) return;
+						const auto now = std::chrono::steady_clock::now();
+						const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+						last = now;
+						if (next == sections.size()) sections.push_back({ name, 0.0 });
+						sections[next++].second += ms;
+						elapsed += ms;
+					}
+					void End() {
+						if (!enabled) return;
+						frames++;
+						if (elapsed < 2000.0) return;
+						std::cout << "[CPU] " << frames * 1000.0 / elapsed << " fps:";
+						for (auto& section : sections) {
+							std::cout << " " << section.first << " " << section.second / frames;
+							section.second = 0.0;
+						}
+						std::cout << " ms\n";
+						frames = 0;
+						elapsed = 0.0;
+					}
+				};
+				CpuProfile cpuProfile;
+			}
+
 			void VulkanRHI::Render(float deltaTime) {
 				// Nothing to draw into while the window is minimized
 				if (capabilities.currentExtent.width == 0 || capabilities.currentExtent.height == 0) {
@@ -1081,7 +1133,9 @@ if (!gbuffer) {
 				}
 
 				// The preset's frame cap: less heat on a laptop, so it keeps its clocks up
+				cpuProfile.Begin();
 				WaitForFrameCap();
+				cpuProfile.Mark("cap");
 
 				// Menu commands of the previous frame that replace rendering resources (as their keys do)
 				RunDeferredCommands();
@@ -1094,7 +1148,9 @@ if (!gbuffer) {
 				FrameResource& frameResource = *frameResources[currentFrame];
 
 				// Block until the GPU has finished the work that last used this frame slot
+				cpuProfile.Mark("start");
 				frameResource.renderFence->Wait();
+				cpuProfile.Mark("gpu wait");
 				profiler->ReadResults(currentFrame);
 				raytracingScene->ReadClusterLodStats(currentFrame);
 				if (hybrid) {
@@ -1104,12 +1160,14 @@ if (!gbuffer) {
 
 				// Editor windows, and what they changed in the scene
 				BuildUserInterface();
+				cpuProfile.Mark("ui");
 				// A game UI with buttons frees the pointer to click them; without, the mouse looks around again
 				uiPointer = !editMode && Fox::UI::ButtonsShown();
 				if (inputManager && !editMode) {
 					inputManager->SetRelativeMode(!uiPointer);
 				}
 				ApplySceneChanges();
+				cpuProfile.Mark("scene changes");
 
 				// Terrain brush strokes, and what they changed on its way to the GPU
 				const bool ctrl = inputManager && (inputManager->IsKeyDown(SDL_SCANCODE_LCTRL) || inputManager->IsKeyDown(SDL_SCANCODE_RCTRL));
@@ -1119,7 +1177,9 @@ if (!gbuffer) {
 
 				// Animation (wind in the trees); recorded into this frame by RecordFrameUpdate
 				UpdateScriptInput();
+				cpuProfile.Mark("tools");
 				raytracingScene->Update(deltaTime);
+				cpuProfile.Mark("scene update");
 				FollowGameCamera();
 				{
 					auto& listener = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
@@ -1146,8 +1206,10 @@ if (!gbuffer) {
 				// image is released at a display refresh, and waiting for it before tracing would leave the
 				// trace a single refresh interval to finish in (any slower frame then misses a refresh).
 				UpdateCameraUniforms(frameResource, deltaTime);
+				cpuProfile.Mark("other");
 				RecordTrace(frameResource);
 				frameResource.commandList->Submit(graphicsQueue);
+				cpuProfile.Mark("record");
 
 				uint32_t imageIndex = 0;
 				VkResult acquireResult = swapchain->AcquireNextImage(frameResource.imageAvailableSemaphore->Get(), imageIndex);
@@ -1170,6 +1232,8 @@ if (!gbuffer) {
 					frameResource.renderFence->Get());
 
 				VkResult presentResult = Present(imageIndex, renderFinished);
+				cpuProfile.Mark("present");
+				cpuProfile.End();
 
 				currentFrame = (currentFrame + 1) % config.MAX_FRAMES_IN_FLIGHT;
 				frameCounter++;
@@ -1298,13 +1362,15 @@ if (!gbuffer) {
 
 				commandList.Begin();
 
-				// Trees' level of detail is chosen for this view: errors in pixels of the displayed image
+				// Trees' level of detail is chosen for this view: errors in pixels of the rendered image (before
+				// upscaling; Nanite's measure too). Detail finer than a rendered pixel is mostly lost to the upscaler,
+				// and costs: in Performance mode, pixels of the displayed image picked about 4 times the clusters.
 				{
 					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
-					const float pixelScale = static_cast<float>(capabilities.currentExtent.height) / (2.0f * std::tan(camera->GetFov() * 0.5f));
+					const uint32_t renderHeight = gbuffer ? gbuffer->extent.height : capabilities.currentExtent.height;
+					const float pixelScale = static_cast<float>(std::max(renderHeight, 1u)) / (2.0f * std::tan(camera->GetFov() * 0.5f));
 					raytracingScene->SetClusterLodView(camera->GetPosition(), pixelScale);
-					raytracingScene->SetRasterLodScale(renderPipeline == RenderPipeline::Hybrid && rasterLod
-						? static_cast<float>(capabilities.currentExtent.height) / static_cast<float>(std::max(gbuffer->extent.height, 1u)) : 0.0f);
+					raytracingScene->SetRasterLodScale(0.0f); // The hybrid raster's pixels are the same rendered pixels: the same cut
 					// Billboards and the screen's 3D text, for this frame's camera (no lag behind it)
 					raytracingScene->SetViewCamera(camera->GetPosition(), camera->GetForward(), camera->GetUp(), camera->GetFov(),
 						static_cast<float>(capabilities.currentExtent.width) / std::max(static_cast<float>(capabilities.currentExtent.height), 1.0f));

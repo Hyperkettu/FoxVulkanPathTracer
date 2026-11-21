@@ -100,7 +100,8 @@ namespace Fox {
 
 				// Render presets: how hard the path tracer works. Auto picks Balanced on laptop and mid-range GPUs,
 				// Quality on the rest. Saved to Settings/Render.json.
-				enum class RenderPreset { Auto, Quality, Balanced, Performance };
+				// Laptop30 and Laptop25: cheaper than Performance, capped lower, for a laptop GPU that should stay cool
+				enum class RenderPreset { Auto, Quality, Balanced, Performance, Laptop30, Laptop25 };
 				struct PresetSettings {
 					RayTracing::UpscalingMode upscaling;
 					uint32_t bounces;

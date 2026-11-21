@@ -140,6 +140,7 @@ namespace Fox {
 			size_t surface = 0;
 			size_t spraySurface = 0;
 			bool hasSpray = false;
+			uint32_t sprayQuietFrames = 0; // Frames the spray had no droplet flying (its structure is left as it is)
 			std::shared_ptr<WaterSimulation> simulation;
 			glm::mat4 placedMatrix{ 1.0f };
 
@@ -625,6 +626,7 @@ namespace Fox {
 			std::vector<Particle> particles;
 			float spawnCarry = 0.0f;
 			float strength = 0.0f;       // Its rate's share now (ramp)
+			bool idle = false;           // No particle alive, and its surface already shows none (nothing to upload)
 			uint32_t random = 1;
 			std::string problem;
 		};
