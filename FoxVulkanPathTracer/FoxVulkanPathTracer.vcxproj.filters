@@ -117,6 +117,9 @@
     <ClCompile Include="Platform\IApplication.cpp">
       <Filter>Private\Platform</Filter>
     </ClCompile>
+    <ClCompile Include="Platform\Splash.cpp">
+      <Filter>Private\Platform</Filter>
+    </ClCompile>
     <ClCompile Include="Graphics\Vulkan\VulkanRHI.cpp">
       <Filter>Private\Graphics\Vulkan</Filter>
     </ClCompile>
@@ -279,6 +282,9 @@
       <Filter>Public\Platform\Vulkan</Filter>
     </ClInclude>
     <ClInclude Include="Platform\IApplication.h">
+      <Filter>Public\Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform\Splash.h">
       <Filter>Public\Platform</Filter>
     </ClInclude>
     <ClInclude Include="Graphics\Vulkan\VulkanRHI.h">

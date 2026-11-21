@@ -2141,6 +2141,7 @@ namespace Fox {
 				// Cluster level of detail: part 0 is the bark, part 1 the leaf cards
 				tree.lod = nullptr;
 				if (ClusterLodEnabled()) {
+					Fox::Platform::Splash::SetStatus("Building the trees' level of detail");
 					tree.lod = std::make_shared<Fox::Graphics::Geometry::ClusterLod>(Fox::Graphics::Geometry::BuildClusterLod(*tree.mesh, { false, true }));
 					const auto& lod = *tree.lod;
 					std::cout << "Cluster LOD: " << lod.clusters.size() << " clusters in " << lod.levels.size() << " levels, "

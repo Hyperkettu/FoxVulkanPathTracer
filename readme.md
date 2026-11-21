@@ -196,6 +196,17 @@ The SDK is not part of this repository (it is listed in `.gitignore`) and is cov
 The build copies `nvngx_dlssd.dll` next to the executable. At runtime it needs an RTX GPU and a current driver;
 if DLSS is unavailable the renderer says so on the console and starts with SVGF instead.
 
+### Splash screen
+
+While the engine starts, a splash screen shows the Fox Engine logo (`Textures/Fox Engine Logo.png`), a line saying what
+is loading (a model, its displacement, the trees' level of detail, the pipelines) and a moving bar. It is a window of its
+own on a thread of its own (`Platform/Splash.cpp`, Windows), so it keeps drawing while the main thread loads. The main
+window stays hidden until loading is done, and the splash fades out once the first frame is drawn. It can be dragged aside.
+
+The editor matches it (`Editor/EditorTheme.cpp`): the splash's deep navy for panels, the logo's blue glow for what is
+hovered and selected, the orange of its letters for check marks, active sliders and tab underlines, rounded corners, and
+Segoe UI as on the splash (ImGui's own font where Segoe UI is missing).
+
 ### Displacement mapping
 
 Displacement is applied while a model loads (`Graphics/Geometry/Displacement.h`) and is switched on per model (`"displacement": true` in

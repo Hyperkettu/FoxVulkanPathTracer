@@ -18,11 +18,13 @@ namespace Fox {
                     std::vector<Fox::Graphics::Vulkan::RayTracing::RayTracingInstance> instances; 
                     std::vector<Fox::Core::Loaders::GLTF::SubmeshData> submeshes;
 
+                    Fox::Platform::Splash::SetStatus("Loading " + filePath);
                     if (!Fox::Core::Loaders::GLTF::GLTFLoader::LoadGLTFBinaryFile(filePath, vertices, indices, materials, textures, lights, cameras, instances, submeshes)) {
                         throw std::runtime_error("Failed to load model: " + filePath);
                     }
 
                     if (displacement.enabled) {
+                        Fox::Platform::Splash::SetStatus("Adding surface detail to " + filePath);
                         const auto start = std::chrono::steady_clock::now();
                         const Fox::Graphics::Geometry::DisplacementStats stats =
                             Fox::Graphics::Geometry::ApplyDisplacement(displacement, vertices, indices, submeshes, instances, materials, textures);

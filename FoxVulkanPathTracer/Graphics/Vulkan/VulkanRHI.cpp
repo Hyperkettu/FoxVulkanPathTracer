@@ -1,4 +1,5 @@
 ﻿#include "FoxRenderer.h"
+#include "FoxVulkanPathTracer/Editor/EditorTheme.h"
 #include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
 
 #include <fstream>
@@ -172,6 +173,7 @@ namespace Fox {
 
 				CreateSwapchain();
 
+				Fox::Platform::Splash::SetStatus("Loading the scene");
 				Managers::MeshManager::Get().Initialize(device);
 				Managers::SceneManager::Get().Initialize(device, physicalDevice, setupCommandPool, graphicsQueue, capabilities);
 
@@ -190,6 +192,7 @@ namespace Fox {
 				deviceContext.graphicsQueueFamily = graphicsQueueFamily;
 				deviceContext.setupCommandPool = setupCommandPool;
 
+				Fox::Platform::Splash::SetStatus("Preparing the denoiser");
 				CreateGBuffer();
 				denoisers = RayTracing::CreateDenoisers(deviceContext);
 
@@ -201,6 +204,7 @@ namespace Fox {
 				Managers::DescriptorManager::Get().Initialize(device, config);
 				CreateFrameDescriptors();
 
+				Fox::Platform::Splash::SetStatus("Creating the ray tracing pipelines");
 				Managers::PipelineManager::Get().Initialize(device, physicalDevice, capabilities, shaderExecutionReordering);
 
 				postProcessor = std::make_unique<PostProcessor>(device);
@@ -1535,6 +1539,7 @@ if (!gbuffer) {
 				// No keyboard navigation: the keyboard stays with the camera and shortcuts (WASD, E, Z/X/C) unless
 				// a text field is being typed in
 
+				Fox::Editor::LoadFoxFont();
 				ImGui_ImplSDL2_InitForVulkan(static_cast<SDL_Window*>(config.windowHandle));
 
 				ImGui_ImplVulkan_InitInfo info{};
@@ -1567,8 +1572,7 @@ if (!gbuffer) {
 					uiScale = scale;
 					ImGuiStyle style;
 					ImGui::StyleColorsDark(&style);
-					style.WindowRounding = 4.0f;
-					style.FrameRounding = 3.0f;
+					Fox::Editor::ApplyFoxTheme(style); // The splash screen's colours and font
 					style.ScaleAllSizes(scale);
 					style.FontScaleDpi = scale;
 					ImGui::GetStyle() = style;

@@ -155,4 +155,5 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/FrameResource.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/VulkanRHI.h"
 #include "FoxVulkanPathTracer/Platform/IApplication.h"
+#include "FoxVulkanPathTracer/Platform/Splash.h"
 #include "FoxVulkanPathTracer/Platform/Vulkan/Application.h"

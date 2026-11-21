@@ -20,7 +20,12 @@ namespace Fox {
 			}
 
 			bool Application::Initialize() {
+				// The splash screen while everything loads; the main window shows once its first frame is drawn (Run)
+				Fox::Platform::Splash::Show("Textures/Fox Engine Logo.png");
+				Fox::Platform::Splash::SetStatus("Starting");
+
 				if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+					Fox::Platform::Splash::Close();
 					std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
 					return false;
 				}
@@ -29,9 +34,10 @@ namespace Fox {
 					SDL_WINDOWPOS_CENTERED,
 					SDL_WINDOWPOS_CENTERED,
 					static_cast<int>(width), static_cast<int>(height),
-					SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN);
+					SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
 
 				if (!window) {
+					Fox::Platform::Splash::Close();
 					std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << "\n";
 					return false;
 				}
@@ -62,6 +68,7 @@ namespace Fox {
 
 				currentRHI = std::make_unique<Fox::Graphics::Vulkan::VulkanRHI>();
 				if (!currentRHI->Initialize(config)) {
+					Fox::Platform::Splash::Close();
 					return false;
 				}
 
@@ -118,6 +125,12 @@ namespace Fox {
 
 				auto previousTime = Clock::now();
 
+				// Loaded: the window, and once its first frame is drawn, the splash screen goes
+				Fox::Platform::Splash::SetStatus("Ready");
+				SDL_ShowWindow(window);
+				SDL_RaiseWindow(window);
+				bool splashOpen = true;
+
 				while (running) {
 					SDL_Event e;
 					while (SDL_PollEvent(&e)) {
@@ -137,6 +150,11 @@ namespace Fox {
 
 					// Presentation is vsynced (FIFO), which paces the loop - no manual sleep needed
 					currentRHI->Render(deltaTime);
+					if (splashOpen) {
+						splashOpen = false;
+						Fox::Platform::Splash::Close();
+						previousTime = Clock::now(); // The fade out is not a frame's time
+					}
 				}
 			}
 		}

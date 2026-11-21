@@ -338,6 +338,8 @@
     </ClCompile>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Platform\IApplication.cpp" />
+    <ClCompile Include="Platform\Splash.cpp" />
+    <ClCompile Include="Editor\EditorTheme.cpp" />
     <ClCompile Include="Platform\Vulkan\Application.cpp" />
     <ClCompile Include="Scene\MainScene.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp" />
@@ -462,6 +464,8 @@
     <ClInclude Include="Text\VectorText.h" />
     <ClInclude Include="UI\GameUI.h" />
     <ClInclude Include="Platform\IApplication.h" />
+    <ClInclude Include="Platform\Splash.h" />
+    <ClInclude Include="Editor\EditorTheme.h" />
     <ClInclude Include="Platform\Vulkan\Application.h" />
     <ClInclude Include="Scene\MainScene.h" />
     <ClInclude Include="Scene\Raytracing\MainRayTracingScene.h" />
