@@ -63,7 +63,7 @@ public class PlayerBall : Script
         if (Input.GetActionDown("Drop"))
         {
             Entity box = Scene.Spawn("box", Entity.Position + forward * 2.0f + Vector3.UnitY * 2.0f);
-            Debug.Log($"Dropped {box} (the scene rebuilds once for a new mesh)");
+            Debug.Log($"Dropped {box}");
         }
     }
 

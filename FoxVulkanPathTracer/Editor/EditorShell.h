@@ -18,7 +18,7 @@ namespace Fox {
 		// Only the Hierarchy is open at first; the Window menu opens the rest.
 		class EditorShell {
 		public:
-			enum class Window { Hierarchy, Inspector, ContentBrowser, Environment, Trees, Terrain, MeshPaint, Camera, Controls, Input, Profiler, Count };
+			enum class Window { Hierarchy, Inspector, ContentBrowser, Environment, Trees, Terrain, MeshPaint, Camera, Controls, Input, Profiler, Log, Count };
 
 			static const char* WindowTitle(Window window);
 			bool IsOpen(Window window) const { return open[static_cast<int>(window)]; }

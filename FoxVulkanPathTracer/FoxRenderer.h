@@ -149,6 +149,8 @@
 #include "FoxVulkanPathTracer/Editor/SceneEditor.h"
 #include "FoxVulkanPathTracer/Editor/CameraEditor.h"
 #include "FoxVulkanPathTracer/Editor/TerrainEditor.h"
+#include "FoxVulkanPathTracer/Editor/GamePublisher.h"
+#include "FoxVulkanPathTracer/Editor/LogWindow.h"
 
 #include "FoxVulkanPathTracer/Graphics/Managers/Vulkan/SceneManager.h"
 
@@ -156,4 +158,5 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/VulkanRHI.h"
 #include "FoxVulkanPathTracer/Platform/IApplication.h"
 #include "FoxVulkanPathTracer/Platform/Splash.h"
+#include "FoxVulkanPathTracer/Platform/GameConfig.h"
 #include "FoxVulkanPathTracer/Platform/Vulkan/Application.h"

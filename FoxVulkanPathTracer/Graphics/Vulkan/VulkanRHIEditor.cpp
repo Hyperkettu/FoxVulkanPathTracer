@@ -144,6 +144,24 @@ namespace Fox {
 					shell.Place(Window::Controls, uiScale);
 					DrawControls();
 				}
+				if (publishOpen) {
+					Fox::Editor::GamePublisher::Context context;
+					context.scene = &scene;
+					context.cameraPosition = pose.position;
+					context.cameraTarget = pose.target;
+					context.scenePath = sceneEditor.GetPath();
+					for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance,
+						RenderPreset::Laptop30, RenderPreset::Laptop25 }) {
+						if (p == preset) context.preset = static_cast<int>(context.presets.size());
+						context.presets.push_back(PresetName(p));
+					}
+					context.pipeline = PipelineName(renderPipeline);
+					publisher.Draw(&publishOpen, context, uiScale);
+				}
+				if (shell.IsOpen(Window::Log)) {
+					shell.Place(Window::Log, uiScale);
+					Fox::Editor::Log::Draw(shell.OpenFlag(Window::Log));
+				}
 				if (shell.IsOpen(Window::Profiler)) {
 					shell.Place(Window::Profiler, uiScale);
 					DrawProfiler();
@@ -433,6 +451,8 @@ namespace Fox {
 					sceneEditor.GetPath());
 				shell.Add("File/Save Scene As...", [&] { sceneEditor.RequestSaveAs(); }, "", true, -1, "file path");
 				shell.Separator("File");
+				shell.Add("File/Publish Game...", [this] { publishOpen = true; }, "", true, -1, "export build standalone release ship game exe");
+				shell.Separator("File");
 				shell.Add("File/Quit", [] {
 					SDL_Event quit{};
 					quit.type = SDL_QUIT;
@@ -675,6 +695,7 @@ namespace Fox {
 				windowItem(Window::Camera, "Camera Paths", "", "flight keys");
 				windowItem(Window::Profiler, "GPU Profiler", "", "performance timing frame triangles memory statistics stats");
 				windowItem(Window::Input, "Input Actions", "", "keys bindings controls jump axis rebind");
+				windowItem(Window::Log, "Log", "", "console output messages errors warnings print editor.log");
 				shell.Separator("Window");
 				shell.Add("Window/Close All", [&shell] {
 					for (int i = 0; i < static_cast<int>(Window::Count); i++) {

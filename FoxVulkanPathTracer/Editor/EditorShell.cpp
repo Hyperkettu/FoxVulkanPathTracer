@@ -45,6 +45,7 @@ namespace Fox {
 			case Window::Controls: return "Controls";
 			case Window::Input: return "Input Actions";
 			case Window::Profiler: return "GPU Profiler";
+			case Window::Log: return "Log";
 			default: return "";
 			}
 		}
@@ -93,6 +94,10 @@ namespace Fox {
 			case Window::Controls:
 				size = ImVec2(std::min(560.0f * uiScale, display.x - 2.0f * gap), std::min(620.0f * uiScale, columnHeight));
 				position = ImVec2((display.x - size.x) * 0.5f, top);
+				break;
+			case Window::Log: // Along the bottom, as the Content Browser (its right part)
+				size = ImVec2(std::max((display.x - 3.0f * gap) * 0.55f, 200.0f), browserHeight);
+				position = ImVec2(display.x - size.x - gap, bottom - browserHeight);
 				break;
 			case Window::Profiler: // Wider than the tools: a table and graphs
 				size = ImVec2(std::min(520.0f * uiScale, display.x - 2.0f * gap), columnHeight);

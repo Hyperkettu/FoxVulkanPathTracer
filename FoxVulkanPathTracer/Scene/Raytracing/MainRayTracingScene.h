@@ -365,6 +365,8 @@ namespace Fox {
 
                 // Models, spheres and the environment changed: everything is rebuilt (RebuildScene)
                 void MarkStructureChanged() { structureChanged = true; }
+                // A model's mesh placed at once, without a rebuild, when the scene has its mesh (see AddLivePlacement)
+                bool PlaceLive(Entity entity, MeshComponent& mesh);
                 bool HasStructureChanged() const { return structureChanged; }
 
                 // Rebuilds the whole scene from its content: models (loaded once, then reused), spheres, ground,
@@ -529,6 +531,11 @@ namespace Fox {
                     bool inWater = false;
                     float wakeTimer = 0.0f;
                     glm::mat4 written{ 1.0f }; // The world matrix physics last gave it (anything else: it was moved by hand)
+                    // Its last two physics steps' states: drawn between them (physics steps at 60 Hz, frames come at
+                    // their own rate: drawn where the last step left it, a ball would move unevenly, 1 or 2 steps a frame)
+                    glm::vec3 previousPosition{ 0.0f }, currentPosition{ 0.0f };
+                    glm::quat previousRotation{ 1.0f, 0.0f, 0.0f, 0.0f }, currentRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+                    bool hasStates = false;
                 };
                 std::vector<PlayingBody> playingBodies;
                 std::vector<std::pair<Entity, Fox::Scene::Transform>> playSnapshot;

@@ -43,6 +43,14 @@ namespace Fox {
                 // different transforms: its geometry and acceleration structures are stored once and instanced.
                 void AddMesh(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name = "Mesh");
 
+                // Another placement of a mesh already in the built scene, added at once without a rebuild: its geometry
+                // and structures are shared, it only takes top level instances (a box a script spawns while the game
+                // plays). False when it cannot be (the mesh is not in the scene, has lights, or is traced through
+                // clusters): then the scene is rebuilt for it as usual. Gone with the next rebuild, which places
+                // everything again.
+                bool AddLivePlacement(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name);
+                size_t GetLivePlacementCount() const { return livePlacements; }
+
                 // Instanced objects (clutter: grass, flowers, stones): one object, many copies of one mesh, each copy its
                 // own top level instance sharing the mesh's structures. items: each copy's matrix (world space as placed;
                 // the object's transform then moves them all). Copies past the clutter budget (MAX_CLUTTER_INSTANCES top
@@ -657,6 +665,11 @@ namespace Fox {
                 bool lightsDirty = false;
                 uint32_t clutterInstances = 0; // Top level instances taken by instanced objects
                 size_t AddInstancedPlacement(size_t record, std::vector<glm::mat4> items, const std::string& name);
+                size_t livePlacements = 0; // Added by AddLivePlacement since the last rebuild
+                // The light buffer has room for this many more lights than the built scene has: the lights of placements
+                // AddLivePlacement adds (a model with a lamp in it)
+                static constexpr size_t LIVE_LIGHT_ROOM = 1024;
+                size_t lightCapacity = 0;
                 std::vector<InstanceMotion> uploadedMotion; // As last written to instanceMotionSSBO (only changes are uploaded)
                 VkDeviceAddress tlasScratchAddress = 0;
                 std::vector<std::unique_ptr<Fox::Graphics::Vulkan::Buffer>> frameInstanceBuffers; // Per frame in flight

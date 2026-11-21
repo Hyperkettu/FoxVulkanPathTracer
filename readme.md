@@ -201,7 +201,8 @@ if DLSS is unavailable the renderer says so on the console and starts with SVGF 
 While the engine starts, a splash screen shows the Fox Engine logo (`Textures/Fox Engine Logo.png`), a line saying what
 is loading (a model, its displacement, the trees' level of detail, the pipelines) and a moving bar. It is a window of its
 own on a thread of its own (`Platform/Splash.cpp`, Windows), so it keeps drawing while the main thread loads. The main
-window stays hidden until loading is done, and the splash fades out once the first frame is drawn. It can be dragged aside.
+window stays hidden until loading is done, and the splash fades out once the first frame is drawn. It never takes the
+focus (clicks go through it), so the game's window keeps the keyboard and a fullscreen game is not minimized by a click.
 
 The editor matches it (`Editor/EditorTheme.cpp`): the splash's deep navy for panels, the logo's blue glow for what is
 hovered and selected, the orange of its letters for check marks, active sliders and tab underlines, rounded corners, and
@@ -814,6 +815,17 @@ The toolbar shows the game time and frame.
 
 Entities given a Physics component while it plays (created by hand, or by the game later) join the simulation at once.
 
+**Smooth motion.** Physics steps at a fixed 1/60 s while frames come at their own rate (30 or 40 fps on the laptop
+presets), so a frame holds one or two steps, or none. Each frame draws a dynamic body between its last two steps'
+states, by how far time is into the next step: drawn where the last step left it, a rolling ball moved unevenly (its
+speed on screen varied 34% from frame to frame at 40 fps; drawn in between, 5 to 7%).
+
+**Spawning without a hitch.** A model a script spawns while the game plays (`Scene.Spawn("box", ...)`) is added to
+the ray traced scene at once when the scene already has its mesh: one more top level instance sharing its geometry and
+structures, and its lights (the light buffer keeps room for 1,024 more). Before, every spawn rebuilt the scene (a 0.3 to
+0.6 s freeze in the scripting demo for each box dropped). A model the scene does not have yet still rebuilds it once.
+Destroying while playing only hides; stopping play puts the scene back as it was.
+
 **Game camera.** An entity with a **Camera** component (**Create > Game Camera** makes one where the view is, looking
 the same way) is what the game looks through while it plays. It looks along its -Z axis, with its own field of view;
 of several, the enabled one with the highest **Priority** wins.
@@ -833,6 +845,33 @@ component's values. When it stops:
   they are not generated again.
 
 Saving while it plays saves the scene as it was when play started; loading a scene stops play without restoring.
+
+### Publishing a game
+
+**File > Publish Game...** makes the scene open in the editor, as it is now, into a game that runs without the editor
+(`Editor/GamePublisher.cpp`):
+
+* **Name** names the game's window and its executable (`My Game.exe`).
+* **Folder** is where it goes, outside the project (default `../Published/<name>`, ignored by git). A game published
+  there before is replaced; a folder with other files in it is refused.
+* **Fullscreen** and **Render preset** are how it starts; it keeps the editor's render pipeline.
+* **Open Folder** and **Run Game** appear when it is done.
+
+**What the folder holds:** the engine's executable and libraries (DLSS), the C# host (`Scripting/`), the assets
+(models without their `.blend` sources, textures, scenes, prefabs, fonts, sounds, scripts as `.cs`, compiled shaders,
+settings), the start scene (`Scenes/Start/<name>.json`) and `Game.json`. The copying runs on a thread of its own with
+a progress bar; the cloth scene makes a 323 MB, 148-file game.
+
+**Running as a game** (`Platform/GameConfig.cpp`): `Game.json` beside the executable makes the engine start as that
+game, from its own folder whatever folder it was started from. The splash screen shows while it loads, then it plays
+the start scene at once, through its game camera. There is no editor: no edit mode, menus or renderer keys; the
+keyboard and mouse are the game's scripts', Escape quits and T switches fullscreen. The window has the game's name,
+there is no console window, and what the engine prints goes to `Game.log` in the game's folder. (The editor has no console window
+ of its own either: one Windows opens for it, started from Explorer or Visual Studio, is closed at once. Started from a
+ terminal it prints there too, and `FOX_CONSOLE=1` keeps its own console. It prints to `Editor.log` in the project's folder, the working directory, and to its **Window > Log**: every line
+ with its time, errors in red and warnings in orange, a filter, **Clear**, **Copy** (the lines shown), **Auto-scroll**,
+ and **Timings** to show the renderer's `[GPU]` lines, hidden by default.) Its scripts are compiled when it starts,
+so the computer running it needs the .NET runtime, as the editor does, and an RTX GPU for the path tracer.
 
 ### Scripting (C#)
 

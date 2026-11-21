@@ -340,6 +340,9 @@
     <ClCompile Include="Platform\IApplication.cpp" />
     <ClCompile Include="Platform\Splash.cpp" />
     <ClCompile Include="Editor\EditorTheme.cpp" />
+    <ClCompile Include="Editor\GamePublisher.cpp" />
+    <ClCompile Include="Editor\LogWindow.cpp" />
+    <ClCompile Include="Platform\GameConfig.cpp" />
     <ClCompile Include="Platform\Vulkan\Application.cpp" />
     <ClCompile Include="Scene\MainScene.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingScene.cpp" />
@@ -466,6 +469,9 @@
     <ClInclude Include="Platform\IApplication.h" />
     <ClInclude Include="Platform\Splash.h" />
     <ClInclude Include="Editor\EditorTheme.h" />
+    <ClInclude Include="Editor\GamePublisher.h" />
+    <ClInclude Include="Editor\LogWindow.h" />
+    <ClInclude Include="Platform\GameConfig.h" />
     <ClInclude Include="Platform\Vulkan\Application.h" />
     <ClInclude Include="Scene\MainScene.h" />
     <ClInclude Include="Scene\Raytracing\MainRayTracingScene.h" />

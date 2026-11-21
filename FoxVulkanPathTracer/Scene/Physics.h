@@ -116,6 +116,8 @@ namespace Fox {
 			// Advances by deltaTime in fixed steps; beforeStep runs before each, with the step's length. Returns the
 			// number of steps taken (time left over is kept for the next call).
 			int Step(float deltaTime, const std::function<void(float)>& beforeStep);
+			// How far time is into the next step (0 .. 1): where to draw a body between its last two steps' states
+			float Interpolation() const;
 
 			void GetTransform(uint32_t body, glm::vec3& position, glm::quat& rotation) const;
 			void SetTransform(uint32_t body, const glm::vec3& position, const glm::quat& rotation);

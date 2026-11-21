@@ -180,8 +180,8 @@ namespace Fox {
 						return 0;
 					case WM_ERASEBKGND:
 						return 1;
-					case WM_NCHITTEST:
-						return HTCAPTION; // It can be dragged aside
+					case WM_MOUSEACTIVATE:
+						return MA_NOACTIVATE; // Never the focus (clicks go through it anyway: WS_EX_TRANSPARENT)
 					case WM_DESTROY:
 						KillTimer(hwnd, TIMER_ID);
 						PostQuitMessage(0);
@@ -226,7 +226,10 @@ namespace Fox {
 					s.alpha = 0;
 					s.closing = false;
 
-					HWND hwnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_APPWINDOW, windowClass.lpszClassName, "Fox Engine",
+					// Never activated (WS_EX_NOACTIVATE), clicks through it to what is under it (WS_EX_TRANSPARENT, a layered
+					// window's): the focus stays with what had it, then goes to the main window
+					HWND hwnd = CreateWindowExA(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
+						windowClass.lpszClassName, "Fox Engine",
 						WS_POPUP, (screenWidth - width) / 2, (screenHeight - height) / 2, width, height, nullptr, nullptr, instance, nullptr);
 					if (!hwnd) {
 						DeleteObject(s.font);

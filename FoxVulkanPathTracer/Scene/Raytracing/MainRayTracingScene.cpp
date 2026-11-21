@@ -38,16 +38,19 @@ namespace Fox {
 				textureLibrary = std::make_unique<Fox::Scene::TextureLibrary>(device, physicalDevice, commandPool->Get(), queue);
 
 				// The scene comes from its file; without one it starts empty (ground and sun only)
+				// (A published game: its start scene)
 				std::string error;
-				if (std::filesystem::exists(DEFAULT_SCENE_FILE)) {
+				const Fox::Platform::GameConfig& game = Fox::Platform::GetGameConfig();
+				const std::string sceneFile = game.enabled && !game.scene.empty() ? game.scene : std::string(DEFAULT_SCENE_FILE);
+				if (std::filesystem::exists(sceneFile)) {
 					CameraPose camera;
-					if (!LoadFromFile(DEFAULT_SCENE_FILE, camera, error)) {
+					if (!LoadFromFile(sceneFile, camera, error)) {
 						std::cout << "Scene: " << error << "\n";
 					}
 				}
 				else {
 					CreateSun(graph);
-					std::cout << "Scene: no " << DEFAULT_SCENE_FILE << ", starting with an empty scene\n";
+					std::cout << "Scene: no " << sceneFile << ", starting with an empty scene\n";
 				}
 
 				// Sound, then C# scripts (Scripts/*.cs)
@@ -350,8 +353,36 @@ namespace Fox {
 				mesh.type = MeshComponent::Type::Model;
 				mesh.file = file;
 				mesh.displacement = displacement;
-				MeshChanged(&graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh)), nullptr);
+				MeshComponent& added = graph.GetRegistry().Add<MeshComponent>(entity, std::move(mesh));
+				if (!PlaceLive(entity, added)) {
+					MeshChanged(&added, nullptr);
+				}
 				return entity;
+			}
+
+			bool MainRayTracingScene::PlaceLive(Entity entity, MeshComponent& mesh) {
+				// Only into a built scene that is not about to be rebuilt anyway, and a model it already has
+				if (rebuildCount == 0 || structureChanged || mesh.type != MeshComponent::Type::Model || mesh.file.empty()) {
+					return false;
+				}
+				const auto model = loadedModels.find(mesh.file + (mesh.displacement ? "|displaced" : ""));
+				if (model == loadedModels.end()) {
+					return false;
+				}
+				graph.UpdateTransforms();
+				const glm::mat4 world = graph.GetRegistry().Get<Fox::Scene::WorldTransformComponent>(entity).matrix;
+				if (!AddLivePlacement(*model->second, world, graph.GetName(entity))) {
+					return false;
+				}
+				mesh.object = GetObjectCount() - 1;
+				mesh.placed = true;
+				mesh.placedMatrix = world;
+				mesh.shown = true;
+				SetObjectTransform(mesh.object, graph.GetWorldTransform(entity));
+				objectEntities.resize(GetObjectCount());
+				objectEntities[mesh.object] = entity;
+				objectsChanged = true;
+				return true;
 			}
 
 			MainRayTracingScene::Entity MainRayTracingScene::AddSphereObject(const glm::vec3& position, float radius, const SurfaceMaterial& material, Entity parent) {
@@ -426,11 +457,16 @@ namespace Fox {
 				for (Entity e : graph.Subtree(entity)) {
 					if (MeshComponent* mesh = registry.TryGet<MeshComponent>(e)) {
 						// Out of sight right away; out of the scene with the rebuild
-						if (mesh->placed && mesh->object < GetObjectCount()) {
+						const bool placed = mesh->placed && mesh->object < GetObjectCount();
+						if (placed) {
 							SetObjectVisible(mesh->object, false);
 						}
 						const MeshComponent::Type type = mesh->type;
-						MeshChanged(nullptr, &type);
+						// While the game plays (a script destroying what it spawned) hidden is enough: no rebuild, no
+						// hitch. Its placement goes with the next rebuild; stopping play puts the scene back anyway.
+						if (!(physicsPlaying && placed && type != MeshComponent::Type::Tree)) {
+							MeshChanged(nullptr, &type);
+						}
 					}
 					RemoveLightComponent(e);
 					if (Fox::Scene::WaterComponent* water = registry.TryGet<Fox::Scene::WaterComponent>(e); water && water->placed) {
@@ -2163,6 +2199,10 @@ namespace Fox {
 
 			bool MainRayTracingScene::ApplyTreeChanges(std::string& error) {
 				treesChanged = false;
+				if (GetLivePlacementCount() > 0) {
+					structureChanged = true; // Places them again, with the trees (the trees' rebuild would drop them)
+					return true;
+				}
 				graph.UpdateTransforms();
 				auto& registry = graph.GetRegistry();
 				try {
@@ -2782,6 +2822,7 @@ namespace Fox {
 						physics->SetTransform(playing.body, position, rotation);
 						physics->SetVelocity(playing.body, glm::clamp(moved, glm::vec3(-20.0f), glm::vec3(20.0f)), glm::vec3(0.0f));
 						playing.written = world;
+						playing.hasStates = false; // Drawn where it was put, not on the way there
 					}
 					i++;
 				}
@@ -2818,6 +2859,10 @@ namespace Fox {
 
 				physics->Step(dt, [&](float step) {
 					for (PlayingBody& playing : playingBodies) {
+						if (playing.motion == Motion::Dynamic) {
+							// The state this step starts from: the earlier of the two drawn between
+							physics->GetTransform(playing.body, playing.previousPosition, playing.previousRotation);
+						}
 						if (playing.motion == Motion::Kinematic) {
 							// It follows its entity (the gizmo, or its parent moving it)
 							glm::vec3 position, scale;
@@ -2837,7 +2882,9 @@ namespace Fox {
 					}
 				});
 
-				// Where the dynamic bodies are now; splashes where they hit the water, a wake where they move through it
+				// Where the dynamic bodies are now, drawn between their last two steps' states by how far time is into the
+				// next step; splashes where they hit the water, a wake where they move through it
+				const float between = physics->Interpolation();
 				for (PlayingBody& playing : playingBodies) {
 					if (playing.motion != Motion::Dynamic) {
 						continue;
@@ -2845,9 +2892,16 @@ namespace Fox {
 					glm::vec3 position;
 					glm::quat rotation;
 					physics->GetTransform(playing.body, position, rotation);
+					if (!playing.hasStates) {
+						playing.previousPosition = position; // New, or put somewhere by hand: no motion to draw yet
+						playing.previousRotation = rotation;
+						playing.hasStates = true;
+					}
+					playing.currentPosition = position;
+					playing.currentRotation = rotation;
 					Fox::Scene::Transform world;
-					world.position = position;
-					world.rotation = rotation;
+					world.position = glm::mix(playing.previousPosition, playing.currentPosition, between);
+					world.rotation = glm::slerp(playing.previousRotation, playing.currentRotation, between);
 					world.scale = playing.scale;
 					graph.SetWorldTransform(playing.entity, world);
 					playing.written = world.Matrix();

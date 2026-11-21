@@ -24,6 +24,10 @@ namespace Fox {
 				Fox::Platform::Splash::Show("Textures/Fox Engine Logo.png");
 				Fox::Platform::Splash::SetStatus("Starting");
 
+				// Fullscreen stays fullscreen when another window takes the focus (SDL's default minimizes it: a click that
+				// went elsewhere left a game with its music playing and no window)
+				SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+
 				if (SDL_Init(SDL_INIT_VIDEO) != 0) {
 					Fox::Platform::Splash::Close();
 					std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
@@ -130,6 +134,10 @@ namespace Fox {
 				SDL_ShowWindow(window);
 				SDL_RaiseWindow(window);
 				bool splashOpen = true;
+				// A published game may start fullscreen
+				if (Fox::Platform::GetGameConfig().enabled && Fox::Platform::GetGameConfig().fullscreen && !isFullscreen) {
+					ToggleFullscreen();
+				}
 
 				while (running) {
 					SDL_Event e;
@@ -153,6 +161,7 @@ namespace Fox {
 					if (splashOpen) {
 						splashOpen = false;
 						Fox::Platform::Splash::Close();
+						SDL_RaiseWindow(window); // To the front, with the keyboard, once the splash screen is gone
 						previousTime = Clock::now(); // The fade out is not a frame's time
 					}
 				}

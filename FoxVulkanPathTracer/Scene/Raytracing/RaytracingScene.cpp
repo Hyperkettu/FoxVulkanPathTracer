@@ -107,6 +107,7 @@ namespace Fox {
                 editableSurfaces.clear();
                 dirtyMaterials.clear();
                 staticCounts = StaticCounts{};
+                livePlacements = 0;
                 tlasDirty = false;
                 lightsDirty = false;
             }
@@ -751,6 +752,61 @@ namespace Fox {
                 }
 
                 placements.push_back(std::move(placement));
+            }
+
+            bool RayTracingScene::AddLivePlacement(const Fox::Graphics::Geometry::Vulkan::Mesh& mesh, const glm::mat4& transform, const std::string& name) {
+                auto existing = std::find_if(meshRecords.begin(), meshRecords.end(),
+                    [&mesh](const MeshRecord& record) { return record.mesh == &mesh; });
+                if (existing == meshRecords.end() || topLevelAccelerationStructure.handle == VK_NULL_HANDLE) {
+                    return false;
+                }
+                const size_t record = static_cast<size_t>(existing - meshRecords.begin());
+                const MeshRecord& meshRecord = meshRecords[record];
+                // Cluster traced meshes would need their pass's instance list made again; lights need room in the buffer
+                if (meshRecord.clusterMesh >= 0) {
+                    return false;
+                }
+                std::vector<Fox::Graphics::Vulkan::Light> localLights = mesh.GetLights();
+                localLights.insert(localLights.end(), meshRecord.triangleLights.begin(), meshRecord.triangleLights.end());
+                if (!localLights.empty() && (!lightsSSBO || lightCount + localLights.size() > lightCapacity)) {
+                    return false;
+                }
+                uint32_t kinds = 0;
+                for (int kind = 0; kind < SurfaceKindCount; kind++) {
+                    kinds += meshRecord.blas[kind] >= 0 ? 1 : 0;
+                }
+                if (kinds == 0 || instances.size() + kinds > MAX_INSTANCES) {
+                    return false;
+                }
+
+                // Its lights after the others (the stand-in a scene without lights keeps in the buffer goes), in world space
+                // as placed; they follow it as it moves, as a built scene's do
+                if (!localLights.empty()) {
+                    lights.resize(lightCount);
+                }
+                Placement placement;
+                placement.record = record;
+                placement.transform = Decompose(transform);
+                placement.name = name;
+                placement.firstLight = static_cast<uint32_t>(lights.size());
+                for (const Fox::Graphics::Vulkan::Light& light : localLights) {
+                    lights.push_back(TransformLight(light, transform));
+                }
+                placement.localLights = std::move(localLights);
+                if (lights.size() > lightCount) {
+                    lightCount = static_cast<uint32_t>(lights.size());
+                    BuildLightSelection();
+                    lightsDirty = true;
+                }
+                placements.push_back(std::move(placement));
+                const size_t first = instances.size();
+                AddPlacementInstances(placements.size() - 1);
+                for (size_t i = first; i < instances.size(); i++) {
+                    instances[i].accelerationStructureReference = instanceBlasIndices[i] == NO_BLAS ? 0 : bottomLevelAccelerationStructure[instanceBlasIndices[i]].deviceAddress;
+                }
+                livePlacements++;
+                tlasDirty = true;
+                return true;
             }
 
             std::vector<Fox::Graphics::Vulkan::Light> RayTracingScene::MakeTriangleLights(uint32_t first, uint32_t count, uint32_t firstLightIndex) {
@@ -1704,7 +1760,11 @@ namespace Fox {
                 materialCapacity.resize(MAX_MATERIALS);
                 materialsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Material>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Materials", materialCapacity);
 
-                lightsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Lights", lights);
+                // Room for more: lights of placements added later without a rebuild (AddLivePlacement)
+                std::vector<Fox::Graphics::Vulkan::Light> lightRoom = lights;
+                lightRoom.resize(lights.size() + LIVE_LIGHT_ROOM);
+                lightCapacity = lightRoom.size();
+                lightsSSBO = ShaderStorageBuffer<Fox::Graphics::Vulkan::Light>::CreateDeviceLocal(device, physicalDevice, pool, queue, "Scene Lights", lightRoom);
 
                 VkDeviceAddress vertexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, vertexBuffers.back()->Get());
                 VkDeviceAddress indexAddress = Fox::Graphics::Vulkan::GetBufferDeviceAddress(device, indexBuffers.back()->Get());

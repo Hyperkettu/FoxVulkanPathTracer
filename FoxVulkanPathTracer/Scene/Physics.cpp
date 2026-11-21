@@ -509,6 +509,10 @@ namespace Fox {
 			return steps;
 		}
 
+		float PhysicsWorld::Interpolation() const {
+			return std::clamp(impl->accumulated / STEP, 0.0f, 1.0f);
+		}
+
 		void PhysicsWorld::GetTransform(uint32_t body, glm::vec3& position, glm::quat& rotation) const {
 			JPH::RVec3 p;
 			JPH::Quat q;

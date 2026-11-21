@@ -1015,6 +1015,13 @@ if (!gbuffer) {
 				if (deltaTime > 0.0f && titleTimer < 0.5f) {
 					return;
 				}
+				// A published game: its name only
+				if (const Fox::Platform::GameConfig& game = Fox::Platform::GetGameConfig(); game.enabled) {
+					SDL_SetWindowTitle(static_cast<SDL_Window*>(config.windowHandle), game.name.c_str());
+					titleTimer = 0.0f;
+					titleFrames = 0;
+					return;
+				}
 
 				std::ostringstream title;
 				title << "Fox Renderer - " << (renderPipeline == RenderPipeline::Hybrid ? "Hybrid - " : "") << denoisers[activeDenoiser]->GetName()
@@ -1098,6 +1105,7 @@ if (!gbuffer) {
 					size_t next = 0;
 					uint32_t frames = 0;
 					double elapsed = 0.0;
+					double frameStart = 0.0, worst = 0.0; // The longest frame of the 2 seconds (a hitch)
 					void Begin() {
 						if (!enabled) return;
 						// From the last frame's end: "cap" also holds the event loop between frames
@@ -1116,8 +1124,10 @@ if (!gbuffer) {
 					void End() {
 						if (!enabled) return;
 						frames++;
+						worst = std::max(worst, elapsed - frameStart);
+						frameStart = elapsed;
 						if (elapsed < 2000.0) return;
-						std::cout << "[CPU] " << frames * 1000.0 / elapsed << " fps:";
+						std::cout << "[CPU] " << frames * 1000.0 / elapsed << " fps, longest frame " << worst << " ms:";
 						for (auto& section : sections) {
 							std::cout << " " << section.first << " " << section.second / frames;
 							section.second = 0.0;
@@ -1125,6 +1135,8 @@ if (!gbuffer) {
 						std::cout << " ms\n";
 						frames = 0;
 						elapsed = 0.0;
+						frameStart = 0.0;
+						worst = 0.0;
 					}
 				};
 				CpuProfile cpuProfile;
@@ -1134,6 +1146,12 @@ if (!gbuffer) {
 				// Nothing to draw into while the window is minimized
 				if (capabilities.currentExtent.width == 0 || capabilities.currentExtent.height == 0) {
 					return;
+				}
+
+				// A published game plays from its first frame
+				if (Fox::Platform::GetGameConfig().enabled && !gameStarted) {
+					gameStarted = true;
+					TogglePlay();
 				}
 
 				// The preset's frame cap: less heat on a laptop, so it keeps its clocks up
@@ -1727,6 +1745,9 @@ if (!gbuffer) {
 			}
 
 			void VulkanRHI::SetEditMode(bool enabled) {
+				if (Fox::Platform::GetGameConfig().enabled) {
+					return; // A published game has no editor
+				}
 				editMode = enabled;
 				gizmo.MouseUp();
 				terrainEditor.MouseUp();
@@ -1961,8 +1982,9 @@ if (!gbuffer) {
 				using Managers::TextureManager;
 				using Mode = Fox::Editor::TransformGizmo::Mode;
 
-				// A key pressed for a binding (Input Actions window) is not a command
-				if (CapturingInput()) {
+				// A key pressed for a binding (Input Actions window) is not a command; in a published game, none is (its
+				// keys are its scripts'; Escape quits and T switches fullscreen, Platform/Vulkan/Application)
+				if (CapturingInput() || Fox::Platform::GetGameConfig().enabled) {
 					return;
 				}
 
