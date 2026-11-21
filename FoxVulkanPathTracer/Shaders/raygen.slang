@@ -6,6 +6,13 @@
 //      and one analytic light) with BSDF sampling through multiple importance sampling.
 //
 // Paths are iterative: the closest hit shader only describes the surface, so rays never recurse.
+//
+// Two pipelines (camera.hybrid):
+//   - real-time path tracing: the camera's rays are traced like all the others
+//   - the hybrid path tracer: the first hit comes from the visibility buffer the raster pass drew (Nanite style, see
+//     HybridRasterPass), described by the same code as a ray's hit (surface.slang). Lights, shadows and bounces are
+//     traced. The first bounce looks in the previous frame's image first (a screen trace, Lumen style): where it finds
+//     what the bounce hits there, that light is taken and the path ends; elsewhere the ray is traced.
 
 #include "common.slang"
 #include "bsdf.slang"
@@ -15,6 +22,15 @@
 [[vk::binding(2, 0)]] ConstantBuffer<Camera> camera;
 
 #include "volumes.slang"
+#include "surface.slang"
+#include "hybrid_common.slang"
+
+// The hybrid path tracer's raster results (HybridRasterPass)
+[[vk::binding(16, 0)]] [[vk::image_format("rg32ui")]] RWTexture2D<uint2> gVisibility; // 1 + draw, scene-wide triangle; 0: nothing
+[[vk::binding(17, 0)]] StructuredBuffer<DrawInfo> gDrawInfos;
+[[vk::binding(18, 0)]] StructuredBuffer<TlasInstance> gRasterInstances;               // This frame's top level instances
+[[vk::binding(19, 0)]] Sampler2D gPreviousImage;  // The previous frame's denoised image (screen traces)
+[[vk::binding(20, 0)]] Sampler2D gDepthPyramid;   // Level 0: reversed depth (near / distance), 0 where nothing was drawn
 
 // G-buffer of the current frame, consumed by the denoiser (see GBuffer.h for the exact contents)
 [[vk::binding(1, 0)]]  [[vk::image_format("rgba16f")]] RWTexture2D<float4> gRadiance;
@@ -227,6 +243,150 @@ float2 ProjectToPreviousFrame(float3 fromPrevCamera, out float depth)
 }
 
 // ------------------------------------------------------------------------------------------------
+// The hybrid path tracer
+// ------------------------------------------------------------------------------------------------
+
+float3x3 Inverse(float3x3 m)
+{
+    float3 c0 = cross(m[1], m[2]);
+    float3 c1 = cross(m[2], m[0]);
+    float3 c2 = cross(m[0], m[1]);
+    float det = dot(m[0], c0);
+    return transpose(float3x3(c0, c1, c2)) / (abs(det) > 1e-20f ? det : 1e-20f);
+}
+
+// The surface the pixel's camera ray meets, from the visibility buffer: the triangle the raster pass found there,
+// met by the jittered ray (the same as the real-time pipeline traces). Near a triangle's edge the ray may just miss
+// it: the point is clamped onto the triangle.
+HitPayload RasterizedHit(uint2 pixel, float3 direction)
+{
+    HitPayload payload;
+    payload.hitT = -1.0f;
+    uint2 visible = gVisibility[pixel];
+    if (visible.x == 0)
+        return payload; // Nothing drawn: sky
+
+    DrawInfo info = gDrawInfos[visible.x - 1];
+    TlasInstance instance = gRasterInstances[info.tlasInstance];
+    Submesh submesh = gAllSubmeshes[info.submesh];
+    uint primitive = visible.y - submesh.indexOffset / 3;
+    uint base = submesh.indexOffset + primitive * 3;
+    float3 p0 = TransformPoint(instance.rows, gAllVertices[gAllIndices[base + 0]].position.xyz);
+    float3 p1 = TransformPoint(instance.rows, gAllVertices[gAllIndices[base + 1]].position.xyz);
+    float3 p2 = TransformPoint(instance.rows, gAllVertices[gAllIndices[base + 2]].position.xyz);
+
+    // The ray against the triangle (Moller-Trumbore)
+    float3 e1 = p1 - p0;
+    float3 e2 = p2 - p0;
+    float3 pv = cross(direction, e2);
+    float det = dot(e1, pv);
+    float3 barycentrics = float3(1.0f / 3.0f);
+    if (abs(det) > 1e-14f)
+    {
+        float inv = 1.0f / det;
+        float3 s = camera.camPos - p0;
+        float u = dot(s, pv) * inv;
+        float v = dot(direction, cross(s, e1)) * inv;
+        barycentrics = max(float3(1.0f - u - v, u, v), float3(0.0f));
+        barycentrics /= max(barycentrics.x + barycentrics.y + barycentrics.z, 1e-6f);
+    }
+    float3 position = p0 * barycentrics.x + p1 * barycentrics.y + p2 * barycentrics.z;
+    float hitT = max(dot(position - camera.camPos, direction), 0.0f);
+
+    float3x3 objectToWorld = float3x3(instance.rows[0].xyz, instance.rows[1].xyz, instance.rows[2].xyz);
+    DescribeSurface(payload, info.submesh, primitive, barycentrics, objectToWorld, Inverse(objectToWorld), position, info.tlasInstance, hitT);
+    return payload;
+}
+
+// Screen traces: a bounce's ray marched through this frame's depth (the visibility buffer's, in screen space), and
+// where it goes behind a surface there, the light that surface sends: the previous frame's image at the point (a
+// path traced and denoised there, so this carries on its own bounces too). Rays that leave the screen, pass behind
+// everything, or meet a light (emissive: the light sampling finds those) are traced instead.
+static const int SCREEN_TRACE_STEPS = 24;
+static const float SCREEN_TRACE_DISTANCE = 30.0f;
+
+// Where a point is in the visibility buffer (pixels, as its texels: the jittered rays' grid) and its depth along the view
+bool ProjectToScreen(float3 p, out float2 pixel, out float viewDepth)
+{
+    float3 relative = p - camera.camPos;
+    viewDepth = dot(relative, camera.camForward);
+    pixel = float2(0.0f);
+    if (viewDepth <= camera.nearPlane)
+        return false;
+    float2 d = float2(dot(relative, camera.camRight), dot(relative, camera.camUp)) / viewDepth / camera.tanHalfFov;
+    d.x /= camera.resolution.x / camera.resolution.y;
+    d.y = -d.y;
+    // The ray of pixel p goes through p + 0.5 + jitter
+    pixel = (d * 0.5f + 0.5f) * camera.resolution - camera.jitter;
+    return true;
+}
+
+bool ScreenTrace(float3 origin, float3 direction, inout uint rng, out float3 radiance)
+{
+    radiance = float3(0.0f);
+    if (camera.historyValid == 0)
+        return false;
+
+    // As far as SCREEN_TRACE_DISTANCE, but staying in front of the camera
+    float tEnd = SCREEN_TRACE_DISTANCE;
+    float towards = dot(direction, camera.camForward);
+    float startDepth = dot(origin - camera.camPos, camera.camForward);
+    if (towards < 0.0f)
+        tEnd = min(tEnd, (startDepth - 2.0f * camera.nearPlane) / -towards);
+    if (tEnd <= 0.05f)
+        return false;
+
+    float2 a, b;
+    float za, zb;
+    if (!ProjectToScreen(origin, a, za) || !ProjectToScreen(origin + direction * tEnd, b, zb))
+        return false;
+    float2 delta = b - a;
+    float pixels = length(delta);
+    if (pixels < 2.0f)
+        return false;
+
+    float offset = NextRandomFloat(rng);
+    for (int i = 0; i < SCREEN_TRACE_STEPS; i++)
+    {
+        float s = (float(i) + offset) / float(SCREEN_TRACE_STEPS);
+        if (s * pixels < 1.5f)
+            continue; // Still on the surface it leaves
+        float2 pixel = a + delta * s;
+        if (any(pixel < 0.0f) || any(pixel >= camera.resolution))
+            return false; // Off the screen: traced
+        // Depth along the view is linear in 1 / depth across the screen
+        float rayDepth = 1.0f / lerp(1.0f / za, 1.0f / zb, s);
+        float2 texel = floor(pixel) + 0.5f;
+        float sceneDepth = gDepthPyramid.SampleLevel(texel / camera.resolution, 0.0f).r;
+        if (sceneDepth <= 0.0f)
+            continue; // Sky there
+        float sceneZ = camera.nearPlane / sceneDepth;
+        float thickness = max(0.15f, sceneZ * 0.03f);
+        if (rayDepth > sceneZ + 0.02f && rayDepth < sceneZ + thickness)
+        {
+            uint2 q = uint2(pixel);
+            uint2 visible = gVisibility[q];
+            if (visible.x == 0)
+                return false;
+            Material material = gAllMaterials[gAllSubmeshes[gDrawInfos[visible.x - 1].submesh].materialIndex];
+            if (MaxComponent(material.emissive) > 0.0f)
+                return false; // A light: the light sampling counts it (with multiple importance sampling)
+
+            // The point, and where it was in the previous frame's image
+            float3 viewRay = PrimaryRayDirection(float2(q) + 0.5f + camera.jitter);
+            float3 point = camera.camPos + viewRay * (sceneZ / max(dot(viewRay, camera.camForward), 1e-4f));
+            float previousDepth;
+            float2 previous = ProjectToPreviousFrame(point - camera.prevCamPos, previousDepth);
+            if (previousDepth <= 0.0f || any(previous < 0.0f) || any(previous >= camera.resolution))
+                return false;
+            radiance = gPreviousImage.SampleLevel(previous / camera.resolution, 0.0f).rgb;
+            return all(isfinite(radiance));
+        }
+    }
+    return false;
+}
+
+// ------------------------------------------------------------------------------------------------
 // Path tracing
 // ------------------------------------------------------------------------------------------------
 
@@ -378,8 +538,22 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
     int bounce = 0;
     int volumeBounce = 0;
     const bool media = VolumesOn();
+    bool screenTraceable = false; // The hybrid path tracer: this ray leaves the first hit by reflection
     for (int segment = 0; segment <= MAX_BOUNCES + MAX_DELTA_EVENTS + MAX_VOLUME_BOUNCES; segment++)
     {
+        // The first bounce: from the previous frame's image, where the screen shows what it hits
+        if (screenTraceable)
+        {
+            screenTraceable = false;
+            float3 screenRadiance;
+            if (ScreenTrace(origin, direction, rng, screenRadiance))
+            {
+                float3 contribution = throughput * screenRadiance;
+                radiance += isIndirect ? ClampIndirect(contribution) : contribution;
+                break;
+            }
+        }
+
         HitPayload hit = (segment == 0 && hasFirstHit) ? firstHit : TraceSurface(origin, direction, segment > 0);
 
         // --- Fog, clouds, smoke: scattered on the way to the surface (or out of the scene)? ---
@@ -506,6 +680,8 @@ float3 TracePath(float3 origin, float3 direction, inout uint rng, HitPayload fir
 
         origin = OffsetRayOrigin(position, geometricNormal, scatter.L);
         direction = scatter.L;
+        screenTraceable = segment == 0 && hasFirstHit && camera.screenTraces != 0 && !media
+            && !scatter.isTransmission && !scatter.isRefraction;
 
         // Russian roulette: end dim paths early, boost the survivors to stay unbiased
         if (segment >= ROULETTE_START_BOUNCE)
@@ -666,8 +842,10 @@ void main()
     float2 primaryPosition = float2(pixel) + 0.5f + camera.jitter;
     float3 primaryDirection = PrimaryRayDirection(primaryPosition);
 
-    // Traced once, used for both the G-buffer and the paths through the same sub-pixel position
-    HitPayload primaryHit = TraceSurface(camera.camPos, primaryDirection, false, INSTANCE_MASK_ALL);
+    // Traced once (or, in the hybrid path tracer, read from the visibility buffer), used for both the G-buffer and
+    // the paths through the same sub-pixel position
+    HitPayload primaryHit = camera.hybrid != 0 ? RasterizedHit(pixel, primaryDirection)
+                                               : TraceSurface(camera.camPos, primaryDirection, false, INSTANCE_MASK_ALL);
 
     PrimarySurface primary = FindPrimarySurface(camera.camPos, primaryDirection, primaryHit);
 

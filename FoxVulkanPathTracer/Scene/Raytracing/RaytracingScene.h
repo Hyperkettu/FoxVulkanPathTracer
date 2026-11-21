@@ -379,6 +379,27 @@ namespace Fox {
                 }
 
                 VkAccelerationStructureKHR GetTLAS() const { return topLevelAccelerationStructure.handle; }
+
+                // --- The hybrid path tracer (Graphics/Vulkan/Raytracing/HybridRasterPass) ---
+                // Clusters of up to 128 triangles of every bottom level structure, with bounding spheres, and per top
+                // level instance its clusters; the trees' level of detail clusters after them
+                Fox::Graphics::Vulkan::RayTracing::HybridRasterPass::Content MakeRasterContent() const;
+                // Changes when the instances or structures do (the content is then made again)
+                uint32_t GetRasterVersion() const { return rasterVersion; }
+                // This frame's top level instances (as the last RecordFrameUpdate wrote them; written: this frame)
+                VkBuffer GetFrameInstances(bool& writtenThisFrame) const {
+                    writtenThisFrame = instancesWrittenThisFrame;
+                    return lastInstanceSlot < frameInstanceBuffers.size() && frameInstanceBuffers[lastInstanceSlot] ? frameInstanceBuffers[lastInstanceSlot]->Get() : VK_NULL_HANDLE;
+                }
+                uint32_t GetInstanceCount() const { return static_cast<uint32_t>(instances.size()); }
+                // The trees' cluster level of detail this frame (false: none)
+                bool GetClusterSelection(uint32_t frameSlot, VkBuffer& clusterInstances, VkBuffer& counts, VkBuffer& selected, uint32_t& count,
+                    VkBuffer& graph) const {
+                    return clusterPass && !clusterMeshes.empty() && clusterPass->GetSelection(frameSlot, clusterInstances, counts, selected, count, graph);
+                }
+                // The hybrid raster's own cut through the trees' clusters is coarser by this much (display pixels per
+                // raster pixel; 0: none): each tree's candidates then cover its levels too
+                void SetRasterLodScale(float scale) { rasterLodScale = scale; }
                 VkDeviceAddress GetTLASAddress() const { return topLevelAccelerationStructure.deviceAddress; }
 
                 std::unique_ptr<Fox::Graphics::Vulkan::ShaderStorageBuffer<Fox::Graphics::Vulkan::Vertex>> vertexSSBO;
@@ -402,6 +423,13 @@ namespace Fox {
 
                 std::vector<VkAccelerationStructureInstanceKHR> instances;
                 std::vector<uint32_t> instanceBlasIndices;
+                // Per bottom level structure: its submeshes (the hybrid raster's clusters)
+                struct BlasRange { uint32_t firstSubmesh = 0, submeshCount = 0; bool dynamic = false; };
+                std::vector<BlasRange> blasRanges;
+                uint32_t rasterVersion = 1;
+                float rasterLodScale = 0.0f;
+                uint32_t lastInstanceSlot = 0;
+                bool instancesWrittenThisFrame = false;
                 std::unique_ptr<Fox::Graphics::Vulkan::Buffer> instanceBuffer;
 
                 std::unique_ptr<Fox::Graphics::Vulkan::CommandPool> commandPool;

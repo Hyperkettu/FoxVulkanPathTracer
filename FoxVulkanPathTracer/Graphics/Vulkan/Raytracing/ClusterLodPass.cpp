@@ -332,6 +332,7 @@ namespace Fox {
 					}
 					std::memcpy(frame.instances->Map(), instances.data(), sizeof(Instance) * instanceCount);
 					frame.instances->Unmap();
+					frame.instanceCount = instanceCount;
 					BindFrameSet(frameSlot, tlasInstances);
 
 					frameStamp++;

@@ -53,7 +53,12 @@ namespace Fox {
 				alignas(4)  uint32_t cloudShadows = 0;    // Offset 276
 				alignas(4)  uint32_t maxBounces = 4;      // Offset 280 - diffuse / glossy bounces (render preset)
 				alignas(4)  float wetness = 0.0f;         // Offset 284 - rain: 0 dry .. 1 soaked (MainRayTracingScene::GetWetness)
-				alignas(16) VolumeGPU volumes[MAX_VOLUMES]; // Offset 288
+				// The hybrid path tracer (HybridRasterPass): first hits from the visibility buffer, screen traces
+				alignas(4)  uint32_t hybrid = 0;          // Offset 288 - 1: first hits rasterized
+				alignas(4)  uint32_t screenTraces = 0;    // Offset 292 - 1: bounces try the previous frame's image first
+				alignas(4)  float nearPlane = 0.05f;      // Offset 296 - the visibility buffer's (reversed depth: near / distance)
+				alignas(4)  uint32_t historyValid = 0;    // Offset 300 - the previous frame's image shows this view (screen traces)
+				alignas(16) VolumeGPU volumes[MAX_VOLUMES]; // Offset 304
 			};
 
 			// Must match the Camera struct in Shaders/common.slang (std140 layout).
@@ -65,11 +70,12 @@ namespace Fox {
 			static_assert(offsetof(CameraUBO, jitterAllSamples) == 160, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, gbufferFollowsReflections) == 164, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, pickPixel) == 168, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, hybrid) == 288, "CameraUBO layout must match common.slang");
+			static_assert(offsetof(CameraUBO, volumes) == 304, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, pickSlot) == 176, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, time) == 180, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, fog) == 192, "CameraUBO layout must match common.slang");
 			static_assert(offsetof(CameraUBO, volumeCount) == 272, "CameraUBO layout must match common.slang");
-			static_assert(offsetof(CameraUBO, volumes) == 288, "CameraUBO layout must match common.slang");
 			static_assert(sizeof(VolumeGPU) == 112, "VolumeGPU layout must match common.slang");
 
 			struct OldFrame {

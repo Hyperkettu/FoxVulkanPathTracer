@@ -1,4 +1,4 @@
-#include "FoxRenderer.h"
+﻿#include "FoxRenderer.h"
 #include "FoxVulkanPathTracer/Core/TinyGLTF/json.hpp"
 
 #include <fstream>
@@ -243,6 +243,7 @@ namespace Fox {
 					profiler = nullptr;
 					renderFinishedSemaphores.clear();
 					denoisers.clear();
+					hybrid = nullptr; // Its images, buffers and pipelines, while the device is still there
 					gbuffer = nullptr;
 					swapchain = nullptr;
 					raytracingScene = nullptr;
@@ -418,9 +419,25 @@ namespace Fox {
 				vulkan12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;
 				vulkan12Features.descriptorBindingPartiallyBound = VK_TRUE;
 
+				// The hybrid path tracer's raster: indirect draws with their count on the GPU, dynamic rendering, the
+				// draw's first instance in the vertex shader
+				vulkan12Features.drawIndirectCount = VK_TRUE;
+				vulkan13Features.dynamicRendering = VK_TRUE;
+				VkPhysicalDeviceVulkan11Features vulkan11Features{};
+				vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+				vulkan11Features.pNext = &vulkan12Features;
+				vulkan11Features.shaderDrawParameters = VK_TRUE;
+				VkPhysicalDeviceFeatures2 coreFeatures{};
+				coreFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+				coreFeatures.pNext = &vulkan11Features;
+				coreFeatures.features.multiDrawIndirect = VK_TRUE;
+				// The software rasterizer: 64-bit atomic max on a buffer (depth and payload)
+				coreFeatures.features.shaderInt64 = VK_TRUE;
+				vulkan12Features.shaderBufferInt64Atomics = VK_TRUE;
+
 				VkDeviceCreateInfo deviceCreateInfo{};
 				deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-				deviceCreateInfo.pNext = &vulkan12Features;
+				deviceCreateInfo.pNext = &coreFeatures;
 				deviceCreateInfo.queueCreateInfoCount = 1;
 				deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
 				// Required extensions, plus whatever the denoisers can make use of
@@ -708,6 +725,14 @@ namespace Fox {
 						for (RenderPreset p : { RenderPreset::Auto, RenderPreset::Quality, RenderPreset::Balanced, RenderPreset::Performance }) {
 							if (name == PresetName(p)) preset = p;
 						}
+						const std::string pipeline = j.value("pipeline", std::string(PipelineName(RenderPipeline::RealTime)));
+						for (RenderPipeline p : { RenderPipeline::RealTime, RenderPipeline::Hybrid }) {
+							if (pipeline == PipelineName(p)) renderPipeline = p;
+						}
+						screenTraces = j.value("screenTraces", true);
+						occlusionCulling = j.value("occlusionCulling", true);
+						rasterLod = j.value("rasterLod", true);
+						softwareRaster = j.value("softwareRaster", true);
 					}
 				}
 				catch (const std::exception& e) {
@@ -715,6 +740,8 @@ namespace Fox {
 				}
 				const PresetSettings settings = SettingsOf(EffectivePreset());
 				ApplyPresetSettings(settings);
+				std::cout << "Render pipeline: " << PipelineName(renderPipeline)
+					<< (renderPipeline == RenderPipeline::Hybrid ? (screenTraces ? " (screen traces on)" : " (screen traces off)") : "") << "\n";
 				std::cout << "Render preset: " << PresetName(preset);
 				if (preset == RenderPreset::Auto) {
 					std::cout << " (" << PresetName(EffectivePreset()) << ": " << gpuName << ", " << (gpuMemory >> 20) << " MiB"
@@ -737,11 +764,68 @@ namespace Fox {
 				try {
 					std::filesystem::create_directories("Settings");
 					std::ofstream out("Settings/Render.json");
-					out << nlohmann::json{ { "preset", PresetName(preset) } }.dump(2) << "\n";
+					out << nlohmann::json{ { "preset", PresetName(preset) }, { "pipeline", PipelineName(renderPipeline) },
+						{ "screenTraces", screenTraces }, { "occlusionCulling", occlusionCulling }, { "rasterLod", rasterLod },
+ 							{ "softwareRaster", softwareRaster } }.dump(2) << "\n";
 				}
 				catch (const std::exception& e) {
 					std::cout << "Settings/Render.json: " << e.what() << "\n";
 				}
+			}
+
+			const char* VulkanRHI::PipelineName(RenderPipeline pipeline) {
+				return pipeline == RenderPipeline::Hybrid ? "Hybrid Path Tracer" : "Real-time path-tracing";
+			}
+
+			void VulkanRHI::SetRenderPipeline(RenderPipeline pipeline) {
+				renderPipeline = pipeline;
+				SaveRenderSettings();
+				ResetHistory();
+				std::cout << "Render pipeline: " << PipelineName(renderPipeline) << "\n";
+				UpdateWindowTitle(0.0f);
+			}
+
+			void VulkanRHI::EnsureHybrid() {
+if (!gbuffer) {
+					return;
+				}
+				if (!hybrid) {
+					hybrid = std::make_unique<RayTracing::HybridRasterPass>(device, physicalDevice, deviceContext.setupCommandPool, graphicsQueue,
+						Managers::DescriptorManager::Get().GetDescriptorSet(Managers::Descriptor::BINDLESS_TEXTURES)->GetLayout().Get(),
+						config.MAX_FRAMES_IN_FLIGHT);
+					hybridVersion = 0;
+				}
+				hybrid->Resize(gbuffer->extent);
+			}
+
+			void VulkanRHI::WriteHybridDescriptors(VkDescriptorSet set) {
+				EnsureHybrid();
+				// Not before the denoisers have their images (start-up): SelectDenoiser writes it then
+				if (!hybrid || denoisers.empty() || !denoisersSized) {
+					return;
+				}
+				VkDescriptorImageInfo visibility{ VK_NULL_HANDLE, hybrid->GetVisibilityView(), VK_IMAGE_LAYOUT_GENERAL };
+				VkDescriptorBufferInfo draws{ hybrid->GetDrawInfos(), 0, VK_WHOLE_SIZE };
+				VkDescriptorBufferInfo instances{ hybrid->GetInstances(), 0, VK_WHOLE_SIZE };
+				VkDescriptorImageInfo previous{ hybrid->GetLinearSampler(), denoisers[activeDenoiser]->GetOutputView(), VK_IMAGE_LAYOUT_GENERAL };
+				VkDescriptorImageInfo pyramid{ hybrid->GetPointSampler(), hybrid->GetDepthPyramidView(), VK_IMAGE_LAYOUT_GENERAL };
+				VkWriteDescriptorSet writes[5];
+				const uint32_t bindings[5] = { 16, 17, 18, 19, 20 };
+				const VkDescriptorType types[5] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER };
+				for (int i = 0; i < 5; i++) {
+					writes[i] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+					writes[i].dstSet = set;
+					writes[i].dstBinding = bindings[i];
+					writes[i].descriptorCount = 1;
+					writes[i].descriptorType = types[i];
+				}
+				writes[0].pImageInfo = &visibility;
+				writes[1].pBufferInfo = &draws;
+				writes[2].pBufferInfo = &instances;
+				writes[3].pImageInfo = &previous;
+				writes[4].pImageInfo = &pyramid;
+				vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
 			}
 
 			void VulkanRHI::SetRenderPreset(RenderPreset newPreset) {
@@ -816,6 +900,7 @@ namespace Fox {
 				set->SetStorageBuffer(14, pickBuffer);
 				set->SetStorageBuffer(15, raytracingScene->previousPositionsSSBO->GetBufferUnique());
 				set->Update();
+				WriteHybridDescriptors(set->Get());
 			}
 
 			void VulkanRHI::CreateFrameDescriptors() {
@@ -882,6 +967,7 @@ namespace Fox {
 					}
 				}
 
+				denoisersSized = true;
 				SelectDenoiser(activeDenoiser);
 			}
 
@@ -894,6 +980,13 @@ namespace Fox {
 
 				postProcessor->SetInput(denoiser.GetOutputView(), VK_IMAGE_LAYOUT_GENERAL);
 				ResetHistory();
+				// The hybrid path tracer's screen traces read the denoised image of the previous frame (and the raster's
+				// images are new after a resize)
+				for (auto& frameResource : frameResources) {
+					if (frameResource->perFrameDescriptorSet) { // Not before the scene's descriptors are made
+						WriteHybridDescriptors(frameResource->perFrameDescriptorSet->Get());
+					}
+				}
 
 				std::cout << "Denoiser: " << denoiser.GetName() << "\n";
 				UpdateWindowTitle(0.0f);
@@ -909,7 +1002,8 @@ namespace Fox {
 				}
 
 				std::ostringstream title;
-				title << "Fox Renderer - " << denoisers[activeDenoiser]->GetName() << " - " << RayTracing::UpscalingModeName(upscalingMode)
+				title << "Fox Renderer - " << (renderPipeline == RenderPipeline::Hybrid ? "Hybrid - " : "") << denoisers[activeDenoiser]->GetName()
+					<< " - " << RayTracing::UpscalingModeName(upscalingMode)
 					<< " " << gbuffer->extent.width << "x" << gbuffer->extent.height << " - " << samplesPerPixel << " spp";
 				auto& cameraManager = raytracingScene->GetCameraManager();
 				if (cameraManager.IsPlaying() && cameraManager.ActivePath()) {
@@ -944,7 +1038,16 @@ namespace Fox {
 							<< " (" << gbuffer->extent.width << "x" << gbuffer->extent.height << " -> "
 							<< capabilities.currentExtent.width << "x" << capabilities.currentExtent.height << ", "
 							<< denoisers[activeDenoiser]->GetName() << ", " << samplesPerPixel << " spp)\n";
-						std::cout.unsetf(std::ios::floatfield);
+							if (renderPipeline == RenderPipeline::Hybrid && hybrid) {
+								const auto& raster = hybrid->GetStats();
+								std::cout << "[Hybrid] " << raster.triangles << " triangles rasterized, clusters: " << raster.drawsPhase1 << " + "
+									<< raster.drawsPhase2 << " drawn of " << raster.clustersTested << " tested (" << raster.clustersOutside << " outside the view, "
+									<< raster.clustersOccluded << " hidden last frame), " << raster.instancesVisible << " instances in view"
+									<< (raster.overflow ? ", " + std::to_string(raster.overflow) + " did not fit" : std::string())
+									<< "; opaque " << raster.listDraws[0] << " clusters " << raster.listTriangles[0] << " triangles, alpha tested " << raster.listDraws[1]
+									<< " clusters " << raster.listTriangles[1] << " triangles; " << raster.softwareTriangles << " triangles in software\n";
+							}
+							std::cout.unsetf(std::ios::floatfield);
 					}
 				}
 
@@ -994,6 +1097,9 @@ namespace Fox {
 				frameResource.renderFence->Wait();
 				profiler->ReadResults(currentFrame);
 				raytracingScene->ReadClusterLodStats(currentFrame);
+				if (hybrid) {
+					hybrid->ReadStats(currentFrame);
+				}
 				ReadPickResult(currentFrame);
 
 				// Editor windows, and what they changed in the scene
@@ -1021,6 +1127,16 @@ namespace Fox {
 				}
 				// Entities moved, shown or hidden from the editor windows (the gizmos say so while dragging)
 				sceneChanged = raytracingScene->TakeObjectsChanged() || sceneChanged;
+
+				// The hybrid path tracer's clusters, made again when the scene's instances or structures changed
+				if (renderPipeline == RenderPipeline::Hybrid && hybrid && hybridVersion != raytracingScene->GetRasterVersion()) {
+					vkDeviceWaitIdle(device);
+					const auto started = std::chrono::steady_clock::now();
+					hybrid->Upload(raytracingScene->MakeRasterContent());
+					hybridVersion = raytracingScene->GetRasterVersion();
+					std::cout << "Hybrid path tracer: " << hybrid->GetStats().chunks << " clusters in "
+						<< std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count() << " ms\n";
+				}
 
 				frameResource.renderFence->Reset();
 				frameResource.commandPool->Reset();
@@ -1133,6 +1249,10 @@ namespace Fox {
 				cam.time = raytracingScene->GetAnimationTime();
 				cam.maxBounces = maxBounces;
 				cam.wetness = raytracingScene->GetWetness();
+				cam.hybrid = renderPipeline == RenderPipeline::Hybrid && hybrid ? 1u : 0u;
+				cam.screenTraces = cam.hybrid && screenTraces ? 1u : 0u;
+				cam.nearPlane = camera->GetNearPlane();
+				cam.historyValid = resetHistory ? 0u : 1u;
 				raytracingScene->FillVolumeConstants(cam);
 				if (pickRequested) {
 					const glm::vec2 display(capabilities.currentExtent.width, capabilities.currentExtent.height);
@@ -1183,6 +1303,8 @@ namespace Fox {
 					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
 					const float pixelScale = static_cast<float>(capabilities.currentExtent.height) / (2.0f * std::tan(camera->GetFov() * 0.5f));
 					raytracingScene->SetClusterLodView(camera->GetPosition(), pixelScale);
+					raytracingScene->SetRasterLodScale(renderPipeline == RenderPipeline::Hybrid && rasterLod
+						? static_cast<float>(capabilities.currentExtent.height) / static_cast<float>(std::max(gbuffer->extent.height, 1u)) : 0.0f);
 					// Billboards and the screen's 3D text, for this frame's camera (no lag behind it)
 					raytracingScene->SetViewCamera(camera->GetPosition(), camera->GetForward(), camera->GetUp(), camera->GetFov(),
 						static_cast<float>(capabilities.currentExtent.width) / std::max(static_cast<float>(capabilities.currentExtent.height), 1.0f));
@@ -1196,6 +1318,38 @@ namespace Fox {
 				profiler->BeginFrame(commandList, currentFrame);
 				raytracingScene->RecordFrameUpdate(commandList.Get(), currentFrame, [&](const char* name) { profiler->Mark(commandList, name); });
 				profiler->Mark(commandList, "scene");
+
+				// The hybrid path tracer: the first hits rasterized (cluster culling, visibility buffer, depth pyramid)
+				if (renderPipeline == RenderPipeline::Hybrid && hybrid) {
+					auto& camera = Managers::SceneManager::Get().GetCurrentScene()->GetMainCamera();
+					RayTracing::HybridRasterPass::FrameInput input;
+					input.tlasInstances = raytracingScene->GetFrameInstances(input.tlasInstancesWritten);
+					input.instanceCount = raytracingScene->GetInstanceCount();
+					input.instanceMotion = raytracingScene->instanceMotionSSBO->GetBuffer().Get();
+					input.submeshes = raytracingScene->submeshSSBO->GetBuffer().Get();
+					input.vertices = raytracingScene->vertexSSBO->GetBuffer().Get();
+					input.indices = raytracingScene->indexSSBO->GetBuffer().Get();
+					input.materials = raytracingScene->materialsSSBO->GetBuffer().Get();
+					raytracingScene->GetClusterSelection(currentFrame, input.clusterInstances, input.clusterCounts, input.clusterSelected, input.clusterInstanceCount,
+						input.lodClusters);
+					// Nanite style: the trees' clusters picked for the raster's own pixels (the rays' cut is for the display's)
+					input.lodPixelScale = rasterLod ? static_cast<float>(renderExtent.height) / (2.0f * input.view.tanHalfFov) : 0.0f;
+					input.softwareLimit = softwareRaster ? 32.0f : 0.0f;
+					input.view.position = previousCamera.position;
+					input.view.forward = previousCamera.forward;
+					input.view.right = previousCamera.right;
+					input.view.up = previousCamera.up;
+					input.view.tanHalfFov = std::tan(camera->GetFov() * 0.5f);
+					input.view.aspect = static_cast<float>(renderExtent.width) / static_cast<float>(std::max(renderExtent.height, 1u));
+					input.view.nearPlane = camera->GetNearPlane();
+					input.view.jitter = denoiserFrame.jitter;
+					input.resetHistory = denoiserFrame.resetHistory;
+					input.occlusionCulling = occlusionCulling;
+					if (input.tlasInstances) {
+						hybrid->Record(commandList.Get(), currentFrame, input, Managers::TextureManager::Get().bindlessTextureDescriptorSet->Get(),
+							[&](const char* name) { profiler->Mark(commandList, name); });
+					}
+				}
 
 				commandList
 					// 1. Path trace into the G-buffer. The previous frame may still be reading these images.

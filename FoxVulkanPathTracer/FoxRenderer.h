@@ -74,6 +74,7 @@
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/AccelerationStructure.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/OpacityMicromap.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/ClusterLodPass.h"
+#include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/HybridRasterPass.h"
 #include "FoxVulkanPathTracer/Scene/Raytracing/RaytracingScene.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipeline.h"
 #include "FoxVulkanPathTracer/Graphics/Vulkan/Raytracing/RaytracingPipelineBuilder.h"

@@ -105,6 +105,21 @@ namespace Fox {
 					const Stats& GetStats() const { return stats; }
 
 					uint32_t GetRefCapacity() const { return refCapacity; }
+
+					// This frame's selection (the hybrid path tracer draws the clusters selected): the frame slot's
+					// instances, clusters selected per instance, and per instance range the global cluster indices
+					bool GetSelection(uint32_t frameSlot, VkBuffer& instancesBuffer, VkBuffer& counts, VkBuffer& selection, uint32_t& instanceCount,
+						VkBuffer& graph) const {
+						if (frameSlot >= frames.size() || !frames[frameSlot].instances || !instanceCounts || !selected || frames[frameSlot].instanceCount == 0) {
+							return false;
+						}
+						instancesBuffer = frames[frameSlot].instances->Get();
+						counts = instanceCounts->Get();
+						selection = selected->Get();
+						instanceCount = frames[frameSlot].instanceCount;
+						graph = clusters ? clusters->Get() : VK_NULL_HANDLE;
+						return true;
+					}
 					uint32_t GetBottomLevelBudget() const { return bottomLevelBudget; }
 
 				private:

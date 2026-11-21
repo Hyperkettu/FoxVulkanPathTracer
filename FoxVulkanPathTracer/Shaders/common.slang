@@ -216,6 +216,10 @@ struct Camera
     uint cloudShadows;      // 1: the clouds shade surfaces
     uint maxBounces;        // Diffuse and glossy bounces after the first hit (the render preset: 1..4)
     float wetness;          // Rain: 0 dry .. 1 soaked (surfaces darken and turn glossy)
+    uint hybrid;            // 1: the hybrid path tracer (first hits from the visibility buffer, see raygen.slang)
+    uint screenTraces;      // 1: bounces from the first hit look in the previous frame's image first
+    float nearPlane;        // The visibility buffer's: reversed depth = nearPlane / distance along the view
+    uint historyValid;      // 1: the previous frame's image shows (nearly) this view
     VolumeData volumes[MAX_VOLUMES];
 };
 

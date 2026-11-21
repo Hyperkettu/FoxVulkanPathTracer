@@ -24,6 +24,18 @@ rem Editor overlay (gizmos)
 %SLANGC% overlay_vert.slang -stage vertex %OPTIONS% -o overlay_vert.spv || goto :error
 %SLANGC% overlay_frag.slang -stage fragment %OPTIONS% -o overlay_frag.spv || goto :error
 
+rem The hybrid path tracer's raster (cluster culling, visibility buffer, depth pyramid)
+%SLANGC% hybrid_cull.slang -stage compute %OPTIONS% -DPASS=0 -o hybrid_cull_instances.spv || goto :error
+%SLANGC% hybrid_cull.slang -stage compute %OPTIONS% -DPASS=1 -o hybrid_cull_clusters.spv || goto :error
+%SLANGC% hybrid_cull.slang -stage compute %OPTIONS% -DPASS=2 -o hybrid_cull_candidates.spv || goto :error
+%SLANGC% hybrid_cull.slang -stage compute %OPTIONS% -DPASS=3 -o hybrid_cull_large.spv || goto :error
+%SLANGC% hybrid_hiz.slang -stage compute %OPTIONS% -o hybrid_hiz.spv || goto :error
+%SLANGC% hybrid_swraster.slang -stage compute %OPTIONS% -o hybrid_swraster.spv || goto :error
+%SLANGC% hybrid_resolve.slang -stage compute %OPTIONS% -o hybrid_resolve.spv || goto :error
+%SLANGC% hybrid_raster_vert.slang -stage vertex %OPTIONS% -o hybrid_raster_vert.spv || goto :error
+%SLANGC% hybrid_raster_frag.slang -stage fragment %OPTIONS% -o hybrid_raster_frag.spv || goto :error
+%SLANGC% hybrid_raster_frag.slang -stage fragment %OPTIONS% -DMASKED=1 -o hybrid_raster_frag_masked.spv || goto :error
+
 rem Skinning
 %SLANGC% skinning.slang -stage compute %OPTIONS% -o skinning.spv || goto :error
 

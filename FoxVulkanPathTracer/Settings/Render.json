@@ -1,3 +1,8 @@
 {
-  "preset": "Performance"
+  "occlusionCulling": true,
+  "pipeline": "Real-time path-tracing",
+  "preset": "Performance",
+  "rasterLod": true,
+  "screenTraces": true,
+  "softwareRaster": true
 }

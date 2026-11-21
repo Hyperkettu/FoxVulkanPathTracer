@@ -222,6 +222,88 @@ More triangles give finer relief but cost load time (about 3.5 s for the cabin's
 changes (8 M triangles trace within ~0.1 ms of 4 M). Heights are prefiltered to the triangle size, so a coarse
 tessellation shows smooth large-scale relief instead of noise.
 
+### Render pipelines: real-time path tracing and the hybrid path tracer
+
+Two pipelines render the same scene with the same materials and lights (**Render > Pipeline**, saved to
+`Settings/Render.json` as `"pipeline"`):
+
+* **Real-time path-tracing** (the default): every ray is traced, the camera's too. One ray generation shader traces,
+  shades and bounces each path (a megakernel), then DLSS Ray Reconstruction (or SVGF) denoises and upscales.
+* **Hybrid Path Tracer**: the first hit of each pixel is rasterized, Nanite style. Lights, shadows and bounces are
+  still traced, and the first bounce first looks in the previous frame's image (screen traces, Lumen style).
+
+**The raster: Nanite-style first hits** (`Graphics/Vulkan/Raytracing/HybridRasterPass`, `Shaders/hybrid_*.slang`):
+
+* **Clusters:** every bottom level structure's submeshes are cut into clusters of up to 128 triangles, each with a
+  bounding sphere (`RayTracingScene::MakeRasterContent`). This happens again whenever the scene's instances or
+  structures change.
+* **Instance and cluster culling, on the GPU:**
+  * Instances outside the view frustum go first, then each remaining cluster is tested against the frustum.
+  * Trees use cluster level of detail. The raster makes its own cut through their cluster graph for its own pixels
+    (the rays' cut is chosen for the display's pixels), so trees cost far fewer triangles. The two cuts are less than
+    a render pixel apart in error.
+* **Two-pass occlusion culling:**
+  * **Phase 1** tests clusters against the previous frame's depth pyramid (HiZ), using where each cluster was then.
+    What was visible is drawn. What was hidden becomes a candidate.
+  * **Phase 2** tests the candidates against the depth pyramid of what phase 1 drew, and draws whatever came into view.
+* **Visibility buffer:** each pixel stores only which cluster and which triangle it sees, with reversed depth.
+  * **Draws:** visible clusters go into buckets by size (up to 32, 64, 128 or 256 triangles). Each bucket is one
+    instanced indirect draw, so a frame is 16 draws instead of hundreds of thousands.
+  * **Vertices:** the vertex shader reads the scene's own index and vertex buffers, the very data the rays hit.
+  * **Alpha:** alpha tested clusters (leaves) test alpha as the rays' any-hit shader does.
+* **Software rasterizer:** clusters narrower than 32 pixels on screen are rasterized in a compute shader instead of by
+  the hardware. Their triangles are a pixel or so, and hardware triangle setup and shading of 2×2 pixel quads are
+  wasted on them.
+  * Each thread covers one triangle's pixel centres. It keeps the nearest with a 64-bit atomic max: depth in the high
+    32 bits, cluster and triangle in the low 32.
+  * A resolve merges the result with the hardware's visibility buffer, by depth.
+* **Shading:** the path tracer reads the visibility buffer, meets the pixel's jittered camera ray with that triangle,
+  and describes the surface with the same function as the closest hit shader (`Shaders/surface.slang`). The G-buffer,
+  motion vectors, picking and everything after are the same as in real-time path tracing.
+
+**Screen traces: the Lumen-style bounce.** The bounce from each first hit marches through this frame's depth (24 steps
+in screen space). Where it goes behind a surface there, it takes that surface's light from the previous frame's
+denoised image, reprojected to where the point was, and the path ends. Rays that leave the screen, pass behind
+everything or reach a light (emissive surfaces are already counted by light sampling) are traced instead. The light
+it takes carries that pixel's own bounces too, so light keeps bouncing over the frames.
+
+**Options** (**Render > Pipeline**, saved to `Settings/Render.json`): `screenTraces`, `occlusionCulling`, `rasterLod`
+(the trees' own cut for the raster) and `softwareRaster`, all on by default.
+
+**What it shows:**
+* **GPU Profiler sections:** **raster setup**, **cull**, **cull trees**, **raster** (phase 1, hardware and software)
+  and **occlusion** (pyramid, phase 2, pyramid).
+* **Hybrid raster section** of the window: triangles rasterized (and of them in software), clusters drawn in each
+  phase, clusters tested, outside the view and hidden.
+* **Console:** the same as a `[Hybrid]` line.
+
+**Measured** on an RTX 3070 Laptop GPU (Performance preset, 427×280 rendered, DLSS to 1280×840):
+
+| Scene | Real-time: trace | Hybrid: cull + raster + occlusion, trace (screen traces on / off) |
+| --- | --- | --- |
+| my_yard (32 000 instances in view, trees and grass) | 8.7 ms | 7.5 ms + 9.0 ms / 7.8 ms + 7.7 ms |
+| cloth test scene | 0.7 ms | 0.1 ms + 2.0 ms / 0.1 ms + 1.0 ms |
+
+What the raster optimizations did on my_yard:
+* **Level of detail:** the raster's own tree cut took it from 34 to 22 million triangles.
+* **Buckets:** 230 000 draws became 16.
+* **Software rasterizer:** 19.6 million of the 22 million triangles now go through it, and the raster went from
+  13 ms to about 4.5 ms.
+
+Even so, on this GPU the hardware ray tracer is the faster pipeline for these scenes. Camera rays cost it very little,
+thanks to opacity micromaps and shader execution reordering. Screen traces cost more than the rays they save here: a
+hardware ray in a simple scene is cheaper than a 24 step march. The hybrid pipeline pays off where tracing is
+expensive, on GPUs with slower ray tracing, or for many paths per pixel.
+
+**Not handled:**
+* Only trees have level of detail: other meshes are drawn in full, every cluster that passes.
+* Clusters are not culled by facing: the path tracer shows both sides of every surface.
+* Vertices that move (skinned without cluster level of detail, simulated cloth, water and particles, sculpted terrain)
+  have no bounds of their own, so they are drawn whenever their instance is.
+* The raster's buffers take about 100 MB of video memory even in real-time path tracing (the path tracer's
+  descriptors always point at them).
+* Screen traces see only the previous frame's view-dependent image, and nothing off screen.
+
 ### Performance
 
 **Render presets** (**Render > Preset**, saved to `Settings/Render.json`) set how hard the path tracer works:

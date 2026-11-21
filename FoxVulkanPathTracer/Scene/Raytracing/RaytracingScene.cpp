@@ -95,6 +95,7 @@ namespace Fox {
                 placements.clear();
                 instances.clear();
                 instanceBlasIndices.clear();
+                rasterVersion++;
                 instancePlacements.clear();
                 skinnedMeshes.clear();
                 bindPose.clear();
@@ -169,6 +170,8 @@ namespace Fox {
 
                 topLevelAccelerationStructure = TopLevelAccelerationStructure{};
                 bottomLevelAccelerationStructure.clear();
+                blasRanges.clear();
+                rasterVersion++;
                 scratchBuffers.clear();
                 scratchBufferMemories.clear();
                 scratchBuffer = VK_NULL_HANDLE;
@@ -206,6 +209,9 @@ namespace Fox {
             {
                 BottomLevelAccelerationStructure blas{};
                 blas.dynamic = dynamic;
+                blasRanges.resize(bottomLevelAccelerationStructure.size());
+                blasRanges.push_back({ firstSubmesh, submeshCount, dynamic });
+                rasterVersion++;
 
                 for (uint32_t i = firstSubmesh; i < firstSubmesh + submeshCount; i++) {
                     const Fox::Graphics::Vulkan::Submesh& submesh = submeshes[i];
@@ -273,6 +279,7 @@ namespace Fox {
 
                 instances.push_back(instance);
                 instanceBlasIndices.push_back(blasIndex);
+                rasterVersion++;
             }
 
             namespace {
@@ -388,6 +395,7 @@ namespace Fox {
 
                 instances.push_back(instance);
                 instanceBlasIndices.push_back(blasIndex);
+                rasterVersion++;
             }
 
             void RayTracingScene::BuildTLAS(VkCommandBuffer cmd)
@@ -1405,6 +1413,7 @@ namespace Fox {
 
                 // Cluster instances get new structures every frame (their level of detail, the wind)
                 const bool clusters = clusterPass && !clusterMeshes.empty();
+                instancesWrittenThisFrame = false;
                 if (!tlasDirty && !clusters) {
                     return;
                 }
@@ -1438,6 +1447,8 @@ namespace Fox {
                 }
                 std::memcpy(instanceData->Map(), instances.data(), instancesSize);
                 instanceData->Unmap();
+                lastInstanceSlot = frameSlot;
+                instancesWrittenThisFrame = true;
                 if (clusters) {
                     RecordClusterLod(cmd, frameSlot, instanceData->Get(), mark);
                 }
@@ -1753,13 +1764,17 @@ namespace Fox {
                     const float nearest = std::max(distance - radius, 0.01f), farthest = std::max(distance + radius, 0.01f);
                     const float toPixels = scale * clusterView.pixelScale;
                     int low = -1, high = -1;
+                    // The rays' threshold, and the hybrid raster's coarser one (its pixels are larger): both cuts' levels
+                    const float thresholds[2] = { threshold, rasterLodScale > 1.0f ? threshold * rasterLodScale : threshold };
                     for (int l = 0; l < static_cast<int>(mesh.levels.size()); l++) {
                         const auto& level = mesh.levels[l];
-                        const bool fineEnough = level.minSelfError * toPixels / farthest <= threshold;
-                        const bool parentTooCoarse = level.maxParentError >= 3.0e38f || level.maxParentError * toPixels / nearest > threshold;
-                        if (fineEnough && parentTooCoarse) {
-                            low = low < 0 ? l : low;
-                            high = l;
+                        for (float t : thresholds) {
+                            const bool fineEnough = level.minSelfError * toPixels / farthest <= t;
+                            const bool parentTooCoarse = level.maxParentError >= 3.0e38f || level.maxParentError * toPixels / nearest > t;
+                            if (fineEnough && parentTooCoarse) {
+                                low = low < 0 ? l : std::min(low, l);
+                                high = std::max(high, l);
+                            }
                         }
                     }
                     if (low < 0) {
@@ -1984,6 +1999,8 @@ namespace Fox {
                     DestroyBLAS(bottomLevelAccelerationStructure[i]);
                 }
                 bottomLevelAccelerationStructure.resize(staticCounts.blas);
+                blasRanges.resize(staticCounts.blas);
+                rasterVersion++;
 
                 for (auto it = opacityGeometries.begin(); it != opacityGeometries.end();) {
                     it = it->first >= staticCounts.submeshes ? opacityGeometries.erase(it) : std::next(it);
@@ -2483,6 +2500,118 @@ namespace Fox {
                     tlasDirty = true;
                 }
             }
-		}
+		            Fox::Graphics::Vulkan::RayTracing::HybridRasterPass::Content RayTracingScene::MakeRasterContent() const {
+                using Pass = Fox::Graphics::Vulkan::RayTracing::HybridRasterPass;
+                Pass::Content content;
+
+                // A sphere around points: the centre of their box, the farthest from it
+                auto sphereOf = [](const std::vector<glm::vec3>& points) {
+                    glm::vec3 low(std::numeric_limits<float>::max()), high(-std::numeric_limits<float>::max());
+                    for (const glm::vec3& p : points) {
+                        low = glm::min(low, p);
+                        high = glm::max(high, p);
+                    }
+                    const glm::vec3 centre = (low + high) * 0.5f;
+                    float radius = 0.0f;
+                    for (const glm::vec3& p : points) {
+                        radius = std::max(radius, glm::distance(p, centre));
+                    }
+                    return glm::vec4(centre, radius);
+                };
+                auto merge = [](const glm::vec4& a, const glm::vec4& b) {
+                    if (a.w < 0.0f) return b;
+                    const glm::vec3 d = glm::vec3(b) - glm::vec3(a);
+                    const float distance = glm::length(d);
+                    if (distance + b.w <= a.w) return a;
+                    if (distance + a.w <= b.w) return b;
+                    const float radius = (distance + a.w + b.w) * 0.5f;
+                    return glm::vec4(glm::vec3(a) + (distance > 0.0f ? d / distance * (radius - a.w) : glm::vec3(0.0f)), radius);
+                };
+
+                // --- Per bottom level structure: its submeshes cut into clusters ---
+                struct BlasChunks { uint32_t first = 0, count = 0; glm::vec4 sphere{ 0.0f, 0.0f, 0.0f, -1.0f }; bool bounded = true; };
+                std::vector<BlasChunks> blasChunks(blasRanges.size());
+                std::vector<glm::vec3> points;
+                for (size_t b = 0; b < blasRanges.size(); b++) {
+                    const BlasRange& range = blasRanges[b];
+                    BlasChunks& out = blasChunks[b];
+                    out.first = static_cast<uint32_t>(content.chunks.size());
+                    for (uint32_t s = range.firstSubmesh; s < range.firstSubmesh + range.submeshCount && s < submeshes.size(); s++) {
+                        const Fox::Graphics::Vulkan::Submesh& submesh = submeshes[s];
+                        const uint32_t triangles = submesh.indexCount / 3;
+                        const bool masked = submesh.materialIndex < materials.size() && materials[submesh.materialIndex].IsAlphaTested();
+                        // Vertices that move (skinned, simulated, sculpted) or not kept on the CPU: no bounds of their own
+                        const bool known = !range.dynamic && submesh.indexOffset + submesh.indexCount <= indices.size();
+                        for (uint32_t first = 0; first < triangles; first += Pass::CHUNK_TRIANGLES) {
+                            Pass::Chunk chunk;
+                            chunk.submesh = s;
+                            chunk.firstTriangle = first;
+                            chunk.triangleCount = std::min(Pass::CHUNK_TRIANGLES, triangles - first);
+                            chunk.flags = (masked ? Pass::CHUNK_MASKED : 0u) | (known ? 0u : Pass::CHUNK_UNBOUNDED);
+                            if (known) {
+                                points.clear();
+                                for (uint32_t i = 0; i < chunk.triangleCount * 3; i++) {
+                                    const uint32_t index = indices[submesh.indexOffset + first * 3 + i];
+                                    if (index < vertices.size()) {
+                                        points.emplace_back(vertices[index].position[0], vertices[index].position[1], vertices[index].position[2]);
+                                    }
+                                }
+                                chunk.sphere = points.empty() ? glm::vec4(0.0f) : sphereOf(points);
+                                out.sphere = merge(out.sphere, chunk.sphere);
+                            }
+                            else {
+                                out.bounded = false;
+                            }
+                            content.chunks.push_back(chunk);
+                        }
+                    }
+                    out.count = static_cast<uint32_t>(content.chunks.size()) - out.first;
+                }
+
+                // --- Per top level instance ---
+                content.instances.resize(instances.size());
+                for (size_t i = 0; i < instances.size(); i++) {
+                    Pass::RasterInstance& instance = content.instances[i];
+                    const uint32_t blas = instanceBlasIndices[i];
+                    if (blas == NO_BLAS) {
+                        instance.flags = Pass::RASTER_CLUSTER_LOD;
+                        continue;
+                    }
+                    if (blas >= blasChunks.size()) {
+                        continue;
+                    }
+                    instance.firstChunk = blasChunks[blas].first;
+                    instance.chunkCount = blasChunks[blas].count;
+                    instance.sphere = blasChunks[blas].bounded ? blasChunks[blas].sphere : glm::vec4(0.0f, 0.0f, 0.0f, -1.0f);
+                }
+
+                // --- The trees' level of detail clusters (a submesh each), by global cluster index ---
+                content.clusterChunkBase = static_cast<uint32_t>(content.chunks.size());
+                content.chunks.resize(content.chunks.size() + clusterContent.clusters.size());
+                for (const MeshRecord& record : meshRecords) {
+                    if (record.clusterMesh < 0 || static_cast<size_t>(record.clusterMesh) >= clusterMeshes.size()) {
+                        continue;
+                    }
+                    const ClusterMesh& mesh = clusterMeshes[record.clusterMesh];
+                    for (uint32_t j = 0; j < mesh.clusterCount; j++) {
+                        const uint32_t cluster = mesh.firstCluster + j;
+                        const uint32_t s = record.firstSubmesh + j;
+                        if (cluster >= clusterContent.clusters.size() || s >= submeshes.size()) {
+                            continue;
+                        }
+                        Pass::Chunk& chunk = content.chunks[content.clusterChunkBase + cluster];
+                        const glm::vec4 bounds = clusterContent.clusters[cluster].selfBounds;
+                        // In the bind pose: the wind bends the tree, so a margin
+                        chunk.sphere = glm::vec4(glm::vec3(bounds), bounds.w * 1.25f + 0.5f);
+                        chunk.submesh = s;
+                        chunk.firstTriangle = 0;
+                        chunk.triangleCount = submeshes[s].indexCount / 3;
+                        chunk.flags = submeshes[s].materialIndex < materials.size() && materials[submeshes[s].materialIndex].IsAlphaTested() ? Pass::CHUNK_MASKED : 0u;
+                    }
+                }
+                return content;
+            }
+
+}
 	}
 }

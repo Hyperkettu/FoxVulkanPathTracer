@@ -344,6 +344,7 @@
     <ClCompile Include="Scene\Raytracing\MainRayTracingSceneNavigation.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingSceneCloth.cpp" />
     <ClCompile Include="Scene\Cloth.cpp" />
+    <ClCompile Include="Graphics\Vulkan\Raytracing\HybridRasterPass.cpp" />
     <ClCompile Include="Scene\Raytracing\MainRayTracingSceneScripting.cpp" />
     <ClCompile Include="Scene\Raytracing\RaytracingScene.cpp" />
     <ClCompile Include="Scene\Scene.cpp" />
@@ -413,6 +414,7 @@
     <ClInclude Include="Scene\WaterSimulation.h" />
     <ClInclude Include="Scene\Physics.h" />
     <ClInclude Include="Scene\Cloth.h" />
+    <ClInclude Include="Graphics\Vulkan\Raytracing\HybridRasterPass.h" />
     <ClInclude Include="Scene\Navigation.h" />
     <ClInclude Include="Scripting\ScriptApi.h" />
     <ClInclude Include="Scripting\ScriptHost.h" />
@@ -577,6 +579,46 @@
     <SlangShader Include="Shaders\dlss_prepare.slang">
       <Stage>compute</Stage>
     </SlangShader>
+    <SlangShader Include="Shaders\hybrid_cull.slang">
+      <Stage>compute</Stage>
+      <Suffix>_instances</Suffix>
+      <Defines>-DPASS=0</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_cull.slang">
+      <Stage>compute</Stage>
+      <Suffix>_clusters</Suffix>
+      <Defines>-DPASS=1</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_cull.slang">
+      <Stage>compute</Stage>
+      <Suffix>_candidates</Suffix>
+      <Defines>-DPASS=2</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_cull.slang">
+      <Stage>compute</Stage>
+      <Suffix>_large</Suffix>
+      <Defines>-DPASS=3</Defines>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_hiz.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_swraster.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_resolve.slang">
+      <Stage>compute</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_raster_vert.slang">
+      <Stage>vertex</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_raster_frag.slang">
+      <Stage>fragment</Stage>
+    </SlangShader>
+    <SlangShader Include="Shaders\hybrid_raster_frag.slang">
+      <Stage>fragment</Stage>
+      <Suffix>_masked</Suffix>
+      <Defines>-DMASKED=1</Defines>
+    </SlangShader>
   </ItemGroup>
   <ItemGroup>
     <!-- Shared includes (SlangInclude: editing one rebuilds every shader) and shader experiments that are not part of the build -->
@@ -586,6 +628,9 @@
     <SlangInclude Include="Shaders\bsdf.slang" />
     <SlangInclude Include="Shaders\lighting.slang" />
     <SlangInclude Include="Shaders\volumes.slang" />
+    <SlangInclude Include="Shaders\surface.slang" />
+    <SlangInclude Include="Shaders\terrain.slang" />
+    <SlangInclude Include="Shaders\hybrid_common.slang" />
     <None Include="Shaders\closest_hit_orig.slang" />
     <None Include="Shaders\closest_hit_reflection_mirror.slang" />
     <None Include="Shaders\visualize_normals.slang" />

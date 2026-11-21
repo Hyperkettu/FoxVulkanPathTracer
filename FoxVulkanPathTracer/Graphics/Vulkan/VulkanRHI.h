@@ -125,6 +125,24 @@ namespace Fox {
 				std::chrono::steady_clock::time_point lastFrameStart{};
 				void WaitForFrameCap();
 
+				// The path tracing pipeline (Settings/Render.json "pipeline"). Real-time path tracing traces every ray,
+				// the camera's too. The hybrid path tracer rasterizes the first hits, Nanite style (cluster culling, a
+				// visibility buffer: HybridRasterPass), and traces the rest: lights, shadows, bounces; its bounces look in
+				// the previous frame's image first (screen traces, Lumen style) and trace only where that finds nothing.
+				enum class RenderPipeline { RealTime, Hybrid };
+				static const char* PipelineName(RenderPipeline pipeline);
+				RenderPipeline renderPipeline = RenderPipeline::RealTime;
+				bool screenTraces = true;
+				bool occlusionCulling = true;
+				bool rasterLod = true; // Trees: the raster's own (coarser) cut through their clusters, for its pixels
+				bool softwareRaster = true; // Clusters small on screen: rasterized in a compute shader (Nanite style)
+				void SetRenderPipeline(RenderPipeline pipeline);
+				std::unique_ptr<RayTracing::HybridRasterPass> hybrid;
+				uint32_t hybridVersion = 0; // The scene's raster version its clusters were made for
+				void EnsureHybrid();
+				void WriteHybridDescriptors(VkDescriptorSet set);
+				bool denoisersSized = false; // The denoisers have their images (their output can be bound)
+
 				// Render resolution relative to the display (the G-buffer has the render resolution)
 				RayTracing::UpscalingMode upscalingMode = RayTracing::UpscalingMode::Native;
 				bool upscalingModeChosenByUser = false; // Until then it follows the display size

@@ -709,6 +709,18 @@ namespace Fox {
 					shell.Add(label, [this, p] { Defer([this, p] { SetRenderPreset(p); }); }, "", true, preset == p ? 1 : 0,
 						"render speed laptop bounces frame cap fps");
 				}
+				for (RenderPipeline p : { RenderPipeline::RealTime, RenderPipeline::Hybrid }) {
+					shell.Add(std::string("Render/Pipeline/") + PipelineName(p), [this, p] { Defer([this, p] { SetRenderPipeline(p); }); }, "", true,
+						renderPipeline == p ? 1 : 0, "path tracing hybrid nanite lumen raster rasterize visibility buffer pipeline");
+				}
+				shell.Add("Render/Pipeline/Screen Traces (hybrid)", [this] { screenTraces = !screenTraces; SaveRenderSettings(); ResetHistory(); }, "",
+					renderPipeline == RenderPipeline::Hybrid, screenTraces ? 1 : 0, "ssr screen space reflections lumen bounce previous frame");
+				shell.Add("Render/Pipeline/Occlusion Culling (hybrid)", [this] { occlusionCulling = !occlusionCulling; SaveRenderSettings(); }, "",
+					renderPipeline == RenderPipeline::Hybrid, occlusionCulling ? 1 : 0, "hiz depth pyramid nanite clusters hidden");
+				shell.Add("Render/Pipeline/Tree Level of Detail for the Raster (hybrid)", [this] { rasterLod = !rasterLod; SaveRenderSettings(); }, "",
+					renderPipeline == RenderPipeline::Hybrid, rasterLod ? 1 : 0, "nanite lod clusters trees pixels raster cut");
+				shell.Add("Render/Pipeline/Software Raster for Small Triangles (hybrid)", [this] { softwareRaster = !softwareRaster; SaveRenderSettings(); }, "",
+					renderPipeline == RenderPipeline::Hybrid, softwareRaster ? 1 : 0, "nanite compute rasterizer tiny triangles");
 				shell.Add("Render/Vsync", [this] { Defer([this] { RunKeyCommand(SDL_SCANCODE_V); }); }, "V", true, vsync ? 1 : 0, "frame rate");
 				shell.Separator("Render");
 				char samples[64];
@@ -839,6 +851,34 @@ namespace Fox {
 					row("Paths per second", count(cpuAverage > 0.0f ? static_cast<uint64_t>(pixels * 1000.0 / cpuAverage) : 0),
 						"Render pixels x paths per pixel x frames per second (each path: a camera ray and its bounces and shadow rays)");
 					ImGui::EndTable();
+				}
+
+				// --- The hybrid path tracer's raster ---
+				if (renderPipeline == RenderPipeline::Hybrid && hybrid) {
+					const auto& raster = hybrid->GetStats();
+					ImGui::SeparatorText("Hybrid raster (Nanite style)");
+					if (ImGui::BeginTable("##hybrid", 2, ImGuiTableFlags_SizingFixedFit)) {
+						auto row = [](const char* label, const std::string& value, const char* tip = nullptr) {
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::TextUnformatted(label);
+							if (tip) ImGui::SetItemTooltip("%s", tip);
+							ImGui::TableNextColumn();
+							ImGui::TextUnformatted(value.c_str());
+						};
+						row("Triangles rasterized", count(raster.triangles), "Drawn into the visibility buffer this frame: the first hits the path tracer reads instead of tracing camera rays");
+						row("  in software", count(raster.softwareTriangles), "Triangles of clusters small on screen, rasterized in a compute shader (64-bit atomics) instead of by the hardware");
+						row("Clusters drawn", count(raster.drawsPhase1) + " + " + count(raster.drawsPhase2),
+							"Phase 1: visible last frame. Phase 2: hidden last frame, visible now (tested against this frame's depth pyramid)");
+						row("Clusters tested", count(raster.clustersTested), "Up to 128 triangles each, in the instances that passed their own frustum test");
+						row("  outside the view", count(raster.clustersOutside));
+						row("  hidden (occlusion)", count(raster.clustersOccluded > raster.drawsPhase2 ? raster.clustersOccluded - raster.drawsPhase2 : 0),
+							"Behind what is drawn: the depth pyramid of the previous frame, then of this one");
+						row("Instances in view", count(raster.instancesVisible));
+						row("Clusters in the scene", count(raster.chunks) + ", buffers " + bytes(raster.memory));
+						if (raster.overflow > 0) row("Did not fit", count(raster.overflow), "Draws or candidates beyond the lists' room this frame");
+						ImGui::EndTable();
+					}
 				}
 
 				// --- Memory ---
